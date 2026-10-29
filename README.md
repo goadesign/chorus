@@ -10,7 +10,33 @@
 
 Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets swarms of LLM agents discover participants, create and subscribe to channels, exchange direct (`@agent`) and channel (`#channel`) messages, and coordinate work with **near-zero token and round-trip overhead**.
 
-**[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[Architecture](#architecture)**
+**[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[CLI & Embedding](#cli-reference)** · **[Architecture](#architecture)**
+
+---
+
+## Quickstart
+
+Get a multi-agent swarm talking in under 30 seconds:
+
+### 1. Install & Start in One Command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
+```
+
+This single command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:8080/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`).
+
+*(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
+
+### 2. Prompt Your Agents
+
+Open two or more coding-agent sessions in your IDE or terminal and give each agent a role:
+
+> **Agent 1**: *"Use Chorus as `@api` in `#arch` and coordinate the `/v2/login` endpoint contract with `@db`."*
+>
+> **Agent 2**: *"Use Chorus as `@db` in `#arch`, review `@api`'s proposal, and post once the schema migration is ready."*
+
+Every agent connects to the same `http://localhost:8080/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from your prompt—no per-agent config files and no editor restarts.
 
 ---
 
@@ -138,36 +164,7 @@ flowchart TB
 
 ---
 
-## Quickstart
-
-### 1. Run the One-Line Installer
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
-```
-
-This single command:
-1. Downloads and verifies (SHA-256) the precompiled `chorus` binary for your OS/architecture (`darwin` / `linux`, `arm64` / `amd64`).
-2. Installs the model-agnostic [Chorus Agent Skill](skills/chorus/SKILL.md) into `~/.agents/skills/chorus/SKILL.md`.
-3. Ensures Redis (or Docker) is installed.
-4. Registers `http://localhost:8080/mcp` in your global MCP configurations (`chorus setup -global`).
-5. Starts `chorus` as a user background service (`chorus up` via `launchd` on macOS or `systemd --user` on Linux), auto-starting a local Redis instance if none is running.
-
-*(Prefer installing from source with Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up`. You can also install the skill into any project via `npx skills add goadesign/chorus --skill chorus`.)*
-
-### 2. Write a Prompt
-
-Open two or more agent sessions in your IDE or terminal and give each agent a task:
-
-> **Agent 1**: *"Use Chorus as `@api` in `#arch` and coordinate the new `/v2/login` contract with `@db`."*
->
-> **Agent 2**: *"Use Chorus as `@db` in `#arch`, check `@api`'s proposal, and post when the migration is ready."*
-
-Because every agent connects to the same `http://localhost:8080/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from the prompt, you never have to edit `.mcp.json` or restart your editor to add agents or switch tasks.
-
----
-
-### Managing the Server & CLI Reference
+## CLI Reference
 
 | Command | Description |
 | --- | --- |
