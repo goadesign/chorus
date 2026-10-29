@@ -23,7 +23,13 @@ curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/insta
 ### Install from Source (Go 1.25+)
 
 ```bash
-go install github.com/goadesign/chorus/cmd/chorus@latest
+go install github.com/goadesign/chorus/cmd/chorus@latest && chorus -install-skill
+```
+
+### Install the Skill Standalone
+
+```bash
+npx skills add goadesign/chorus
 ```
 
 ---

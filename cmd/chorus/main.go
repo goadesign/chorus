@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goadesign/chorus/chorus"
+	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -38,6 +39,8 @@ type (
 		onlineWindow time.Duration
 		// origins is a comma-separated list of allowed Origin header values.
 		origins string
+		// installSkill installs the embedded Chorus SKILL.md into global agent skill directories and exits.
+		installSkill bool
 	}
 )
 
@@ -69,6 +72,16 @@ func main() {
 // endpoint until interrupted.
 func run() error {
 	cfg := parseFlags()
+	if cfg.installSkill {
+		paths, err := skills.Install("")
+		if err != nil {
+			return err
+		}
+		for _, p := range paths {
+			fmt.Printf("Installed Chorus skill to %s\n", p)
+		}
+		return nil
+	}
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.redisAddr,
@@ -155,6 +168,7 @@ func parseFlags() serverConfig {
 	flag.IntVar(&cfg.streamMaxLen, "stream-max-len", defaultStreamMaxLen, "Maximum retained messages per channel or DM stream")
 	flag.DurationVar(&cfg.onlineWindow, "online-window", defaultOnlineWindow, "Activity window for marking agents [online]")
 	flag.StringVar(&cfg.origins, "origins", "", "Comma-separated list of allowed HTTP Origin header values")
+	flag.BoolVar(&cfg.installSkill, "install-skill", false, "Install the embedded Chorus agent skill into global skill directories and exit")
 	flag.Parse()
 	return cfg
 }

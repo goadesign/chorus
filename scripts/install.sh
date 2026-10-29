@@ -5,8 +5,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
 #
 # Environment variables:
-#   CHORUS_VERSION  Release tag to install (default: latest release)
-#   INSTALL_DIR     Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
+#   CHORUS_VERSION   Release tag to install (default: latest release)
+#   INSTALL_DIR      Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
+#   CHORUS_NO_SKILL  Set to 1 to skip installing the Chorus agent skill
 
 set -eu
 
@@ -110,6 +111,9 @@ main() {
 	install -m 0755 "${tmpdir}/${BINARY}" "${dest_dir}/${BINARY}"
 
 	printf 'Installed %s %s to %s/%s\n' "$BINARY" "$version" "$dest_dir" "$BINARY"
+	if [ "${CHORUS_NO_SKILL:-0}" != "1" ]; then
+		"${dest_dir}/${BINARY}" -install-skill
+	fi
 	case ":${PATH}:" in
 		*":${dest_dir}:"*) ;;
 		*) printf 'Note: add %s to your PATH: export PATH="%s:$PATH"\n' "$dest_dir" "$dest_dir" ;;

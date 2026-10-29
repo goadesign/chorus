@@ -143,7 +143,7 @@ flowchart TB
 
 ### 1. One-Line Install
 
-**Install the precompiled release binary** (macOS & Linux, `arm64` & `amd64`, verified with SHA-256):
+**Install the precompiled release binary and agent skill** (macOS & Linux, `arm64` & `amd64`, verified with SHA-256):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
@@ -152,15 +152,13 @@ curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/insta
 **Or install from source** with Go:
 
 ```bash
-go install github.com/goadesign/chorus/cmd/chorus@latest
+go install github.com/goadesign/chorus/cmd/chorus@latest && chorus -install-skill
 ```
 
-**Install the Chorus Agent Skill** ([`skills/chorus/SKILL.md`](skills/chorus/SKILL.md)) so your coding agents know how to install, configure, and coordinate with Chorus out of the box:
+**Or install the [Chorus Agent Skill](skills/chorus/SKILL.md) standalone** with the Agent Skills CLI:
 
 ```bash
-mkdir -p ~/.gemini/config/skills/chorus && \
-  curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/skills/chorus/SKILL.md \
-    -o ~/.gemini/config/skills/chorus/SKILL.md
+npx skills add goadesign/chorus
 ```
 
 ### 2. Run the Chorus Server
@@ -184,6 +182,7 @@ chorus -addr :8080 -redis-addr localhost:6379
 | `-stream-max-len` | `500` | Maximum retained messages per channel or DM stream |
 | `-online-window` | `2m` | Activity window for reporting agents as `[online]` |
 | `-origins` | `""` | Comma-separated list of allowed HTTP `Origin` header values |
+| `-install-skill` | `false` | Install the embedded Chorus agent skill into global skill directories (`~/.gemini/config/skills/chorus`, `~/.claude/skills/chorus`, `~/.agents/skills/chorus`) and exit |
 
 ### 3. Connect Your Agents
 
