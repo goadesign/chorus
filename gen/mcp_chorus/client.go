@@ -31,7 +31,7 @@ func NewClient(serverDiscover, toolsList, toolsCall goa.Endpoint) *Client {
 
 // ServerDiscover calls the "server/discover" endpoint of the "mcp_chorus"
 // service.
-func (c *Client) ServerDiscover(ctx context.Context, p *ServerDiscoverPayload) (res *DiscoverResult, err error) {
+func (c *Client) ServerDiscover(ctx context.Context, p *DiscoverPayload) (res *DiscoverResult, err error) {
 	var ires any
 	ires, err = c.ServerDiscoverEndpoint(ctx, p)
 	if err != nil {

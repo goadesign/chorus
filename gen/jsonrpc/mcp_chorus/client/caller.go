@@ -19,14 +19,12 @@ import (
 type Caller struct {
 	client    *Client
 	transport *mcpruntime.HTTPTransport
-	httpPath0 string
-	httpPath1 string
 }
 
 // NewCaller checks application identity and fixes the authored URL values for
 // this caller. Each request keeps those values outside tool arguments; creating
 // the caller does not contact the server.
-func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy, httpPath0 string, httpPath1 string) (*Caller, error) {
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (*Caller, error) {
 	if err := retry.Validate(); err != nil {
 		return nil, err
 	}
@@ -35,12 +33,12 @@ func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.In
 	}
 	transport := mcpruntime.NewHTTPTransport(client.Doer, info, mcpHTTPBindings(), support, retry)
 
-	return &Caller{client: client, transport: transport, httpPath0: httpPath0, httpPath1: httpPath1}, nil
+	return &Caller{client: client, transport: transport}, nil
 }
 
 // CallTool sends exact arguments and returns validated content beside domain JSON.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-	payload := &mcpchorus.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload), HTTPPath0: c.httpPath0, HTTPPath1: c.httpPath1}
+	payload := &mcpchorus.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
 	request, err := c.client.BuildToolsCallRequest(ctx, payload)
 	if err != nil {
 		return mcpruntime.CallResponse{}, err
@@ -78,7 +76,7 @@ func (c *Caller) CancelTask(ctx context.Context, taskID string) error {
 // taskEndpoint asks the generated request builder for its fixed route. Only
 // authored URL values enter this builder; the shared transport encodes task data.
 func (c *Caller) taskEndpoint(ctx context.Context) (string, error) {
-	request, err := c.client.BuildToolsCallRequest(ctx, &mcpchorus.ToolsCallPayload{HTTPPath0: c.httpPath0, HTTPPath1: c.httpPath1})
+	request, err := c.client.BuildToolsCallRequest(ctx, &mcpchorus.ToolsCallPayload{})
 	if err != nil {
 		return "", err
 	}

@@ -25,7 +25,7 @@ import (
 type Service interface {
 	// Describe this server's protocol revision and declared tools, resources, and
 	// prompts
-	ServerDiscover(context.Context, *ServerDiscoverPayload) (res *DiscoverResult, err error)
+	ServerDiscover(context.Context, *DiscoverPayload) (res *DiscoverResult, err error)
 	// List available tools
 	ToolsList(context.Context, *ToolsListPayload) (res *ToolsListResult, err error)
 	// Call a tool
@@ -98,6 +98,13 @@ type ContentItem struct {
 	// Optional audience and importance for this content
 	Annotations *ContentAnnotations
 	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// DiscoverPayload is the payload type of the mcp_chorus service
+// server/discover method.
+type DiscoverPayload struct {
+	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
@@ -217,17 +224,6 @@ type ServerCapabilities struct {
 	Prompts *PromptsCapability
 }
 
-// ServerDiscoverPayload is the payload type of the mcp_chorus service
-// server/discover method.
-type ServerDiscoverPayload struct {
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// URL value for swarm; excluded from MCP parameters.
-	HTTPPath0 string
-	// URL value for agent; excluded from MCP parameters.
-	HTTPPath1 string
-}
-
 type TaskCreated struct {
 	// Opaque identifier used for later requests to this task
 	TaskID string
@@ -301,10 +297,6 @@ type ToolsCallPayload struct {
 	// Host answers indexed by this operation's request identifiers; an empty
 	// object still identifies a continuation
 	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
-	// URL value for swarm; excluded from MCP parameters.
-	HTTPPath0 string
-	// URL value for agent; excluded from MCP parameters.
-	HTTPPath1 string
 }
 
 // ToolsCallResult is the result type of the mcp_chorus service tools/call
@@ -327,10 +319,6 @@ type ToolsListPayload struct {
 	Cursor *string
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
-	// URL value for swarm; excluded from MCP parameters.
-	HTTPPath0 string
-	// URL value for agent; excluded from MCP parameters.
-	HTTPPath1 string
 }
 
 // ToolsListResult is the result type of the mcp_chorus service tools/list
@@ -542,6 +530,23 @@ func validatejsonContentItemTransport(value *jsonContentItemTransport) (err erro
 		if err2 := validatejsonContentAnnotationsTransport(value.Annotations); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
+	}
+	return err
+}
+
+// jsonDiscoverPayloadTransport stores JSON fields until they have been validated.
+type jsonDiscoverPayloadTransport struct {
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// validatejsonDiscoverPayloadTransport checks decoded JSON before it becomes a service value.
+func validatejsonDiscoverPayloadTransport(value *jsonDiscoverPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
 	return err
 }
@@ -1008,6 +1013,35 @@ func validatejsonToolsCallCompleteResultTransport(value *jsonToolsCallCompleteRe
 	return err
 }
 
+// jsonToolsCallPayloadTransport stores JSON fields until they have been validated.
+type jsonToolsCallPayloadTransport struct {
+	// Tool name
+	Name *string `json:"name"`
+	// Tool arguments
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `json:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
+}
+
+// validatejsonToolsCallPayloadTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolsCallPayloadTransport(value *jsonToolsCallPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
+	return err
+}
+
 // jsonToolsCallResultTransport stores JSON fields until they have been validated.
 type jsonToolsCallResultTransport struct {
 	// Finished tool data, an input round, or a durable task observation
@@ -1068,6 +1102,25 @@ func validatejsonToolsCapabilityTransport(value *jsonToolsCapabilityTransport) (
 		return goa.MissingFieldError("body", "JSON value")
 	}
 
+	return err
+}
+
+// jsonToolsListPayloadTransport stores JSON fields until they have been validated.
+type jsonToolsListPayloadTransport struct {
+	// Opaque cursor from a prior catalog page
+	Cursor *string `json:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// validatejsonToolsListPayloadTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolsListPayloadTransport(value *jsonToolsListPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
 	return err
 }
 
@@ -1243,6 +1296,14 @@ func validateResourceContentOriginal(value *ResourceContent) (err error) {
 	return err
 }
 
+// validateDiscoverPayloadOriginal checks the original typed value before JSON conversion.
+func validateDiscoverPayloadOriginal(value *DiscoverPayload) (err error) {
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "value"))
+	}
+	return err
+}
+
 // validateDiscoverResultOriginal checks the original typed value before JSON conversion.
 func validateDiscoverResultOriginal(value *DiscoverResult) (err error) {
 	if value.SupportedVersions == nil {
@@ -1364,6 +1425,14 @@ func validateToolsCallCompleteResultOriginal(value *ToolsCallCompleteResult) (er
 	return err
 }
 
+// validateToolsCallPayloadOriginal checks the original typed value before JSON conversion.
+func validateToolsCallPayloadOriginal(value *ToolsCallPayload) (err error) {
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "value"))
+	}
+	return err
+}
+
 // validateToolsCallResultOriginal checks the original typed value before JSON conversion.
 func validateToolsCallResultOriginal(value *ToolsCallResult) (err error) {
 	if value.Outcome.Kind() == "" {
@@ -1398,6 +1467,14 @@ func validateToolsCallResultOriginal(value *ToolsCallResult) (err error) {
 		}
 	}
 
+	return err
+}
+
+// validateToolsListPayloadOriginal checks the original typed value before JSON conversion.
+func validateToolsListPayloadOriginal(value *ToolsListPayload) (err error) {
+	if value.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "value"))
+	}
 	return err
 }
 
@@ -2230,6 +2307,89 @@ func DecodeContentItem(data []byte) (out *ContentItem, err error) {
 		}
 		if body.Annotations != nil {
 			out.Annotations = decodeContentAnnotationsTransportToContentAnnotations(body.Annotations)
+		}
+	}
+	return out, nil
+}
+
+// EncodeDiscoverPayload turns a service value into JSON using the field names in the Goa design.
+func EncodeDiscoverPayload(in *DiscoverPayload) ([]byte, error) {
+	if err := checkDiscoverPayloadValue(in); err != nil {
+		return nil, fmt.Errorf("encode DiscoverPayload JSON: %w", err)
+	}
+	if err := validateDiscoverPayloadOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate DiscoverPayload value: %w", err)
+	}
+	var body *jsonDiscoverPayloadTransport
+	{
+		body = &jsonDiscoverPayloadTransport{
+			Meta: in.Meta,
+		}
+	}
+	if err := validatejsonDiscoverPayloadTransport(body); err != nil {
+		return nil, fmt.Errorf("validate DiscoverPayload JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode DiscoverPayload JSON: %w", err)
+	}
+	return data, nil
+}
+
+// ValidateDiscoverPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateDiscoverPayloadValue(in *DiscoverPayload) error {
+	if err := checkDiscoverPayloadValue(in); err != nil {
+		return fmt.Errorf("validate DiscoverPayload value: %w", err)
+	}
+	if err := validateDiscoverPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate DiscoverPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "DiscoverPayload")
+	}
+
+	var body *jsonDiscoverPayloadTransport
+	{
+		body = &jsonDiscoverPayloadTransport{
+			Meta: in.Meta,
+		}
+	}
+	if err := validatejsonDiscoverPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate DiscoverPayload value: %w", err)
+	}
+	return nil
+}
+
+// DecodeDiscoverPayload checks JSON field names from the Goa design and returns a service value.
+func DecodeDiscoverPayload(data []byte) (out *DiscoverPayload, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode DiscoverPayload JSON: %w", err)
+	}
+	if err := validateDiscoverPayloadJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode DiscoverPayload JSON: %w", err)
+	}
+	var body *jsonDiscoverPayloadTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode DiscoverPayload JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode DiscoverPayload JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode DiscoverPayload JSON after first value: %w", err)
+	}
+	if err := validatejsonDiscoverPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate DiscoverPayload JSON: %w", err)
+	}
+	{
+		out = &DiscoverPayload{
+			Meta: body.Meta,
 		}
 	}
 	return out, nil
@@ -3982,6 +4142,122 @@ func DecodeToolsCallCompleteResult(data []byte) (out *ToolsCallCompleteResult, e
 	return out, nil
 }
 
+// EncodeToolsCallPayload turns a service value into JSON using the field names in the Goa design.
+func EncodeToolsCallPayload(in *ToolsCallPayload) ([]byte, error) {
+	if err := checkToolsCallPayloadValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolsCallPayload JSON: %w", err)
+	}
+	if err := validateToolsCallPayloadOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ToolsCallPayload value: %w", err)
+	}
+	var body *jsonToolsCallPayloadTransport
+	{
+		body = &jsonToolsCallPayloadTransport{
+			Name:         &in.Name,
+			Arguments:    in.Arguments,
+			Meta:         in.Meta,
+			RequestState: in.RequestState,
+		}
+		if in.InputResponses != nil {
+			body.InputResponses = make(map[string]json.RawMessage, len(in.InputResponses))
+			for key, val := range in.InputResponses {
+				tk := key
+				tv := val
+				body.InputResponses[tk] = tv
+			}
+		}
+	}
+	if err := validatejsonToolsCallPayloadTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolsCallPayload JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolsCallPayload JSON: %w", err)
+	}
+	return data, nil
+}
+
+// ValidateToolsCallPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolsCallPayloadValue(in *ToolsCallPayload) error {
+	if err := checkToolsCallPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ToolsCallPayload value: %w", err)
+	}
+	if err := validateToolsCallPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolsCallPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolsCallPayload")
+	}
+
+	var body *jsonToolsCallPayloadTransport
+	{
+		body = &jsonToolsCallPayloadTransport{
+			Name:         &in.Name,
+			Arguments:    in.Arguments,
+			Meta:         in.Meta,
+			RequestState: in.RequestState,
+		}
+		if in.InputResponses != nil {
+			body.InputResponses = make(map[string]json.RawMessage, len(in.InputResponses))
+			for key, val := range in.InputResponses {
+				tk := key
+				tv := val
+				body.InputResponses[tk] = tv
+			}
+		}
+	}
+	if err := validatejsonToolsCallPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ToolsCallPayload value: %w", err)
+	}
+	return nil
+}
+
+// DecodeToolsCallPayload checks JSON field names from the Goa design and returns a service value.
+func DecodeToolsCallPayload(data []byte) (out *ToolsCallPayload, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolsCallPayload JSON: %w", err)
+	}
+	if err := validateToolsCallPayloadJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolsCallPayload JSON: %w", err)
+	}
+	var body *jsonToolsCallPayloadTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolsCallPayload JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolsCallPayload JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolsCallPayload JSON after first value: %w", err)
+	}
+	if err := validatejsonToolsCallPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolsCallPayload JSON: %w", err)
+	}
+	{
+		out = &ToolsCallPayload{
+			Name:         *body.Name,
+			Arguments:    body.Arguments,
+			Meta:         body.Meta,
+			RequestState: body.RequestState,
+		}
+		if body.InputResponses != nil {
+			out.InputResponses = make(map[string]json.RawMessage, len(body.InputResponses))
+			for key, val := range body.InputResponses {
+				tk := key
+				tv := val
+				out.InputResponses[tk] = tv
+			}
+		}
+	}
+	return out, nil
+}
+
 // EncodeToolsCallResult turns a service value into JSON using the field names in the Goa design.
 func EncodeToolsCallResult(in *ToolsCallResult) ([]byte, error) {
 	if err := checkToolsCallResultValue(in); err != nil {
@@ -4222,6 +4498,92 @@ func DecodeToolsCapability(data []byte) (out *ToolsCapability, err error) {
 	{
 		out = &ToolsCapability{
 			ListChanged: body.ListChanged,
+		}
+	}
+	return out, nil
+}
+
+// EncodeToolsListPayload turns a service value into JSON using the field names in the Goa design.
+func EncodeToolsListPayload(in *ToolsListPayload) ([]byte, error) {
+	if err := checkToolsListPayloadValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolsListPayload JSON: %w", err)
+	}
+	if err := validateToolsListPayloadOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ToolsListPayload value: %w", err)
+	}
+	var body *jsonToolsListPayloadTransport
+	{
+		body = &jsonToolsListPayloadTransport{
+			Cursor: in.Cursor,
+			Meta:   in.Meta,
+		}
+	}
+	if err := validatejsonToolsListPayloadTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolsListPayload JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolsListPayload JSON: %w", err)
+	}
+	return data, nil
+}
+
+// ValidateToolsListPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolsListPayloadValue(in *ToolsListPayload) error {
+	if err := checkToolsListPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ToolsListPayload value: %w", err)
+	}
+	if err := validateToolsListPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolsListPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolsListPayload")
+	}
+
+	var body *jsonToolsListPayloadTransport
+	{
+		body = &jsonToolsListPayloadTransport{
+			Cursor: in.Cursor,
+			Meta:   in.Meta,
+		}
+	}
+	if err := validatejsonToolsListPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ToolsListPayload value: %w", err)
+	}
+	return nil
+}
+
+// DecodeToolsListPayload checks JSON field names from the Goa design and returns a service value.
+func DecodeToolsListPayload(data []byte) (out *ToolsListPayload, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolsListPayload JSON: %w", err)
+	}
+	if err := validateToolsListPayloadJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolsListPayload JSON: %w", err)
+	}
+	var body *jsonToolsListPayloadTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolsListPayload JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolsListPayload JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolsListPayload JSON after first value: %w", err)
+	}
+	if err := validatejsonToolsListPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolsListPayload JSON: %w", err)
+	}
+	{
+		out = &ToolsListPayload{
+			Cursor: body.Cursor,
+			Meta:   body.Meta,
 		}
 	}
 	return out, nil
@@ -5428,6 +5790,42 @@ func validateContentItemJSONValue4(path string, value any, description string) e
 	return nil
 }
 
+// validateDiscoverPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateDiscoverPayloadJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "_meta":
+			if err := validateContentItemJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Namespaced protocol metadata and extension values",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"_meta",
+			})
+		}
+	}
+	return nil
+}
+
 // validateDiscoverResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateDiscoverResultJSONValue(path string, value any, description string) error {
 	field := path
@@ -6554,6 +6952,106 @@ func validateToolsCallCompleteResultJSONValue2(path string, value any, descripti
 	return nil
 }
 
+// validateToolsCallPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsCallPayloadJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "_meta":
+			if err := validateContentItemJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Namespaced protocol metadata and extension values",
+			); err != nil {
+				return err
+			}
+		case "arguments":
+			if err := validateContentItemJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Tool arguments",
+			); err != nil {
+				return err
+			}
+		case "inputResponses":
+			if err := validateToolsCallPayloadJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Host answers indexed by this operation's request identifiers; an empty object still identifies a continuation",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateContentAnnotationsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Tool name",
+			); err != nil {
+				return err
+			}
+		case "requestState":
+			if err := validateContentAnnotationsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact service-owned state from this operation's preceding input round",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"_meta",
+				"arguments",
+				"inputResponses",
+				"name",
+				"requestState",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolsCallPayloadJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsCallPayloadJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validateContentItemJSONValue2(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // validateToolsCallResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsCallResultJSONValue(path string, value any, description string) error {
 	field := path
@@ -6623,6 +7121,50 @@ func validateToolsCallResultJSONValue2(path string, value any, description strin
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
+}
+
+// validateToolsListPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsListPayloadJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "_meta":
+			if err := validateContentItemJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Namespaced protocol metadata and extension values",
+			); err != nil {
+				return err
+			}
+		case "cursor":
+			if err := validateContentAnnotationsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Opaque cursor from a prior catalog page",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"_meta",
+				"cursor",
+			})
+		}
+	}
+	return nil
 }
 
 // validateToolsListResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -7107,6 +7649,38 @@ func checkContentItemResourceContentValue(in *ResourceContent, field string, act
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "blob", false))
 			}
 		}
+		if len(in.Meta) != 0 {
+			if _, err := readStrictJSON(in.Meta); err != nil {
+				return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(field, "_meta", false), err)
+			}
+		}
+	}
+	return nil
+}
+
+// checkDiscoverPayloadValue checks text and cycles before conversion.
+func checkDiscoverPayloadValue(in *DiscoverPayload) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkDiscoverPayloadDiscoverPayloadValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkDiscoverPayloadDiscoverPayloadValue checks one generated value on the active path.
+func checkDiscoverPayloadDiscoverPayloadValue(in *DiscoverPayload, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		if len(in.Meta) != 0 {
 			if _, err := readStrictJSON(in.Meta); err != nil {
 				return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(field, "_meta", false), err)
@@ -7794,6 +8368,62 @@ func checkToolsCallCompleteResultToolsCallCompleteResultValue(in *ToolsCallCompl
 	return nil
 }
 
+// checkToolsCallPayloadValue checks text and cycles before conversion.
+func checkToolsCallPayloadValue(in *ToolsCallPayload) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolsCallPayloadToolsCallPayloadValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolsCallPayloadToolsCallPayloadValue checks one generated value on the active path.
+func checkToolsCallPayloadToolsCallPayloadValue(in *ToolsCallPayload, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if len(in.Arguments) != 0 {
+			if _, err := readStrictJSON(in.Arguments); err != nil {
+				return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(field, "arguments", false), err)
+			}
+		}
+		if len(in.Meta) != 0 {
+			if _, err := readStrictJSON(in.Meta); err != nil {
+				return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(field, "_meta", false), err)
+			}
+		}
+		if in.RequestState != nil {
+			if !utf8.ValidString(string(*in.RequestState)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "requestState", false))
+			}
+		}
+		for key1, item1 := range in.InputResponses {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "inputResponses", false))
+			}
+			if len(item1) != 0 {
+				if _, err := readStrictJSON(item1); err != nil {
+					return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(generatedJSONChildPath(field, "inputResponses", false), string(key1), true), err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // checkToolsCallResultValue checks text and cycles before conversion.
 func checkToolsCallResultValue(in *ToolsCallResult) error {
 	if in == nil {
@@ -7853,6 +8483,43 @@ func checkToolsCapabilityValue(in *ToolsCapability) error {
 	active := make(map[any]bool)
 	if err := checkDiscoverResultToolsCapabilityValue(in, "$", active); err != nil {
 		return err
+	}
+	return nil
+}
+
+// checkToolsListPayloadValue checks text and cycles before conversion.
+func checkToolsListPayloadValue(in *ToolsListPayload) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolsListPayloadToolsListPayloadValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolsListPayloadToolsListPayloadValue checks one generated value on the active path.
+func checkToolsListPayloadToolsListPayloadValue(in *ToolsListPayload, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.Cursor != nil {
+			if !utf8.ValidString(string(*in.Cursor)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "cursor", false))
+			}
+		}
+		if len(in.Meta) != 0 {
+			if _, err := readStrictJSON(in.Meta); err != nil {
+				return fmt.Errorf("%s: invalid raw JSON: %w", generatedJSONChildPath(field, "_meta", false), err)
+			}
+		}
 	}
 	return nil
 }

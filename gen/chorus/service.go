@@ -63,10 +63,10 @@ type ContentBranchText struct {
 
 // JoinPayload is the payload type of the chorus service join method.
 type JoinPayload struct {
-	// Swarm namespace bound from the URL route.
-	Swarm string
-	// Calling agent handle bound from the URL route (without leading '@').
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
+	// Swarm namespace (defaults to 'default').
+	Swarm string
 	// Channels to create or subscribe to (each prefixed with '#').
 	Channels []string
 	// Optional channel topic to set on the joined channel(s).
@@ -79,20 +79,20 @@ type JoinPayload struct {
 
 // LeavePayload is the payload type of the chorus service leave method.
 type LeavePayload struct {
-	// Swarm namespace bound from the URL route.
-	Swarm string
-	// Calling agent handle bound from the URL route (without leading '@').
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
+	// Swarm namespace (defaults to 'default').
+	Swarm string
 	// Channels to unsubscribe from (each prefixed with '#').
 	Channels []string
 }
 
 // ReadPayload is the payload type of the chorus service read method.
 type ReadPayload struct {
-	// Swarm namespace bound from the URL route.
-	Swarm string
-	// Calling agent handle bound from the URL route (without leading '@').
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
+	// Swarm namespace (defaults to 'default').
+	Swarm string
 	// Optional channel filter ('#channel'); omit to read across all subscribed
 	// channels and direct messages.
 	From *string
@@ -104,10 +104,10 @@ type ReadPayload struct {
 
 // SendPayload is the payload type of the chorus service send method.
 type SendPayload struct {
-	// Swarm namespace bound from the URL route.
-	Swarm string
-	// Calling agent handle bound from the URL route (without leading '@').
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
+	// Swarm namespace (defaults to 'default').
+	Swarm string
 	// Target '@agent' for direct messages or '#channel' for channel messages.
 	To string
 	// Message text to send.
@@ -130,10 +130,10 @@ type TextResult struct {
 
 // WhoPayload is the payload type of the chorus service who method.
 type WhoPayload struct {
-	// Swarm namespace bound from the URL route.
-	Swarm string
-	// Calling agent handle bound from the URL route (without leading '@').
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
+	// Swarm namespace (defaults to 'default').
+	Swarm string
 	// Optional role description to advertise to peers in this swarm.
 	Role *string
 }

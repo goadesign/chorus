@@ -20,9 +20,9 @@ When multiple coding or research agents collaborate on a task, traditional chat 
 
 Chorus rethinks multi-agent coordination from the token budget up:
 
-- **Route-Bound Identity (`POST /mcp/{swarm}/{agent}`)**: Swarm and agent identity live in the MCP endpoint URL configured by the host. Neither `swarm` nor `agent` appears in any tool's `inputSchema`—agents never spend output tokens identifying themselves and cannot spoof another participant.
+- **Single Static MCP Endpoint (`POST /mcp`)**: Register `http://localhost:8080/mcp` once across all your projects and agents. Agents pick their own short handle (`"agent": "api"`) and optional swarm namespace (`"swarm": "default"`) directly from your prompt—no per-agent config files or IDE restarts.
 - **Full-Duplex Piggybacked Delivery**: Every `send` automatically drains and appends any unread direct messages or subscribed channel posts waiting for the caller (`--- unread ---`) in the **same tool response**, cutting coordination round-trips in half.
-- **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` with `{}` returns only messages published since the agent's last call.
+- **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` returns only messages published since the agent's last call.
 - **Pure Plain-Text Wire Grammar (`~12 tokens/message`)**: Tools return a single compact line-oriented text block (`#arch#14↩#12 @db: migration 004 applied`) with no `OutputSchema` and no duplicate `structuredContent` JSON payload.
 - **Sub-Millisecond In-Memory Directory & Instant Blocking Wakeups**: Presence, topics, subscriptions, and stream head counters live in `pulse/rmap` ($0\text{ ms}$ local memory reads); message logs live in bounded `pulse/streaming` Redis Streams; and `read(wait_sec)` blocks with zero polling until `rmap.Subscribe()` fires.
 
@@ -34,12 +34,11 @@ Most multi-agent MCP servers wrap human chat APIs and unintentionally impose fiv
 
 | Anti-Pattern in Naive Chat MCPs | Token & Latency Penalty | How Chorus Eliminates It |
 | --- | --- | --- |
-| **1. Self-identification on every call** (`agent_id`, `workspace_id` in tool args) | ~15–25 output tokens wasted per call; allows identity spoofing | Bound once in the MCP route (`POST /mcp/{swarm}/{agent}`); stripped from model-visible `InputSchema` |
-| **2. Stateless history re-reads** (`list_messages(channel, limit=50)`) | $O(N \times M)$ context explosion as agents re-read already-seen messages | Server-held per-agent watermarks in `pulse/rmap`; `read({})` returns only the unread delta $O(\Delta)$ |
-| **3. Verbose JSON message objects** (`{"id":"uuid","created_at":"...","author":{...}}`) | ~85–120 tokens of punctuation and metadata per message | Compact single-line wire grammar (`#arch#14 @db: ...`) averaging **~12 tokens/message** (**87% reduction**) |
-| **4. Double MCP serialization** (`content[0].text` + `structuredContent`) | Doubles tool result token usage in MCP hosts that ingest both fields | Uses Goa-AI `ToolContent` projection so `outputSchema` and `structuredContent` are omitted entirely |
-| **5. Send-then-poll round trips** (`send_message` followed by `get_inbox`) | Doubles LLM inference turns and tool-call latency during active collaboration | `send` automatically piggybacks unread DMs and subscribed channel messages in the same turn |
-| **6. Bloated 12–18 tool catalogs** (`list_users`, `list_channels`, `get_unread`, `ack`, ...) | ~1,600+ tokens re-billed on **every** LLM turn in the conversation | **5 orthogonal tools** (`who`, `join`, `leave`, `send`, `read`) totaling **~340 schema tokens** (**78% reduction**) |
+| **1. Stateless history re-reads** (`list_messages(channel, limit=50)`) | $O(N \times M)$ context explosion as agents re-read already-seen messages | Server-held per-agent watermarks in `pulse/rmap`; `read` returns only the unread delta $O(\Delta)$ |
+| **2. Verbose JSON message objects** (`{"id":"uuid","created_at":"...","author":{...}}`) | ~85–120 tokens of punctuation and metadata per message | Compact single-line wire grammar (`#arch#14 @db: ...`) averaging **~12 tokens/message** (**87% reduction**) |
+| **3. Double MCP serialization** (`content[0].text` + `structuredContent`) | Doubles tool result token usage in MCP hosts that ingest both fields | Uses Goa-AI `ToolContent` projection so `outputSchema` and `structuredContent` are omitted entirely |
+| **4. Send-then-poll round trips** (`send_message` followed by `get_inbox`) | Doubles LLM inference turns and tool-call latency during active collaboration | `send` automatically piggybacks unread DMs and subscribed channel messages in the same turn |
+| **5. Bloated 12–18 tool catalogs** (`list_users`, `list_channels`, `get_unread`, `ack`, ...) | ~1,600+ tokens re-billed on **every** LLM turn in the conversation | **5 orthogonal tools** (`who`, `join`, `leave`, `send`, `read`) totaling **~380 schema tokens** (**76% reduction**) |
 
 ---
 
@@ -99,13 +98,13 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 ```mermaid
 flowchart TB
     subgraph Agents["LLM Agents (MCP 2026-07-28 Clients)"]
-        A1["@lead<br/>POST /mcp/pr-42/lead"]
-        A2["@api<br/>POST /mcp/pr-42/api"]
-        A3["@db<br/>POST /mcp/pr-42/db"]
+        A1["@lead<br/>POST /mcp"]
+        A2["@api<br/>POST /mcp"]
+        A3["@db<br/>POST /mcp"]
     end
 
     subgraph Chorus["Chorus Stateless Server Replicas (Goa-AI)"]
-        Adapter["Generated MCP JSON-RPC Adapter<br/>(Route-bound {swarm}/{agent} injection)"]
+        Adapter["Generated MCP JSON-RPC Adapter<br/>(POST /mcp · GET /healthz)"]
         Svc["Chorus Service<br/>(who · join · leave · send · read)"]
         RMapLocal["In-Memory rmap Replica<br/>0ms Reads · Subscribe() Wakeups"]
         Adapter --> Svc
@@ -141,55 +140,49 @@ flowchart TB
 
 ## Quickstart
 
-### 1. One-Line Install
-
-**Install the precompiled release binary** (macOS & Linux, `arm64` & `amd64`, verified with SHA-256):
+### 1. Run the One-Line Installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
 ```
 
-**Or install from source** with Go:
+This single command:
+1. Downloads and verifies (SHA-256) the precompiled `chorus` binary for your OS/architecture (`darwin` / `linux`, `arm64` / `amd64`).
+2. Installs the model-agnostic [Chorus Agent Skill](skills/chorus/SKILL.md) into `~/.agents/skills/chorus/SKILL.md`.
+3. Ensures Redis (or Docker) is installed.
+4. Registers `http://localhost:8080/mcp` in your global MCP configurations (`chorus setup -global`).
+5. Starts `chorus` as a user background service (`chorus up` via `launchd` on macOS or `systemd --user` on Linux), auto-starting a local Redis instance if none is running.
 
-```bash
-go install github.com/goadesign/chorus/cmd/chorus@latest
-```
+*(Prefer installing from source with Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up`. You can also install the skill into any project via `npx skills add goadesign/chorus --skill chorus`.)*
 
-**Install the [Chorus Agent Skill](skills/chorus/)** in your repository or globally using the model-agnostic [Skills CLI](https://github.com/vercel-labs/skills) ([other installation options](skills/)):
+### 2. Write a Prompt
 
-```bash
-npx skills add goadesign/chorus --skill chorus
-```
+Open two or more agent sessions in your IDE or terminal and give each agent a task:
 
-### 2. Run the Chorus Server
+> **Agent 1**: *"Use Chorus as `@api` in `#arch` and coordinate the new `/v2/login` contract with `@db`."*
+>
+> **Agent 2**: *"Use Chorus as `@db` in `#arch`, check `@api`'s proposal, and post when the migration is ready."*
 
-Start `chorus`:
+Because every agent connects to the same `http://localhost:8080/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from the prompt, you never have to edit `.mcp.json` or restart your editor to add agents or switch tasks.
 
-```bash
-chorus
-```
+---
 
-When targeting a local address (default `localhost:6379`) and Redis is not already running, **`chorus` automatically boots a managed local `redis-server` subprocess or a `redis:7-alpine` Docker container** and stops it cleanly on shutdown.
+### Managing the Server & CLI Reference
 
-If neither `redis-server` nor Docker is installed yet, install Redis with a single command (the one-line `install.sh` script also does this automatically):
+| Command | Description |
+| --- | --- |
+| `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` |
+| `chorus down` | Stop the background Chorus service |
+| `chorus status` | Check whether Chorus is responding at `http://localhost:8080/healthz` |
+| `chorus setup` | Register `http://localhost:8080/mcp` in `./.mcp.json` (pass `-global` for global agent configs) |
+| `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
-```bash
-# macOS / Homebrew
-brew install redis
-
-# Ubuntu / Debian
-sudo apt-get update && sudo apt-get install -y redis-server
-
-# Or run a standalone Redis 7 container via Docker
-docker run -d --name chorus-redis -p 6379:6379 redis:7-alpine
-```
-
-#### CLI Flags
+#### Server Flags (`chorus serve` / `chorus up`)
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-addr` | `:8080` | HTTP listen address |
-| `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`) |
+| `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`); auto-starts local `redis-server` or `redis:7-alpine` container when targeting loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
 | `-redis-db` | `0` | Redis database index |
 | `-swarm-ttl` | `24h` | Sliding TTL for swarm state and streams |
@@ -197,33 +190,22 @@ docker run -d --name chorus-redis -p 6379:6379 redis:7-alpine
 | `-online-window` | `2m` | Activity window for reporting agents as `[online]` |
 | `-origins` | `""` | Comma-separated list of allowed HTTP `Origin` header values |
 
-### 3. Connect Your Agents
+#### Manual MCP Configuration (`.mcp.json`)
 
-Give each agent in a swarm (`pr-42`) its own MCP endpoint URL encoding its handle (`@lead`, `@api`, `@db`):
+Running `chorus setup` writes this configuration automatically:
 
 ```json
 {
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8080/mcp/pr-42/api"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
 ```
 
-### 4. Recommended Agent System Prompt Snippet
-
-If you are not using the bundled [Chorus Agent Skill](skills/chorus/SKILL.md), drop this 3-line instruction into your agents' system prompts:
-
-```markdown
-You are connected to the `chorus` MCP server for multi-agent coordination.
-1. Start by calling `who` (passing your `role`) and `join` relevant `#channels`.
-2. Communicate via `send(to: "#channel" | "@agent", text: "...")`; always read any `--- unread ---` messages returned at the bottom of `send` responses.
-3. Call `read` (`wait_sec: 15` when waiting on a peer) to receive new messages.
-```
-
-### 5. Embed Chorus in Your Own Go Server
+### Embed Chorus in Your Own Go Server
 
 You can also mount `chorus.Service` directly inside an existing Go service:
 
@@ -253,15 +235,15 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp/{swarm}/{agent}`. Route parameters `swarm` and `agent` are injected automatically by the transport and omitted from the model-visible JSON schemas below.
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required) and `swarm` (optional, defaults to `"default"`).
 
-| Tool | Model-Visible Arguments | Description |
+| Tool | Arguments | Description |
 | --- | --- | --- |
-| `who` | `role?` (`string`) | Lists all agents in the swarm (with roles and `[online]` / `[idle Xm]` status), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
-| `join` | `channels` (`string[]`, required), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns the last `tail` messages. |
-| `leave` | `channels` (`string[]`, required) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks. |
-| `send` | `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `reply_to?` (`int`) | Publishes a message to a `#channel` (auto-subscribing the sender) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
-| `read` | `from?` (`"#channel"`), `wait_sec?` (`int`, `0..30`, default `0`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up. |
+| `who` | `agent` (`string`, required), `swarm?` (`string`, default `"default"`), `role?` (`string`) | Lists all agents in the swarm (with roles and `[online]` / `[idle Xm]` status), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
+| `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns the last `tail` messages. |
+| `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks. |
+| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`) | Publishes a message to a `#channel` (auto-subscribing the sender) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
+| `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..30`, default `0`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up. |
 
 ---
 

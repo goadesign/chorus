@@ -926,32 +926,28 @@ func NewToolsCallMissingClientCapabilityResponseBody(res *mcpchorus.MissingClien
 	return body
 }
 
-// NewServerDiscoverPayload builds a mcp_chorus service server/discover
+// NewServerDiscoverDiscoverPayload builds a mcp_chorus service server/discover
 // endpoint payload.
-func NewServerDiscoverPayload(body *ServerDiscoverRequestBody, httpPath0 string, httpPath1 string) *mcpchorus.ServerDiscoverPayload {
-	v := &mcpchorus.ServerDiscoverPayload{
+func NewServerDiscoverDiscoverPayload(body *ServerDiscoverRequestBody) *mcpchorus.DiscoverPayload {
+	v := &mcpchorus.DiscoverPayload{
 		Meta: body.Meta,
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v
 }
 
 // NewToolsListPayload builds a mcp_chorus service tools/list endpoint payload.
-func NewToolsListPayload(body *ToolsListRequestBody, httpPath0 string, httpPath1 string) *mcpchorus.ToolsListPayload {
+func NewToolsListPayload(body *ToolsListRequestBody) *mcpchorus.ToolsListPayload {
 	v := &mcpchorus.ToolsListPayload{
 		Cursor: body.Cursor,
 		Meta:   body.Meta,
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v
 }
 
 // NewToolsCallPayload builds a mcp_chorus service tools/call endpoint payload.
-func NewToolsCallPayload(body *ToolsCallRequestBody, httpPath0 string, httpPath1 string) *mcpchorus.ToolsCallPayload {
+func NewToolsCallPayload(body *ToolsCallRequestBody) *mcpchorus.ToolsCallPayload {
 	v := &mcpchorus.ToolsCallPayload{
 		Name:         *body.Name,
 		Arguments:    body.Arguments,
@@ -966,8 +962,6 @@ func NewToolsCallPayload(body *ToolsCallRequestBody, httpPath0 string, httpPath1
 			v.InputResponses[tk] = tv
 		}
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v
 }

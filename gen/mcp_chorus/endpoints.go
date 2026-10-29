@@ -40,7 +40,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 // "server/discover" of service "mcp_chorus".
 func NewServerDiscoverEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ServerDiscoverPayload)
+		p := req.(*DiscoverPayload)
 		return s.ServerDiscover(ctx, p)
 	}
 }

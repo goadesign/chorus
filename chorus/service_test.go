@@ -49,22 +49,22 @@ type (
 	testReplica struct {
 		// svc is the Chorus Service instance for this replica.
 		svc *chorus.Service
-		// httpServer is the in-process HTTP server serving POST /mcp/{swarm}/{agent}.
+		// httpServer is the in-process HTTP server serving POST /mcp.
 		httpServer *httptest.Server
 		// mcpClient is the generated Goa-AI MCP 2026-07-28 client targeting httpServer.
 		mcpClient *genmcpchorusclient.Client
 	}
 
 	// emulatedAgent simulates an LLM agent connected to a Chorus replica via
-	// POST /mcp/{swarm}/{agent}. It discovers tool schemas via tools/list,
-	// validates outgoing arguments against the model-visible InputSchema, and
-	// parses compact Chorus wire responses to drive coordination decisions.
+	// POST /mcp. It discovers tool schemas via tools/list, validates outgoing
+	// arguments against the model-visible InputSchema, and parses compact Chorus
+	// wire responses to drive coordination decisions.
 	emulatedAgent struct {
 		// t is the owning test handle.
 		t *testing.T
-		// swarm is the URL-bound swarm identifier.
+		// swarm is the swarm namespace passed in tool arguments (or "" to use the default swarm).
 		swarm string
-		// handle is the URL-bound agent handle (without '@').
+		// handle is the agent's handle (without '@').
 		handle string
 		// replica is the Chorus server replica this agent is connected to.
 		replica *testReplica
@@ -129,11 +129,18 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	replica := c.replicas[0]
 	ctx := context.Background()
 
-	// 1. Verify server/discover and tools/list schemas via generated MCP client.
-	discoverAny, err := replica.mcpClient.ServerDiscover()(ctx, &genmcpchorus.ServerDiscoverPayload{
-		HTTPPath0: "pr-42",
-		HTTPPath1: "lead",
-	})
+	// 1. Verify GET /healthz liveness probe.
+	healthResp, err := replica.httpServer.Client().Get(replica.httpServer.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	_ = healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /healthz, got %d", healthResp.StatusCode)
+	}
+
+	// 2. Verify server/discover and tools/list schemas via generated MCP client.
+	discoverAny, err := replica.mcpClient.ServerDiscover()(ctx, &genmcpchorus.DiscoverPayload{})
 	if err != nil {
 		t.Fatalf("ServerDiscover failed: %v", err)
 	}
@@ -142,7 +149,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		t.Fatalf("expected tools capability in ServerDiscover, got %+v", discoverRes)
 	}
 
-	lead := c.newAgent(0, "pr-42", "lead")
+	lead := c.newAgent(0, "", "lead")
 	wantTools := []string{"who", "join", "leave", "send", "read"}
 	if len(lead.schemas) != len(wantTools) {
 		t.Fatalf("expected %d tools, got %d", len(wantTools), len(lead.schemas))
@@ -152,16 +159,24 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing tool %q in tools/list", name)
 		}
-		if _, hasSwarm := props["swarm"]; hasSwarm {
-			t.Fatalf("tool %q leaked route parameter 'swarm' into InputSchema", name)
+		if _, hasAgent := props["agent"]; !hasAgent {
+			t.Fatalf("tool %q missing 'agent' property in InputSchema", name)
 		}
-		if _, hasAgent := props["agent"]; hasAgent {
-			t.Fatalf("tool %q leaked route parameter 'agent' into InputSchema", name)
+		if _, hasSwarm := props["swarm"]; !hasSwarm {
+			t.Fatalf("tool %q missing 'swarm' property in InputSchema", name)
 		}
 	}
 
-	// 2. Verify legacy MCP 2025-11-25 initialize & ping compatibility.
-	initResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp/pr-42/lead", "", "", map[string]any{
+	// Verify omitting "swarm" defaults to the "default" swarm seamlessly.
+	defaultWho := lead.call("who", map[string]any{
+		"role": "Default Swarm Lead",
+	})
+	if !strings.Contains(defaultWho, "@lead (Default Swarm Lead) [online]") {
+		t.Fatalf("expected default swarm who output to contain @lead, got:\n%s", defaultWho)
+	}
+
+	// 3. Verify legacy MCP 2025-11-25 initialize & ping compatibility at POST /mcp.
+	initResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp", "", "", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
@@ -176,7 +191,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	}
 	_ = initResp.Body.Close()
 
-	pingResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp/pr-42/lead", "", "2025-11-25", map[string]any{
+	pingResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp", "", "2025-11-25", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "ping",
@@ -186,8 +201,8 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	}
 	_ = pingResp.Body.Close()
 
-	// 3. Verify HTTP Origin guard (allowed origin vs disallowed origin) and HTTP method guard.
-	allowedResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp/pr-42/lead", "https://allowed.example.com", "2025-11-25", map[string]any{
+	// 4. Verify HTTP Origin guard (allowed origin vs disallowed origin) and HTTP method guard.
+	allowedResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp", "https://allowed.example.com", "2025-11-25", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "ping",
@@ -197,7 +212,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	}
 	_ = allowedResp.Body.Close()
 
-	forbiddenResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp/pr-42/lead", "https://evil.example.com", "2025-11-25", map[string]any{
+	forbiddenResp := postRawJSONRPC(t, replica.httpServer.URL+"/mcp", "https://evil.example.com", "2025-11-25", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      4,
 		"method":  "ping",
@@ -207,7 +222,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	}
 	_ = forbiddenResp.Body.Close()
 
-	getReq, err := http.NewRequest(http.MethodGet, replica.httpServer.URL+"/mcp/pr-42/lead", nil)
+	getReq, err := http.NewRequest(http.MethodGet, replica.httpServer.URL+"/mcp", nil)
 	if err != nil {
 		t.Fatalf("new GET request: %v", err)
 	}
@@ -220,7 +235,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		t.Fatalf("expected GET on MCP endpoint to return 405 Method Not Allowed, got %d", getResp.StatusCode)
 	}
 
-	// 4. Verify input validation errors on malformed tool arguments and route parameters.
+	// 5. Verify input validation errors on malformed tool arguments.
 	lead.callExpectingError("join", map[string]any{
 		"channels": []string{"missing_hash_prefix"},
 	})
@@ -237,21 +252,12 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	lead.callExpectingError("read", map[string]any{
 		"limit": 0,
 	})
-
-	// Route parameter pattern violation (leading '@' in URL agent segment).
-	routeResAny, routeErr := replica.mcpClient.ToolsCall()(ctx, &genmcpchorus.ToolsCallPayload{
-		Name:      "who",
-		Arguments: json.RawMessage(`{}`),
-		HTTPPath0: "pr-42",
-		HTTPPath1: "@invalid-agent-handle",
+	lead.callExpectingError("who", map[string]any{
+		"agent": "@invalid-agent-handle",
 	})
-	if routeErr == nil {
-		routeRes := routeResAny.(*genmcpchorus.ToolsCallResult)
-		complete, ok := routeRes.Outcome.AsComplete()
-		if !ok || complete.IsError == nil || !*complete.IsError {
-			t.Fatal("expected IsError=true when agent URL segment contains '@'")
-		}
-	}
+	lead.callExpectingError("who", map[string]any{
+		"swarm": "invalid/swarm",
+	})
 }
 
 func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
@@ -822,10 +828,7 @@ func (c *testCluster) newAgent(replicaIdx int, swarm, handle string) *emulatedAg
 	c.t.Helper()
 	rep := c.replicas[replicaIdx]
 
-	listAny, err := rep.mcpClient.ToolsList()(context.Background(), &genmcpchorus.ToolsListPayload{
-		HTTPPath0: swarm,
-		HTTPPath1: handle,
-	})
+	listAny, err := rep.mcpClient.ToolsList()(context.Background(), &genmcpchorus.ToolsListPayload{})
 	if err != nil {
 		c.t.Fatalf("ToolsList for @%s in %s failed: %v", handle, swarm, err)
 	}
@@ -868,11 +871,28 @@ func (c *testCluster) advanceClock(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// withIdentity copies args and populates "agent" (and "swarm" when non-empty)
+// if not already set by the caller.
+func (a *emulatedAgent) withIdentity(args map[string]any) map[string]any {
+	merged := make(map[string]any, len(args)+2)
+	for k, v := range args {
+		merged[k] = v
+	}
+	if _, ok := merged["agent"]; !ok {
+		merged["agent"] = a.handle
+	}
+	if _, ok := merged["swarm"]; !ok && a.swarm != "" {
+		merged["swarm"] = a.swarm
+	}
+	return merged
+}
+
 // call validates args against the tool's discovered InputSchema, invokes
 // tools/call over HTTP, asserts that StructuredContent is omitted, and returns
 // the plain-text wire output.
 func (a *emulatedAgent) call(toolName string, args map[string]any) string {
 	a.t.Helper()
+	args = a.withIdentity(args)
 
 	props, ok := a.schemas[toolName]
 	if !ok {
@@ -891,8 +911,6 @@ func (a *emulatedAgent) call(toolName string, args map[string]any) string {
 	resAny, err := a.replica.mcpClient.ToolsCall()(context.Background(), &genmcpchorus.ToolsCallPayload{
 		Name:      toolName,
 		Arguments: rawArgs,
-		HTTPPath0: a.swarm,
-		HTTPPath1: a.handle,
 	})
 	if err != nil {
 		a.t.Fatalf("ToolsCall(%s) for @%s in %s failed: %v", toolName, a.handle, a.swarm, err)
@@ -922,6 +940,7 @@ func (a *emulatedAgent) call(toolName string, args map[string]any) string {
 // the MCP server rejects the call.
 func (a *emulatedAgent) callExpectingError(toolName string, args map[string]any) {
 	a.t.Helper()
+	args = a.withIdentity(args)
 
 	rawArgs, err := json.Marshal(args)
 	if err != nil {
@@ -930,8 +949,6 @@ func (a *emulatedAgent) callExpectingError(toolName string, args map[string]any)
 	resAny, err := a.replica.mcpClient.ToolsCall()(context.Background(), &genmcpchorus.ToolsCallPayload{
 		Name:      toolName,
 		Arguments: rawArgs,
-		HTTPPath0: a.swarm,
-		HTTPPath1: a.handle,
 	})
 	if err != nil {
 		return

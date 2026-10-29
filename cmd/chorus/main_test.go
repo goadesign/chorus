@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -61,5 +64,80 @@ func TestConnectOrStartRedis(t *testing.T) {
 	stopFn()
 	if err := pingRedis(context.Background(), rdb, initialPingTimeout); err == nil {
 		t.Fatalf("expected auto-started Redis at %s to stop after stopFn()", addr)
+	}
+}
+
+// TestSetupMCPConfigs verifies that setupMCPConfigs creates and idempotently
+// merges the Chorus MCP server entry into project and global MCP JSON files
+// while preserving existing settings and peer MCP servers.
+func TestSetupMCPConfigs(t *testing.T) {
+	cwd := t.TempDir()
+	home := t.TempDir()
+
+	// Pre-populate ~/.cursor/mcp.json with an existing server entry and top-level setting.
+	cursorDir := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
+		t.Fatalf("mkdir .cursor: %v", err)
+	}
+	existingJSON := `{
+  "customKey": "keep-me",
+  "mcpServers": {
+    "other": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp"
+    }
+  }
+}`
+	cursorConfig := filepath.Join(cursorDir, "mcp.json")
+	if err := os.WriteFile(cursorConfig, []byte(existingJSON), 0o600); err != nil {
+		t.Fatalf("write cursor mcp.json: %v", err)
+	}
+
+	// 1. Project-local setup (.mcp.json).
+	projPaths, err := setupMCPConfigs(cwd, home, "http://localhost:8080/mcp", false)
+	if err != nil {
+		t.Fatalf("setupMCPConfigs(project) failed: %v", err)
+	}
+	if len(projPaths) != 1 || projPaths[0] != filepath.Join(cwd, ".mcp.json") {
+		t.Fatalf("unexpected project paths: %v", projPaths)
+	}
+
+	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json).
+	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:8080/mcp", true)
+	if err != nil {
+		t.Fatalf("setupMCPConfigs(global) failed: %v", err)
+	}
+	if len(globalPaths) != 1 || globalPaths[0] != cursorConfig {
+		t.Fatalf("unexpected global paths: %v", globalPaths)
+	}
+
+	raw, err := os.ReadFile(cursorConfig)
+	if err != nil {
+		t.Fatalf("read updated cursor mcp.json: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal updated cursor mcp.json: %v", err)
+	}
+	if parsed["customKey"] != "keep-me" {
+		t.Fatalf("expected customKey to be preserved, got %v", parsed["customKey"])
+	}
+	servers := parsed["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Fatalf("expected peer server 'other' to be preserved, got %v", servers)
+	}
+	chorusEntry := servers["chorus"].(map[string]any)
+	if chorusEntry["url"] != "http://localhost:8080/mcp" || chorusEntry["type"] != "http" {
+		t.Fatalf("unexpected chorus MCP entry: %v", chorusEntry)
+	}
+}
+
+// TestLocalBaseURL verifies normalization of listen addresses to local HTTP URLs.
+func TestLocalBaseURL(t *testing.T) {
+	if got := localBaseURL(":8080"); got != "http://localhost:8080" {
+		t.Fatalf("localBaseURL(:8080) = %q", got)
+	}
+	if got := localBaseURL("127.0.0.1:9090"); got != "http://localhost:9090" {
+		t.Fatalf("localBaseURL(127.0.0.1:9090) = %q", got)
 	}
 }

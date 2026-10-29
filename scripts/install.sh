@@ -9,6 +9,8 @@
 #   INSTALL_DIR      Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
 #   CHORUS_NO_SKILL  Set to 1 to skip installing the Chorus agent skill
 #   CHORUS_NO_REDIS  Set to 1 to skip checking/installing Redis
+#   CHORUS_NO_SETUP  Set to 1 to skip registering the Chorus MCP endpoint
+#   CHORUS_NO_START  Set to 1 to skip starting the Chorus background service
 
 set -eu
 
@@ -148,6 +150,12 @@ main() {
 	fi
 	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
 		ensure_redis
+	fi
+	if [ "${CHORUS_NO_SETUP:-0}" != "1" ]; then
+		"${dest_dir}/${BINARY}" setup -global || true
+	fi
+	if [ "${CHORUS_NO_START:-0}" != "1" ]; then
+		"${dest_dir}/${BINARY}" up || true
 	fi
 	case ":${PATH}:" in
 		*":${dest_dir}:"*) ;;

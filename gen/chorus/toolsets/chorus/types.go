@@ -10,6 +10,10 @@ package chorus
 type (
 	// JoinPayload defines the JSON payload for the chorus.join tool.
 	JoinPayload = struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent string
+		// Swarm namespace (defaults to 'default').
+		Swarm string
 		// Channels to create or subscribe to (each prefixed with '#').
 		Channels []string
 		// Optional channel topic to set on the joined channel(s).
@@ -21,11 +25,19 @@ type (
 	}
 	// LeavePayload defines the JSON payload for the chorus.leave tool.
 	LeavePayload = struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent string
+		// Swarm namespace (defaults to 'default').
+		Swarm string
 		// Channels to unsubscribe from (each prefixed with '#').
 		Channels []string
 	}
 	// ReadPayload defines the JSON payload for the chorus.read tool.
 	ReadPayload = struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent string
+		// Swarm namespace (defaults to 'default').
+		Swarm string
 		// Optional channel filter ('#channel'); omit to read across all subscribed
 		// channels and direct messages.
 		From *string
@@ -36,6 +48,10 @@ type (
 	}
 	// SendPayload defines the JSON payload for the chorus.send tool.
 	SendPayload = struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent string
+		// Swarm namespace (defaults to 'default').
+		Swarm string
 		// Target '@agent' for direct messages or '#channel' for channel messages.
 		To string
 		// Message text to send.
@@ -45,6 +61,10 @@ type (
 	}
 	// WhoPayload defines the JSON payload for the chorus.who tool.
 	WhoPayload = struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent string
+		// Swarm namespace (defaults to 'default').
+		Swarm string
 		// Optional role description to advertise to peers in this swarm.
 		Role *string
 	}

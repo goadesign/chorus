@@ -12,7 +12,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,21 +26,7 @@ import (
 // BuildServerDiscoverRequest instantiates a HTTP request object with method
 // and path set to call the "mcp_chorus" service "server/discover" endpoint
 func (c *Client) BuildServerDiscoverRequest(ctx context.Context, v any) (*http.Request, error) {
-	var (
-		httpPath0 string
-		httpPath1 string
-	)
-	{
-		p, ok := v.(*mcpchorus.ServerDiscoverPayload)
-		if !ok {
-			return nil, goahttp.ErrInvalidType("mcp_chorus", "server/discover", "*mcpchorus.ServerDiscoverPayload", v)
-		}
-		httpPath0 = p.HTTPPath0
-		httpPath1 = p.HTTPPath1
-	}
-
-	rawPath := fmt.Sprintf("/mcp/%v/%v", url.PathEscape(fmt.Sprint(httpPath0)), url.PathEscape(fmt.Sprint(httpPath1)))
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ServerDiscoverMcpChorusPath(httpPath0, httpPath1), RawPath: rawPath}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ServerDiscoverMcpChorusPath()}
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return nil, goahttp.ErrInvalidURL("mcp_chorus", "server/discover", u.String(), err)
@@ -58,9 +43,9 @@ func (c *Client) BuildServerDiscoverRequest(ctx context.Context, v any) (*http.R
 // request ID written into the JSON-RPC message.
 func EncodeServerDiscoverRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) (string, error) {
 	return func(req *http.Request, v any) (string, error) {
-		p, ok := v.(*mcpchorus.ServerDiscoverPayload)
+		p, ok := v.(*mcpchorus.DiscoverPayload)
 		if !ok {
-			return "", goahttp.ErrInvalidType("mcp_chorus", "server/discover", "*mcpchorus.ServerDiscoverPayload", v)
+			return "", goahttp.ErrInvalidType("mcp_chorus", "server/discover", "*mcpchorus.DiscoverPayload", v)
 		}
 		b := NewServerDiscoverRequestBody(p)
 		body := &jsonrpc.Request{
@@ -142,21 +127,7 @@ func DecodeServerDiscoverResponse(decoder func(*http.Response) goahttp.Decoder, 
 // BuildToolsListRequest instantiates a HTTP request object with method and
 // path set to call the "mcp_chorus" service "tools/list" endpoint
 func (c *Client) BuildToolsListRequest(ctx context.Context, v any) (*http.Request, error) {
-	var (
-		httpPath0 string
-		httpPath1 string
-	)
-	{
-		p, ok := v.(*mcpchorus.ToolsListPayload)
-		if !ok {
-			return nil, goahttp.ErrInvalidType("mcp_chorus", "tools/list", "*mcpchorus.ToolsListPayload", v)
-		}
-		httpPath0 = p.HTTPPath0
-		httpPath1 = p.HTTPPath1
-	}
-
-	rawPath := fmt.Sprintf("/mcp/%v/%v", url.PathEscape(fmt.Sprint(httpPath0)), url.PathEscape(fmt.Sprint(httpPath1)))
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToolsListMcpChorusPath(httpPath0, httpPath1), RawPath: rawPath}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToolsListMcpChorusPath()}
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return nil, goahttp.ErrInvalidURL("mcp_chorus", "tools/list", u.String(), err)
@@ -284,21 +255,7 @@ func DecodeToolsListResponse(decoder func(*http.Response) goahttp.Decoder, resto
 // BuildToolsCallRequest instantiates a HTTP request object with method and
 // path set to call the "mcp_chorus" service "tools/call" endpoint
 func (c *Client) BuildToolsCallRequest(ctx context.Context, v any) (*http.Request, error) {
-	var (
-		httpPath0 string
-		httpPath1 string
-	)
-	{
-		p, ok := v.(*mcpchorus.ToolsCallPayload)
-		if !ok {
-			return nil, goahttp.ErrInvalidType("mcp_chorus", "tools/call", "*mcpchorus.ToolsCallPayload", v)
-		}
-		httpPath0 = p.HTTPPath0
-		httpPath1 = p.HTTPPath1
-	}
-
-	rawPath := fmt.Sprintf("/mcp/%v/%v", url.PathEscape(fmt.Sprint(httpPath0)), url.PathEscape(fmt.Sprint(httpPath1)))
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToolsCallMcpChorusPath(httpPath0, httpPath1), RawPath: rawPath}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToolsCallMcpChorusPath()}
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return nil, goahttp.ErrInvalidURL("mcp_chorus", "tools/call", u.String(), err)

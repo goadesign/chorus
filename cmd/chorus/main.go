@@ -1,5 +1,5 @@
-// Command chorus runs the Chorus multi-agent coordination MCP server backed by
-// Pulse and Redis.
+// Command chorus runs and manages the Chorus multi-agent coordination MCP
+// server backed by Pulse and Redis.
 package main
 
 import (
@@ -60,23 +60,48 @@ const (
 	autoStartTimeout = 15 * time.Second
 	// shutdownTimeout bounds graceful HTTP and Pulse shutdown.
 	shutdownTimeout = 10 * time.Second
-	// dockerContainerName is the container name used when auto-starting Redis via Docker.
+	// dockerContainerName is the container name prefix used when auto-starting Redis via Docker.
 	dockerContainerName = "chorus-redis"
 	// dockerRedisImage is the Redis image used when auto-starting Redis via Docker.
 	dockerRedisImage = "redis:7-alpine"
 )
 
 func main() {
-	if err := run(); err != nil {
-		slog.Error("chorus server exited with error", "err", err)
+	if err := dispatch(os.Args[1:]); err != nil {
+		slog.Error("chorus exited with error", "err", err)
 		os.Exit(1)
 	}
 }
 
-// run parses command-line flags, connects to (or auto-starts) Redis, and serves
+// dispatch routes CLI subcommands ("up", "down", "status", "setup", "serve")
+// or defaults to running the foreground server when invoked with flags or no arguments.
+func dispatch(args []string) error {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "up":
+			return runUp(args[1:])
+		case "down":
+			return runDown(args[1:])
+		case "status":
+			return runStatus(args[1:])
+		case "setup":
+			return runSetup(args[1:])
+		case "serve":
+			return runServe(args[1:])
+		default:
+			return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, serve)", args[0])
+		}
+	}
+	return runServe(args)
+}
+
+// runServe parses server flags, connects to (or auto-starts) Redis, and serves
 // the Chorus MCP endpoint until interrupted.
-func run() error {
-	cfg := parseFlags()
+func runServe(args []string) error {
+	cfg, err := parseServerFlags(args)
+	if err != nil {
+		return err
+	}
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.redisAddr,
@@ -125,7 +150,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("chorus MCP server listening", "addr", cfg.addr, "endpoint", "/mcp/{swarm}/{agent}", "redis", cfg.redisAddr)
+		slog.Info("chorus MCP server listening", "addr", cfg.addr, "endpoint", "/mcp", "redis", cfg.redisAddr)
 		if serveErr := httpServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			errCh <- serveErr
 			return
@@ -147,23 +172,26 @@ func run() error {
 	}
 }
 
-// parseFlags parses CLI flags and environment variable defaults into serverConfig.
-func parseFlags() serverConfig {
+// parseServerFlags parses CLI flags and environment variable defaults into serverConfig.
+func parseServerFlags(args []string) (serverConfig, error) {
 	var cfg serverConfig
 	defaultRedis := os.Getenv("REDIS_ADDR")
 	if defaultRedis == "" {
 		defaultRedis = defaultRedisAddr
 	}
-	flag.StringVar(&cfg.addr, "addr", defaultListenAddr, "HTTP listen address")
-	flag.StringVar(&cfg.redisAddr, "redis-addr", defaultRedis, "Redis server address (host:port)")
-	flag.StringVar(&cfg.redisPassword, "redis-password", os.Getenv("REDIS_PASSWORD"), "Redis password")
-	flag.IntVar(&cfg.redisDB, "redis-db", 0, "Redis database index")
-	flag.DurationVar(&cfg.swarmTTL, "swarm-ttl", defaultSwarmTTL, "Sliding TTL for swarm state and streams")
-	flag.IntVar(&cfg.streamMaxLen, "stream-max-len", defaultStreamMaxLen, "Maximum retained messages per channel or DM stream")
-	flag.DurationVar(&cfg.onlineWindow, "online-window", defaultOnlineWindow, "Activity window for marking agents [online]")
-	flag.StringVar(&cfg.origins, "origins", "", "Comma-separated list of allowed HTTP Origin header values")
-	flag.Parse()
-	return cfg
+	fs := flag.NewFlagSet("chorus", flag.ContinueOnError)
+	fs.StringVar(&cfg.addr, "addr", defaultListenAddr, "HTTP listen address")
+	fs.StringVar(&cfg.redisAddr, "redis-addr", defaultRedis, "Redis server address (host:port)")
+	fs.StringVar(&cfg.redisPassword, "redis-password", os.Getenv("REDIS_PASSWORD"), "Redis password")
+	fs.IntVar(&cfg.redisDB, "redis-db", 0, "Redis database index")
+	fs.DurationVar(&cfg.swarmTTL, "swarm-ttl", defaultSwarmTTL, "Sliding TTL for swarm state and streams")
+	fs.IntVar(&cfg.streamMaxLen, "stream-max-len", defaultStreamMaxLen, "Maximum retained messages per channel or DM stream")
+	fs.DurationVar(&cfg.onlineWindow, "online-window", defaultOnlineWindow, "Activity window for marking agents [online]")
+	fs.StringVar(&cfg.origins, "origins", "", "Comma-separated list of allowed HTTP Origin header values")
+	if err := fs.Parse(args); err != nil {
+		return serverConfig{}, err
+	}
+	return cfg, nil
 }
 
 // connectOrStartRedis verifies connectivity to rdb at redisAddr. When redisAddr

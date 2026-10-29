@@ -788,7 +788,7 @@ func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
 
 // NewServerDiscoverRequestBody builds the HTTP request body from the payload
 // of the "server/discover" endpoint of the "mcp_chorus" service.
-func NewServerDiscoverRequestBody(p *mcpchorus.ServerDiscoverPayload) *ServerDiscoverRequestBody {
+func NewServerDiscoverRequestBody(p *mcpchorus.DiscoverPayload) *ServerDiscoverRequestBody {
 	body := &ServerDiscoverRequestBody{
 		Meta: p.Meta,
 	}

@@ -7,19 +7,17 @@
 
 package server
 
-import "fmt"
-
 // ServerDiscoverMcpChorusPath returns the URL path to the mcp_chorus service server/discover HTTP endpoint.
-func ServerDiscoverMcpChorusPath(httpPath0 string, httpPath1 string) string {
-	return fmt.Sprintf("/mcp/%v/%v", httpPath0, httpPath1)
+func ServerDiscoverMcpChorusPath() string {
+	return "/mcp"
 }
 
 // ToolsListMcpChorusPath returns the URL path to the mcp_chorus service tools/list HTTP endpoint.
-func ToolsListMcpChorusPath(httpPath0 string, httpPath1 string) string {
-	return fmt.Sprintf("/mcp/%v/%v", httpPath0, httpPath1)
+func ToolsListMcpChorusPath() string {
+	return "/mcp"
 }
 
 // ToolsCallMcpChorusPath returns the URL path to the mcp_chorus service tools/call HTTP endpoint.
-func ToolsCallMcpChorusPath(httpPath0 string, httpPath1 string) string {
-	return fmt.Sprintf("/mcp/%v/%v", httpPath0, httpPath1)
+func ToolsCallMcpChorusPath() string {
+	return "/mcp"
 }

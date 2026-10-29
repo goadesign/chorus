@@ -22,10 +22,10 @@ import (
 
 // DecodeServerDiscoverRequest returns a decoder for requests sent to the
 // mcp_chorus server/discover endpoint.
-func DecodeServerDiscoverRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpchorus.ServerDiscoverPayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpchorus.ServerDiscoverPayload, error) {
+func DecodeServerDiscoverRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpchorus.DiscoverPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpchorus.DiscoverPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpchorus.ServerDiscoverPayload
+		var payload *mcpchorus.DiscoverPayload
 		var (
 			body ServerDiscoverRequestBody
 			err  error
@@ -45,16 +45,7 @@ func DecodeServerDiscoverRequest(mux goahttp.Muxer, decoder func(*http.Request) 
 		if err != nil {
 			return payload, err
 		}
-
-		var (
-			httpPath0 string
-			httpPath1 string
-
-			params = mux.Vars(r)
-		)
-		httpPath0 = params["swarm"]
-		httpPath1 = params["agent"]
-		payload = NewServerDiscoverPayload(&body, httpPath0, httpPath1)
+		payload = NewServerDiscoverDiscoverPayload(&body)
 
 		return payload, nil
 	}
@@ -85,16 +76,7 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		if err != nil {
 			return payload, err
 		}
-
-		var (
-			httpPath0 string
-			httpPath1 string
-
-			params = mux.Vars(r)
-		)
-		httpPath0 = params["swarm"]
-		httpPath1 = params["agent"]
-		payload = NewToolsListPayload(&body, httpPath0, httpPath1)
+		payload = NewToolsListPayload(&body)
 
 		return payload, nil
 	}
@@ -125,16 +107,7 @@ func DecodeToolsCallRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		if err != nil {
 			return payload, err
 		}
-
-		var (
-			httpPath0 string
-			httpPath1 string
-
-			params = mux.Vars(r)
-		)
-		httpPath0 = params["swarm"]
-		httpPath1 = params["agent"]
-		payload = NewToolsCallPayload(&body, httpPath0, httpPath1)
+		payload = NewToolsCallPayload(&body)
 
 		return payload, nil
 	}

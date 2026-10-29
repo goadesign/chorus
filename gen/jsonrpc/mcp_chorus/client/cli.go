@@ -17,7 +17,7 @@ import (
 
 // BuildServerDiscoverPayload builds the payload for the mcp_chorus
 // server/discover endpoint from CLI flags.
-func BuildServerDiscoverPayload(mcpChorusServerDiscoverBody *string, mcpChorusServerDiscoverHTTPPath0 *string, mcpChorusServerDiscoverHTTPPath1 *string) (*mcpchorus.ServerDiscoverPayload, error) {
+func BuildServerDiscoverPayload(mcpChorusServerDiscoverBody *string) (*mcpchorus.DiscoverPayload, error) {
 	var err error
 	var body ServerDiscoverRequestBody
 	{
@@ -35,32 +35,16 @@ func BuildServerDiscoverPayload(mcpChorusServerDiscoverBody *string, mcpChorusSe
 			return nil, err
 		}
 	}
-	var httpPath0 string
-	{
-		if mcpChorusServerDiscoverHTTPPath0 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path0")
-		}
-		httpPath0 = *mcpChorusServerDiscoverHTTPPath0
-	}
-	var httpPath1 string
-	{
-		if mcpChorusServerDiscoverHTTPPath1 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path1")
-		}
-		httpPath1 = *mcpChorusServerDiscoverHTTPPath1
-	}
-	v := &mcpchorus.ServerDiscoverPayload{
+	v := &mcpchorus.DiscoverPayload{
 		Meta: body.Meta,
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v, nil
 }
 
 // BuildToolsListPayload builds the payload for the mcp_chorus tools/list
 // endpoint from CLI flags.
-func BuildToolsListPayload(mcpChorusToolsListBody *string, mcpChorusToolsListHTTPPath0 *string, mcpChorusToolsListHTTPPath1 *string) (*mcpchorus.ToolsListPayload, error) {
+func BuildToolsListPayload(mcpChorusToolsListBody *string) (*mcpchorus.ToolsListPayload, error) {
 	var err error
 	var body ToolsListRequestBody
 	{
@@ -78,33 +62,17 @@ func BuildToolsListPayload(mcpChorusToolsListBody *string, mcpChorusToolsListHTT
 			return nil, err
 		}
 	}
-	var httpPath0 string
-	{
-		if mcpChorusToolsListHTTPPath0 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path0")
-		}
-		httpPath0 = *mcpChorusToolsListHTTPPath0
-	}
-	var httpPath1 string
-	{
-		if mcpChorusToolsListHTTPPath1 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path1")
-		}
-		httpPath1 = *mcpChorusToolsListHTTPPath1
-	}
 	v := &mcpchorus.ToolsListPayload{
 		Cursor: body.Cursor,
 		Meta:   body.Meta,
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v, nil
 }
 
 // BuildToolsCallPayload builds the payload for the mcp_chorus tools/call
 // endpoint from CLI flags.
-func BuildToolsCallPayload(mcpChorusToolsCallBody *string, mcpChorusToolsCallHTTPPath0 *string, mcpChorusToolsCallHTTPPath1 *string) (*mcpchorus.ToolsCallPayload, error) {
+func BuildToolsCallPayload(mcpChorusToolsCallBody *string) (*mcpchorus.ToolsCallPayload, error) {
 	var err error
 	var body ToolsCallRequestBody
 	{
@@ -122,20 +90,6 @@ func BuildToolsCallPayload(mcpChorusToolsCallBody *string, mcpChorusToolsCallHTT
 			return nil, err
 		}
 	}
-	var httpPath0 string
-	{
-		if mcpChorusToolsCallHTTPPath0 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path0")
-		}
-		httpPath0 = *mcpChorusToolsCallHTTPPath0
-	}
-	var httpPath1 string
-	{
-		if mcpChorusToolsCallHTTPPath1 == nil {
-			return nil, fmt.Errorf("missing required flag --http-path1")
-		}
-		httpPath1 = *mcpChorusToolsCallHTTPPath1
-	}
 	v := &mcpchorus.ToolsCallPayload{
 		Name:         body.Name,
 		Arguments:    body.Arguments,
@@ -150,8 +104,6 @@ func BuildToolsCallPayload(mcpChorusToolsCallBody *string, mcpChorusToolsCallHTT
 			v.InputResponses[tk] = tv
 		}
 	}
-	v.HTTPPath0 = httpPath0
-	v.HTTPPath1 = httpPath1
 
 	return v, nil
 }

@@ -4,9 +4,9 @@
 
 Chorus (`github.com/goadesign/chorus`) is a token-minimal multi-agent coordination MCP (`2026-07-28`) server built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`goa.design/goa-ai`) and backed by [Pulse](https://github.com/goadesign/pulse) (`goa.design/pulse`).
 
-- `design/design.go`: Single source of truth for the Goa-AI MCP service contract (`who`, `join`, `leave`, `send`, `read`) and route-bound identity (`POST /mcp/{swarm}/{agent}`).
+- `design/design.go`: Single source of truth for the Goa-AI MCP service contract (`who`, `join`, `leave`, `send`, `read`) at `POST /mcp`.
 - `chorus/`: Core implementation (`service.go`, `swarm.go`, `wire.go`) and end-to-end MCP HTTP integration tests (`service_test.go`).
-- `cmd/chorus/`: Standalone HTTP server binary (`main.go`, `main_test.go`).
+- `cmd/chorus/`: Standalone HTTP server binary, background service manager (`up`, `down`, `status`), and MCP config registrar (`setup`) (`main.go`, `daemon.go`, `main_test.go`).
 - `skills/`: Model-agnostic Chorus Agent Skill package (`README.md`, `chorus/SKILL.md`).
 - `scripts/install.sh`: One-line release binary and skill installer.
 - `gen/`: Generated Goa and Goa-AI MCP server, adapter, codec, and client code. **Never edit files under `gen/` by hand**; run `goa gen github.com/goadesign/chorus/design`.
@@ -47,8 +47,8 @@ Chorus (`github.com/goadesign/chorus`) is a token-minimal multi-agent coordinati
 ## 3. Agentic Systems and MCP Contract Design
 
 - **Mechanical vs. semantic decisions:**
-  - **Mechanical decisions** (values derivable from auth/route context, typed contracts/results, or execution state—such as `swarm` and `agent` identity, cursor watermarks, sequence numbers, and subscription tracking) belong to code via route parameters, schemas, codecs, or runtime state. Never ask the LLM to pass or repeat mechanical context (`swarm`, `agent`, or opaque cursors) in tool arguments.
-  - **Semantic decisions** (which `#channel` or `@agent` to message, message text, role summary, or whether to block via `wait_sec`) stay model-driven with concise, well-constrained schemas.
+  - **Mechanical decisions** (values derivable from typed contracts/results or execution state—such as cursor watermarks, sequence numbers,subscription tracking, and the default `"default"` swarm namespace) belong to code via schema defaults, codecs, or runtime state. Never ask the LLM to pass or repeat opaque cursors in tool arguments.
+  - **Semantic decisions** (the agent's chosen `agent` handle, optional `swarm` namespace override, which `#channel` or `@agent` to message, message text, role summary, or whether to block via `wait_sec`) stay model-driven with concise, well-constrained schemas.
 - **Token-minimal wire representation:**
   - Keep tool results projected via `ToolContent("content")` in `design/design.go` so `outputSchema` and `structuredContent` remain omitted from MCP `tools/list` and `tools/call` responses.
   - Treat tool and argument `Description` strings in `design/design.go` as model-facing prompts: state the concrete effect, input format, and result format concisely without exposing internal orchestration or storage implementation details.

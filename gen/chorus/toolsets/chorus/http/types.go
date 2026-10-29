@@ -13,6 +13,10 @@ type (
 	// decode + validation (missing-field detection) before transforming into
 	// the public tool type.
 	JoinPayloadTransport struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent *string `json:"agent"`
+		// Swarm namespace (defaults to 'default').
+		Swarm *string `json:"swarm,omitempty"`
 		// Channels to create or subscribe to (each prefixed with '#').
 		Channels []string `json:"channels"`
 		// Optional channel topic to set on the joined channel(s).
@@ -27,6 +31,10 @@ type (
 	// decode + validation (missing-field detection) before transforming into
 	// the public tool type.
 	LeavePayloadTransport struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent *string `json:"agent"`
+		// Swarm namespace (defaults to 'default').
+		Swarm *string `json:"swarm,omitempty"`
 		// Channels to unsubscribe from (each prefixed with '#').
 		Channels []string `json:"channels"`
 	}
@@ -35,6 +43,10 @@ type (
 	// decode + validation (missing-field detection) before transforming into
 	// the public tool type.
 	ReadPayloadTransport struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent *string `json:"agent"`
+		// Swarm namespace (defaults to 'default').
+		Swarm *string `json:"swarm,omitempty"`
 		// Optional channel filter ('#channel'); omit to read across all subscribed
 		// channels and direct messages.
 		From *string `json:"from,omitempty"`
@@ -48,6 +60,10 @@ type (
 	// decode + validation (missing-field detection) before transforming into
 	// the public tool type.
 	SendPayloadTransport struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent *string `json:"agent"`
+		// Swarm namespace (defaults to 'default').
+		Swarm *string `json:"swarm,omitempty"`
 		// Target '@agent' for direct messages or '#channel' for channel messages.
 		To *string `json:"to"`
 		// Message text to send.
@@ -60,6 +76,10 @@ type (
 	// decode + validation (missing-field detection) before transforming into
 	// the public tool type.
 	WhoPayloadTransport struct {
+		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+		Agent *string `json:"agent"`
+		// Swarm namespace (defaults to 'default').
+		Swarm *string `json:"swarm,omitempty"`
 		// Optional role description to advertise to peers in this swarm.
 		Role *string `json:"role,omitempty"`
 	}

@@ -1,10 +1,10 @@
 // Package design declares the Goa and Goa-AI MCP 2026-07-28 contract for the
 // Chorus multi-agent coordination service.
 //
-// Chorus exposes five tools (who, join, leave, send, read) whose caller
-// identity ({swarm}, {agent}) is bound from the HTTP route and stripped from
-// model-visible tool schemas, and whose results use ToolContent("content") with
-// no additional structured fields so the generated MCP server omits
+// Chorus exposes five tools (who, join, leave, send, read) at a single static
+// endpoint (POST /mcp). Each tool takes the caller's agent handle ("agent") and
+// an optional swarm namespace ("swarm", defaulting to "default"), and returns
+// TextResult via ToolContent("content") so the generated MCP server omits
 // outputSchema and structuredContent on the wire.
 package design
 
@@ -52,25 +52,26 @@ var _ = Service("chorus", func() {
 	MCP("chorus", "1.0.0")
 
 	JSONRPC(func() {
-		POST("/mcp/{swarm}/{agent}")
+		POST("/mcp")
 	})
 
 	Method("who", func() {
 		Description("List active participants, channels, subscriptions, and unread counts in the swarm.")
 		Payload(func() {
-			Attribute("swarm", String, "Swarm namespace bound from the URL route.", func() {
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("checkout")
-			})
-			Attribute("agent", String, "Calling agent handle bound from the URL route (without leading '@').", func() {
+			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
+			})
+			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
+				Default("default")
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("default")
 			})
 			Attribute("role", String, "Optional role description to advertise to peers in this swarm.", func() {
 				MaxLength(80)
 				Example("API Engineer")
 			})
-			Required("swarm", "agent")
+			Required("agent")
 		})
 		Result(TextResult)
 		Tool("who", "List active participants (@agent), channels (#channel), and your unread message counts.", func() {
@@ -84,13 +85,14 @@ var _ = Service("chorus", func() {
 	Method("join", func() {
 		Description("Create or subscribe to one or more channels and return their topic and recent messages.")
 		Payload(func() {
-			Attribute("swarm", String, "Swarm namespace bound from the URL route.", func() {
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("checkout")
-			})
-			Attribute("agent", String, "Calling agent handle bound from the URL route (without leading '@').", func() {
+			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
+			})
+			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
+				Default("default")
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("default")
 			})
 			Attribute("channels", ArrayOf(String), "Channels to create or subscribe to (each prefixed with '#').", func() {
 				MinLength(1)
@@ -115,7 +117,7 @@ var _ = Service("chorus", func() {
 				Maximum(50)
 				Example(5)
 			})
-			Required("swarm", "agent", "channels")
+			Required("agent", "channels")
 		})
 		Result(TextResult)
 		Tool("join", "Subscribe to (or create) #channels and read their topic and recent tail.", func() {
@@ -129,13 +131,14 @@ var _ = Service("chorus", func() {
 	Method("leave", func() {
 		Description("Unsubscribe from one or more channels.")
 		Payload(func() {
-			Attribute("swarm", String, "Swarm namespace bound from the URL route.", func() {
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("checkout")
-			})
-			Attribute("agent", String, "Calling agent handle bound from the URL route (without leading '@').", func() {
+			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
+			})
+			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
+				Default("default")
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("default")
 			})
 			Attribute("channels", ArrayOf(String), "Channels to unsubscribe from (each prefixed with '#').", func() {
 				MinLength(1)
@@ -146,7 +149,7 @@ var _ = Service("chorus", func() {
 				})
 				Example([]string{"#arch"})
 			})
-			Required("swarm", "agent", "channels")
+			Required("agent", "channels")
 		})
 		Result(TextResult)
 		Tool("leave", "Unsubscribe from #channels.", func() {
@@ -160,13 +163,14 @@ var _ = Service("chorus", func() {
 	Method("send", func() {
 		Description("Send a message to @agent or #channel and atomically return any unread messages for the caller.")
 		Payload(func() {
-			Attribute("swarm", String, "Swarm namespace bound from the URL route.", func() {
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("checkout")
-			})
-			Attribute("agent", String, "Calling agent handle bound from the URL route (without leading '@').", func() {
+			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
+			})
+			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
+				Default("default")
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("default")
 			})
 			Attribute("to", String, "Target '@agent' for direct messages or '#channel' for channel messages.", func() {
 				Pattern(`^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -181,7 +185,7 @@ var _ = Service("chorus", func() {
 				Minimum(1)
 				Example(14)
 			})
-			Required("swarm", "agent", "to", "text")
+			Required("agent", "to", "text")
 		})
 		Result(TextResult)
 		Tool("send", "Send a message to @agent or #channel; also drains and returns your unread messages.", func() {
@@ -194,13 +198,14 @@ var _ = Service("chorus", func() {
 	Method("read", func() {
 		Description("Drain unread messages across subscribed channels and direct messages, optionally waiting for new arrivals.")
 		Payload(func() {
-			Attribute("swarm", String, "Swarm namespace bound from the URL route.", func() {
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("checkout")
-			})
-			Attribute("agent", String, "Calling agent handle bound from the URL route (without leading '@').", func() {
+			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
+			})
+			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
+				Default("default")
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("default")
 			})
 			Attribute("from", String, "Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.", func() {
 				Pattern(`^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -218,7 +223,7 @@ var _ = Service("chorus", func() {
 				Maximum(50)
 				Example(20)
 			})
-			Required("swarm", "agent")
+			Required("agent")
 		})
 		Result(TextResult)
 		Tool("read", "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block).", func() {

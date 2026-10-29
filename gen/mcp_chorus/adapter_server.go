@@ -115,7 +115,7 @@ func resultMeta() json.RawMessage {
 }
 
 // ServerDiscover describes declared capabilities without creating client state.
-func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *ServerDiscoverPayload) (*DiscoverResult, error) {
+func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*DiscoverResult, error) {
 	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
 	defer span.End()
 	capabilities := &ServerCapabilities{}
@@ -231,126 +231,6 @@ func (e *endpointResultError) Error() string {
 	return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
 }
 
-// fillinvokeMCPMethod0Inputs places transport values and typed host answers in
-// the original service payload. Full validation runs before endpoint dispatch;
-// invalid credentials return a fixed error without disclosing their values.
-func fillinvokeMCPMethod0Inputs(payload *chorus.WhoPayload, routeValue0Raw string, routeValue1Raw string) error {
-	var err error
-	var routeValue0 string
-	{
-		routeValue0 = routeValue0Raw
-	}
-	var routeValue1 string
-	{
-		routeValue1 = routeValue1Raw
-	}
-	if err != nil {
-		return goa.PermanentError("invalid_params", "%s", err.Error())
-	}
-	payload.Swarm = routeValue0
-	payload.Agent = routeValue1
-	if err := mcpcodec.ValidateWhoInputValue(payload); err != nil {
-		return goa.PermanentError("invalid_params", "HTTP inputs do not match the service contract")
-	}
-	return nil
-}
-
-// fillinvokeMCPMethod1Inputs places transport values and typed host answers in
-// the original service payload. Full validation runs before endpoint dispatch;
-// invalid credentials return a fixed error without disclosing their values.
-func fillinvokeMCPMethod1Inputs(payload *chorus.JoinPayload, routeValue0Raw string, routeValue1Raw string) error {
-	var err error
-	var routeValue0 string
-	{
-		routeValue0 = routeValue0Raw
-	}
-	var routeValue1 string
-	{
-		routeValue1 = routeValue1Raw
-	}
-	if err != nil {
-		return goa.PermanentError("invalid_params", "%s", err.Error())
-	}
-	payload.Swarm = routeValue0
-	payload.Agent = routeValue1
-	if err := mcpcodec.ValidateJoinInputValue(payload); err != nil {
-		return goa.PermanentError("invalid_params", "HTTP inputs do not match the service contract")
-	}
-	return nil
-}
-
-// fillinvokeMCPMethod2Inputs places transport values and typed host answers in
-// the original service payload. Full validation runs before endpoint dispatch;
-// invalid credentials return a fixed error without disclosing their values.
-func fillinvokeMCPMethod2Inputs(payload *chorus.LeavePayload, routeValue0Raw string, routeValue1Raw string) error {
-	var err error
-	var routeValue0 string
-	{
-		routeValue0 = routeValue0Raw
-	}
-	var routeValue1 string
-	{
-		routeValue1 = routeValue1Raw
-	}
-	if err != nil {
-		return goa.PermanentError("invalid_params", "%s", err.Error())
-	}
-	payload.Swarm = routeValue0
-	payload.Agent = routeValue1
-	if err := mcpcodec.ValidateLeaveInputValue(payload); err != nil {
-		return goa.PermanentError("invalid_params", "HTTP inputs do not match the service contract")
-	}
-	return nil
-}
-
-// fillinvokeMCPMethod3Inputs places transport values and typed host answers in
-// the original service payload. Full validation runs before endpoint dispatch;
-// invalid credentials return a fixed error without disclosing their values.
-func fillinvokeMCPMethod3Inputs(payload *chorus.SendPayload, routeValue0Raw string, routeValue1Raw string) error {
-	var err error
-	var routeValue0 string
-	{
-		routeValue0 = routeValue0Raw
-	}
-	var routeValue1 string
-	{
-		routeValue1 = routeValue1Raw
-	}
-	if err != nil {
-		return goa.PermanentError("invalid_params", "%s", err.Error())
-	}
-	payload.Swarm = routeValue0
-	payload.Agent = routeValue1
-	if err := mcpcodec.ValidateSendInputValue(payload); err != nil {
-		return goa.PermanentError("invalid_params", "HTTP inputs do not match the service contract")
-	}
-	return nil
-}
-
-// fillinvokeMCPMethod4Inputs places transport values and typed host answers in
-// the original service payload. Full validation runs before endpoint dispatch;
-// invalid credentials return a fixed error without disclosing their values.
-func fillinvokeMCPMethod4Inputs(payload *chorus.ReadPayload, routeValue0Raw string, routeValue1Raw string) error {
-	var err error
-	var routeValue0 string
-	{
-		routeValue0 = routeValue0Raw
-	}
-	var routeValue1 string
-	{
-		routeValue1 = routeValue1Raw
-	}
-	if err != nil {
-		return goa.PermanentError("invalid_params", "%s", err.Error())
-	}
-	payload.Swarm = routeValue0
-	payload.Agent = routeValue1
-	if err := mcpcodec.ValidateReadInputValue(payload); err != nil {
-		return goa.PermanentError("invalid_params", "HTTP inputs do not match the service contract")
-	}
-	return nil
-}
-
 // ToolsList returns either the fixed catalog or an authenticated page of
 // declared tool names. The generated tool definitions keep their exact schemas.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
@@ -367,31 +247,31 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 			Name:        "join",
 			Description: stringPtr("Subscribe to (or create) #channels and read their topic and recent tail."),
 			Annotations: &ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: boolPtr(true)},
-			InputSchema: json.RawMessage("{\"$defs\":{\"JoinPayload\":{\"properties\":{\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"maxLength\":80,\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"channels\"],\"title\":\"JoinPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"maxLength\":80,\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"channels\"],\"title\":\"JoinPayload\",\"type\":\"object\"}"),
+			InputSchema: json.RawMessage("{\"$defs\":{\"JoinPayload\":{\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"title\":\"JoinPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"title\":\"JoinPayload\",\"type\":\"object\"}"),
 		},
 		{
 			Name:        "leave",
 			Description: stringPtr("Unsubscribe from #channels."),
 			Annotations: &ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: boolPtr(true)},
-			InputSchema: json.RawMessage("{\"$defs\":{\"LeavePayload\":{\"properties\":{\"channels\":{\"description\":\"Channels to unsubscribe from (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"}},\"required\":[\"channels\"],\"title\":\"LeavePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"channels\":{\"description\":\"Channels to unsubscribe from (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"}},\"required\":[\"channels\"],\"title\":\"LeavePayload\",\"type\":\"object\"}"),
+			InputSchema: json.RawMessage("{\"$defs\":{\"LeavePayload\":{\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to unsubscribe from (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"title\":\"LeavePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to unsubscribe from (each prefixed with '#').\",\"items\":{\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"title\":\"LeavePayload\",\"type\":\"object\"}"),
 		},
 		{
 			Name:        "read",
 			Description: stringPtr("Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block)."),
 			Annotations: &ToolAnnotations{ReadOnlyHint: boolPtr(false)},
-			InputSchema: json.RawMessage("{\"$defs\":{\"ReadPayload\":{\"properties\":{\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"title\":\"ReadPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"title\":\"ReadPayload\",\"type\":\"object\"}"),
+			InputSchema: json.RawMessage("{\"$defs\":{\"ReadPayload\":{\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"title\":\"ReadPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"title\":\"ReadPayload\",\"type\":\"object\"}"),
 		},
 		{
 			Name:        "send",
 			Description: stringPtr("Send a message to @agent or #channel; also drains and returns your unread messages."),
 			Annotations: &ToolAnnotations{DestructiveHint: boolPtr(false)},
-			InputSchema: json.RawMessage("{\"$defs\":{\"SendPayload\":{\"properties\":{\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"text\":{\"description\":\"Message text to send.\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"title\":\"SendPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"text\":{\"description\":\"Message text to send.\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"title\":\"SendPayload\",\"type\":\"object\"}"),
+			InputSchema: json.RawMessage("{\"$defs\":{\"SendPayload\":{\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"title\":\"SendPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"title\":\"SendPayload\",\"type\":\"object\"}"),
 		},
 		{
 			Name:        "who",
 			Description: stringPtr("List active participants (@agent), channels (#channel), and your unread message counts."),
 			Annotations: &ToolAnnotations{ReadOnlyHint: boolPtr(true), IdempotentHint: boolPtr(true)},
-			InputSchema: json.RawMessage("{\"$defs\":{\"WhoPayload\":{\"properties\":{\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"maxLength\":80,\"type\":\"string\"}},\"title\":\"WhoPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"maxLength\":80,\"type\":\"string\"}},\"title\":\"WhoPayload\",\"type\":\"object\"}"),
+			InputSchema: json.RawMessage("{\"$defs\":{\"WhoPayload\":{\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"title\":\"WhoPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"title\":\"WhoPayload\",\"type\":\"object\"}"),
 		},
 	}
 	return &ToolsListResult{
@@ -426,11 +306,6 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		if err := fillinvokeMCPMethod1Inputs(payload, p.HTTPPath0, p.HTTPPath1); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return toolCallError(err.Error()), nil
-		}
 		result, err := a.invokeMCPMethod1(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err, isEndpointFault(err))
@@ -460,11 +335,6 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		payload, err := mcpcodec.DecodeLeavePayload(arguments)
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
-		}
-		if err := fillinvokeMCPMethod2Inputs(payload, p.HTTPPath0, p.HTTPPath1); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return toolCallError(err.Error()), nil
 		}
 		result, err := a.invokeMCPMethod2(ctx, payload)
 		if err != nil {
@@ -496,11 +366,6 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		if err := fillinvokeMCPMethod4Inputs(payload, p.HTTPPath0, p.HTTPPath1); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return toolCallError(err.Error()), nil
-		}
 		result, err := a.invokeMCPMethod4(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err, isEndpointFault(err))
@@ -531,11 +396,6 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		if err := fillinvokeMCPMethod3Inputs(payload, p.HTTPPath0, p.HTTPPath1); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return toolCallError(err.Error()), nil
-		}
 		result, err := a.invokeMCPMethod3(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err, isEndpointFault(err))
@@ -565,11 +425,6 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		payload, err := mcpcodec.DecodeWhoPayload(arguments)
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
-		}
-		if err := fillinvokeMCPMethod0Inputs(payload, p.HTTPPath0, p.HTTPPath1); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return toolCallError(err.Error()), nil
 		}
 		result, err := a.invokeMCPMethod0(ctx, payload)
 		if err != nil {

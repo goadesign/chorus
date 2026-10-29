@@ -29,7 +29,7 @@ func UsageCommands() []string {
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "mcp-chorus server-discover --body '{\n      \"_meta\": \"Doloremque aut quia rem.\"\n   }' --http-path0 \"Facilis enim et voluptatem.\" --http-path1 \"Voluptatum tempora aut sapiente adipisci.\"" + "\n" +
+	return os.Args[0] + " " + "mcp-chorus server-discover --body '{\n      \"_meta\": \"Doloremque aut quia rem.\"\n   }'" + "\n" +
 		""
 }
 
@@ -64,30 +64,18 @@ func ParseEndpoint(
 	var (
 		mcpChorusFlags = flag.NewFlagSet("mcp-chorus", flag.ContinueOnError)
 
-		mcpChorusServerDiscoverFlags         = flag.NewFlagSet("server-discover", flag.ExitOnError)
-		mcpChorusServerDiscoverBodyFlag      = new(cliStringFlag)
-		mcpChorusServerDiscoverHTTPPath0Flag = new(cliStringFlag)
-		mcpChorusServerDiscoverHTTPPath1Flag = new(cliStringFlag)
+		mcpChorusServerDiscoverFlags    = flag.NewFlagSet("server-discover", flag.ExitOnError)
+		mcpChorusServerDiscoverBodyFlag = new(cliStringFlag)
 
-		mcpChorusToolsListFlags         = flag.NewFlagSet("tools-list", flag.ExitOnError)
-		mcpChorusToolsListBodyFlag      = new(cliStringFlag)
-		mcpChorusToolsListHTTPPath0Flag = new(cliStringFlag)
-		mcpChorusToolsListHTTPPath1Flag = new(cliStringFlag)
+		mcpChorusToolsListFlags    = flag.NewFlagSet("tools-list", flag.ExitOnError)
+		mcpChorusToolsListBodyFlag = new(cliStringFlag)
 
-		mcpChorusToolsCallFlags         = flag.NewFlagSet("tools-call", flag.ExitOnError)
-		mcpChorusToolsCallBodyFlag      = new(cliStringFlag)
-		mcpChorusToolsCallHTTPPath0Flag = new(cliStringFlag)
-		mcpChorusToolsCallHTTPPath1Flag = new(cliStringFlag)
+		mcpChorusToolsCallFlags    = flag.NewFlagSet("tools-call", flag.ExitOnError)
+		mcpChorusToolsCallBodyFlag = new(cliStringFlag)
 	)
 	mcpChorusServerDiscoverFlags.Var(mcpChorusServerDiscoverBodyFlag, "body", "")
-	mcpChorusServerDiscoverFlags.Var(mcpChorusServerDiscoverHTTPPath0Flag, "http-path0", "URL value for swarm; excluded from MCP parameters.")
-	mcpChorusServerDiscoverFlags.Var(mcpChorusServerDiscoverHTTPPath1Flag, "http-path1", "URL value for agent; excluded from MCP parameters.")
 	mcpChorusToolsListFlags.Var(mcpChorusToolsListBodyFlag, "body", "")
-	mcpChorusToolsListFlags.Var(mcpChorusToolsListHTTPPath0Flag, "http-path0", "URL value for swarm; excluded from MCP parameters.")
-	mcpChorusToolsListFlags.Var(mcpChorusToolsListHTTPPath1Flag, "http-path1", "URL value for agent; excluded from MCP parameters.")
 	mcpChorusToolsCallFlags.Var(mcpChorusToolsCallBodyFlag, "body", "")
-	mcpChorusToolsCallFlags.Var(mcpChorusToolsCallHTTPPath0Flag, "http-path0", "URL value for swarm; excluded from MCP parameters.")
-	mcpChorusToolsCallFlags.Var(mcpChorusToolsCallHTTPPath1Flag, "http-path1", "URL value for agent; excluded from MCP parameters.")
 
 	mcpChorusFlags.Usage = mcpChorusUsage
 	mcpChorusServerDiscoverFlags.Usage = mcpChorusServerDiscoverUsage
@@ -164,13 +152,13 @@ func ParseEndpoint(
 			switch epn {
 			case "server-discover":
 				endpoint = c.ServerDiscover()
-				data, err = mcpchorusc.BuildServerDiscoverPayload(mcpChorusServerDiscoverBodyFlag.value, mcpChorusServerDiscoverHTTPPath0Flag.value, mcpChorusServerDiscoverHTTPPath1Flag.value)
+				data, err = mcpchorusc.BuildServerDiscoverPayload(mcpChorusServerDiscoverBodyFlag.value)
 			case "tools-list":
 				endpoint = c.ToolsList()
-				data, err = mcpchorusc.BuildToolsListPayload(mcpChorusToolsListBodyFlag.value, mcpChorusToolsListHTTPPath0Flag.value, mcpChorusToolsListHTTPPath1Flag.value)
+				data, err = mcpchorusc.BuildToolsListPayload(mcpChorusToolsListBodyFlag.value)
 			case "tools-call":
 				endpoint = c.ToolsCall()
-				data, err = mcpchorusc.BuildToolsCallPayload(mcpChorusToolsCallBodyFlag.value, mcpChorusToolsCallHTTPPath0Flag.value, mcpChorusToolsCallHTTPPath1Flag.value)
+				data, err = mcpchorusc.BuildToolsCallPayload(mcpChorusToolsCallBodyFlag.value)
 			}
 		}
 	}
@@ -198,8 +186,6 @@ func mcpChorusServerDiscoverUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] mcp-chorus server-discover", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprint(os.Stderr, " -http-path0 STRING")
-	fmt.Fprint(os.Stderr, " -http-path1 STRING")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
@@ -208,20 +194,16 @@ func mcpChorusServerDiscoverUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -http-path0 STRING: URL value for swarm; excluded from MCP parameters.`)
-	fmt.Fprintln(os.Stderr, `    -http-path1 STRING: URL value for agent; excluded from MCP parameters.`)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus server-discover --body '{\n      \"_meta\": \"Doloremque aut quia rem.\"\n   }' --http-path0 \"Facilis enim et voluptatem.\" --http-path1 \"Voluptatum tempora aut sapiente adipisci.\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus server-discover --body '{\n      \"_meta\": \"Doloremque aut quia rem.\"\n   }'")
 }
 
 func mcpChorusToolsListUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] mcp-chorus tools-list", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprint(os.Stderr, " -http-path0 STRING")
-	fmt.Fprint(os.Stderr, " -http-path1 STRING")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
@@ -230,20 +212,16 @@ func mcpChorusToolsListUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -http-path0 STRING: URL value for swarm; excluded from MCP parameters.`)
-	fmt.Fprintln(os.Stderr, `    -http-path1 STRING: URL value for agent; excluded from MCP parameters.`)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus tools-list --body '{\n      \"_meta\": \"Voluptas exercitationem modi molestias nostrum odio.\",\n      \"cursor\": \"Beatae tempora rerum blanditiis sint.\"\n   }' --http-path0 \"Ratione voluptas.\" --http-path1 \"Vitae iure.\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus tools-list --body '{\n      \"_meta\": \"Voluptas exercitationem modi molestias nostrum odio.\",\n      \"cursor\": \"Beatae tempora rerum blanditiis sint.\"\n   }'")
 }
 
 func mcpChorusToolsCallUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] mcp-chorus tools-call", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprint(os.Stderr, " -http-path0 STRING")
-	fmt.Fprint(os.Stderr, " -http-path1 STRING")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
@@ -252,10 +230,8 @@ func mcpChorusToolsCallUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -http-path0 STRING: URL value for swarm; excluded from MCP parameters.`)
-	fmt.Fprintln(os.Stderr, `    -http-path1 STRING: URL value for agent; excluded from MCP parameters.`)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus tools-call --body '{\n      \"_meta\": \"Voluptatem qui vel.\",\n      \"arguments\": \"Omnis reiciendis harum debitis.\",\n      \"inputResponses\": {\n         \"Vel qui esse nisi.\": \"Id eum quod aspernatur eum quaerat architecto.\"\n      },\n      \"name\": \"Ut facilis debitis natus alias facilis eum.\",\n      \"requestState\": \"Nostrum dolorem iure nobis.\"\n   }' --http-path0 \"Dolorem aperiam sunt.\" --http-path1 \"Velit ut rerum dolorum consequatur.\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-chorus tools-call --body '{\n      \"_meta\": \"Voluptatem qui vel.\",\n      \"arguments\": \"Omnis reiciendis harum debitis.\",\n      \"inputResponses\": {\n         \"Vel qui esse nisi.\": \"Id eum quod aspernatur eum quaerat architecto.\"\n      },\n      \"name\": \"Ut facilis debitis natus alias facilis eum.\",\n      \"requestState\": \"Nostrum dolorem iure nobis.\"\n   }'")
 }

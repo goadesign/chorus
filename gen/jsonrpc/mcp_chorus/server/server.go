@@ -176,9 +176,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Mount registers the guarded MCP server at its authored HTTP paths.
 func Mount(mux goahttp.Muxer, h *Server) {
-	mux.Handle("POST", "/mcp/{swarm}/{agent}", h.ServeHTTP)
-	mux.Handle("GET", "/mcp/{swarm}/{agent}", h.ServeHTTP)
-	mux.Handle("DELETE", "/mcp/{swarm}/{agent}", h.ServeHTTP)
+	mux.Handle("POST", "/mcp", h.ServeHTTP)
+	mux.Handle("GET", "/mcp", h.ServeHTTP)
+	mux.Handle("DELETE", "/mcp", h.ServeHTTP)
 }
 
 // Mount registers this guarded MCP server at its authored HTTP paths.

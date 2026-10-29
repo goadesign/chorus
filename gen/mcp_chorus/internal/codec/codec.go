@@ -19,72 +19,6 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// JoinInputTransport stores JSON fields until they have been validated.
-type JoinInputTransport struct {
-	// Swarm namespace bound from the URL route.
-	Swarm *string `json:"swarm"`
-	// Calling agent handle bound from the URL route (without leading '@').
-	Agent *string `json:"agent"`
-	// Channels to create or subscribe to (each prefixed with '#').
-	Channels []string `json:"channels"`
-	// Optional channel topic to set on the joined channel(s).
-	Topic *string `json:"topic,omitempty"`
-	// Optional role description to advertise for the calling agent.
-	Role *string `json:"role,omitempty"`
-	// Maximum recent messages to return per joined channel.
-	Tail *int `json:"tail,omitempty"`
-}
-
-// ValidateJoinInputTransport checks decoded JSON before it becomes a service value.
-func ValidateJoinInputTransport(value *JoinInputTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Swarm == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
-	}
-	if value.Agent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
-	}
-	if value.Channels == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
-	if value.Agent != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if len(value.Channels) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 1, true))
-	}
-	if len(value.Channels) > 20 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 20, false))
-	}
-	for _, e := range value.Channels {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.channels[*]", e, "^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.Topic != nil {
-		if utf8.RuneCountInString(*value.Topic) > 160 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.topic", *value.Topic, utf8.RuneCountInString(*value.Topic), 160, false))
-		}
-	}
-	if value.Role != nil {
-		if utf8.RuneCountInString(*value.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 80, false))
-		}
-	}
-	if value.Tail != nil {
-		if *value.Tail < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.tail", *value.Tail, 0, true))
-		}
-		if *value.Tail > 50 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.tail", *value.Tail, 50, false))
-		}
-	}
-	return err
-}
-
 // JoinPayloadIntTransport stores JSON fields until they have been validated.
 type JoinPayloadIntTransport int
 
@@ -107,6 +41,10 @@ func ValidateJoinPayloadIntTransport(value JoinPayloadIntTransport) (err error) 
 
 // JoinPayloadTransport stores JSON fields until they have been validated.
 type JoinPayloadTransport struct {
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+	Agent *string `json:"agent"`
+	// Swarm namespace (defaults to 'default').
+	Swarm *string `json:"swarm,omitempty"`
 	// Channels to create or subscribe to (each prefixed with '#').
 	Channels []string `json:"channels"`
 	// Optional channel topic to set on the joined channel(s).
@@ -122,8 +60,17 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
 	if value.Channels == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
+	}
+	if value.Agent != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if value.Swarm != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if len(value.Channels) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 1, true))
@@ -236,50 +183,12 @@ func ValidateJoinResultcontentTextTransport(value *JoinResultcontentTextTranspor
 	return err
 }
 
-// LeaveInputTransport stores JSON fields until they have been validated.
-type LeaveInputTransport struct {
-	// Swarm namespace bound from the URL route.
-	Swarm *string `json:"swarm"`
-	// Calling agent handle bound from the URL route (without leading '@').
-	Agent *string `json:"agent"`
-	// Channels to unsubscribe from (each prefixed with '#').
-	Channels []string `json:"channels"`
-}
-
-// ValidateLeaveInputTransport checks decoded JSON before it becomes a service value.
-func ValidateLeaveInputTransport(value *LeaveInputTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Swarm == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
-	}
-	if value.Agent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
-	}
-	if value.Channels == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
-	if value.Agent != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if len(value.Channels) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 1, true))
-	}
-	if len(value.Channels) > 20 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 20, false))
-	}
-	for _, e := range value.Channels {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.channels[*]", e, "^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	return err
-}
-
 // LeavePayloadTransport stores JSON fields until they have been validated.
 type LeavePayloadTransport struct {
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+	Agent *string `json:"agent"`
+	// Swarm namespace (defaults to 'default').
+	Swarm *string `json:"swarm,omitempty"`
 	// Channels to unsubscribe from (each prefixed with '#').
 	Channels []string `json:"channels"`
 }
@@ -289,8 +198,17 @@ func ValidateLeavePayloadTransport(value *LeavePayloadTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
 	if value.Channels == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
+	}
+	if value.Agent != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if value.Swarm != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if len(value.Channels) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 1, true))
@@ -385,60 +303,6 @@ func ValidateLeaveResultcontentTextTransport(value *LeaveResultcontentTextTransp
 	return err
 }
 
-// ReadInputTransport stores JSON fields until they have been validated.
-type ReadInputTransport struct {
-	// Swarm namespace bound from the URL route.
-	Swarm *string `json:"swarm"`
-	// Calling agent handle bound from the URL route (without leading '@').
-	Agent *string `json:"agent"`
-	// Optional channel filter ('#channel'); omit to read across all subscribed
-	// channels and direct messages.
-	From *string `json:"from,omitempty"`
-	// Seconds to block waiting if no unread messages are immediately available.
-	WaitSec *int `json:"wait_sec,omitempty"`
-	// Maximum unread messages to return per target.
-	Limit *int `json:"limit,omitempty"`
-}
-
-// ValidateReadInputTransport checks decoded JSON before it becomes a service value.
-func ValidateReadInputTransport(value *ReadInputTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Swarm == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
-	}
-	if value.Agent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
-	if value.Agent != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.From != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.from", *value.From, "^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.WaitSec != nil {
-		if *value.WaitSec < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", *value.WaitSec, 0, true))
-		}
-		if *value.WaitSec > 30 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", *value.WaitSec, 30, false))
-		}
-	}
-	if value.Limit != nil {
-		if *value.Limit < 1 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", *value.Limit, 1, true))
-		}
-		if *value.Limit > 50 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", *value.Limit, 50, false))
-		}
-	}
-	return err
-}
-
 // ReadPayloadIntTransport stores JSON fields until they have been validated.
 type ReadPayloadIntTransport int
 
@@ -461,6 +325,10 @@ func ValidateReadPayloadIntTransport(value ReadPayloadIntTransport) (err error) 
 
 // ReadPayloadTransport stores JSON fields until they have been validated.
 type ReadPayloadTransport struct {
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+	Agent *string `json:"agent"`
+	// Swarm namespace (defaults to 'default').
+	Swarm *string `json:"swarm,omitempty"`
 	// Optional channel filter ('#channel'); omit to read across all subscribed
 	// channels and direct messages.
 	From *string `json:"from,omitempty"`
@@ -474,6 +342,15 @@ type ReadPayloadTransport struct {
 func ValidateReadPayloadTransport(value *ReadPayloadTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
+	if value.Agent != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if value.Swarm != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if value.From != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.from", *value.From, "^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
@@ -578,62 +455,6 @@ func ValidateReadResultcontentTextTransport(value *ReadResultcontentTextTranspor
 	return err
 }
 
-// SendInputTransport stores JSON fields until they have been validated.
-type SendInputTransport struct {
-	// Swarm namespace bound from the URL route.
-	Swarm *string `json:"swarm"`
-	// Calling agent handle bound from the URL route (without leading '@').
-	Agent *string `json:"agent"`
-	// Target '@agent' for direct messages or '#channel' for channel messages.
-	To *string `json:"to"`
-	// Message text to send.
-	Text *string `json:"text"`
-	// Optional sequence number in the target conversation being replied to.
-	ReplyTo *int `json:"reply_to,omitempty"`
-}
-
-// ValidateSendInputTransport checks decoded JSON before it becomes a service value.
-func ValidateSendInputTransport(value *SendInputTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Swarm == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
-	}
-	if value.Agent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
-	}
-	if value.To == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("to", "body"))
-	}
-	if value.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
-	if value.Agent != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.To != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.to", *value.To, "^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.Text != nil {
-		if utf8.RuneCountInString(*value.Text) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *value.Text, utf8.RuneCountInString(*value.Text), 1, true))
-		}
-		if utf8.RuneCountInString(*value.Text) > 4000 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *value.Text, utf8.RuneCountInString(*value.Text), 4000, false))
-		}
-	}
-	if value.ReplyTo != nil {
-		if *value.ReplyTo < 1 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.reply_to", *value.ReplyTo, 1, true))
-		}
-	}
-	return err
-}
-
 // SendPayloadIntTransport stores JSON fields until they have been validated.
 type SendPayloadIntTransport int
 
@@ -656,6 +477,10 @@ func ValidateSendPayloadIntTransport(value SendPayloadIntTransport) (err error) 
 
 // SendPayloadTransport stores JSON fields until they have been validated.
 type SendPayloadTransport struct {
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+	Agent *string `json:"agent"`
+	// Swarm namespace (defaults to 'default').
+	Swarm *string `json:"swarm,omitempty"`
 	// Target '@agent' for direct messages or '#channel' for channel messages.
 	To *string `json:"to"`
 	// Message text to send.
@@ -669,11 +494,20 @@ func ValidateSendPayloadTransport(value *SendPayloadTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
 	if value.To == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("to", "body"))
 	}
 	if value.Text == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.Agent != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if value.Swarm != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if value.To != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.to", *value.To, "^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
@@ -775,43 +609,12 @@ func ValidateSendResultcontentTextTransport(value *SendResultcontentTextTranspor
 	return err
 }
 
-// WhoInputTransport stores JSON fields until they have been validated.
-type WhoInputTransport struct {
-	// Swarm namespace bound from the URL route.
-	Swarm *string `json:"swarm"`
-	// Calling agent handle bound from the URL route (without leading '@').
-	Agent *string `json:"agent"`
-	// Optional role description to advertise to peers in this swarm.
-	Role *string `json:"role,omitempty"`
-}
-
-// ValidateWhoInputTransport checks decoded JSON before it becomes a service value.
-func ValidateWhoInputTransport(value *WhoInputTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Swarm == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
-	}
-	if value.Agent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
-	if value.Agent != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.Role != nil {
-		if utf8.RuneCountInString(*value.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 80, false))
-		}
-	}
-	return err
-}
-
 // WhoPayloadTransport stores JSON fields until they have been validated.
 type WhoPayloadTransport struct {
+	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
+	Agent *string `json:"agent"`
+	// Swarm namespace (defaults to 'default').
+	Swarm *string `json:"swarm,omitempty"`
 	// Optional role description to advertise to peers in this swarm.
 	Role *string `json:"role,omitempty"`
 }
@@ -820,6 +623,15 @@ type WhoPayloadTransport struct {
 func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
+	if value.Agent != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if value.Swarm != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if value.Role != nil {
 		if utf8.RuneCountInString(*value.Role) > 80 {
@@ -1170,34 +982,6 @@ func (u WhoResultcontentTransport) Validate() error {
 	}
 }
 
-// ValidateJoinInputValue checks a service value against its declared field validation.
-
-func ValidateJoinInputValue(in *chorus.JoinPayload) error {
-
-	if in == nil {
-		return goa.MissingFieldError("result", "JoinInput")
-	}
-
-	var body *JoinInputTransport
-	{
-		body = &JoinInputTransport{
-			Swarm: &in.Swarm,
-			Agent: &in.Agent,
-			Topic: in.Topic,
-			Role:  in.Role,
-			Tail:  &in.Tail,
-		}
-		body.Channels = make([]string, len(in.Channels))
-		for i, val := range in.Channels {
-			body.Channels[i] = val
-		}
-	}
-	if err := ValidateJoinInputTransport(body); err != nil {
-		return fmt.Errorf("validate JoinInput value: %w", err)
-	}
-	return nil
-}
-
 // DecodeJoinPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeJoinPayload(data []byte) (out *chorus.JoinPayload, err error) {
 	var body *JoinPayloadTransport
@@ -1217,11 +1001,18 @@ func DecodeJoinPayload(data []byte) (out *chorus.JoinPayload, err error) {
 	}
 	{
 		out = &chorus.JoinPayload{
+			Agent: *body.Agent,
 			Topic: body.Topic,
 			Role:  body.Role,
 		}
+		if body.Swarm != nil {
+			out.Swarm = *body.Swarm
+		}
 		if body.Tail != nil {
 			out.Tail = int(*body.Tail)
+		}
+		if body.Swarm == nil {
+			out.Swarm = "default"
 		}
 		out.Channels = make([]string, len(body.Channels))
 		for i, val := range body.Channels {
@@ -1260,31 +1051,6 @@ func ValidateJoinResultValue(in *chorus.TextResult) error {
 	return nil
 }
 
-// ValidateLeaveInputValue checks a service value against its declared field validation.
-
-func ValidateLeaveInputValue(in *chorus.LeavePayload) error {
-
-	if in == nil {
-		return goa.MissingFieldError("result", "LeaveInput")
-	}
-
-	var body *LeaveInputTransport
-	{
-		body = &LeaveInputTransport{
-			Swarm: &in.Swarm,
-			Agent: &in.Agent,
-		}
-		body.Channels = make([]string, len(in.Channels))
-		for i, val := range in.Channels {
-			body.Channels[i] = val
-		}
-	}
-	if err := ValidateLeaveInputTransport(body); err != nil {
-		return fmt.Errorf("validate LeaveInput value: %w", err)
-	}
-	return nil
-}
-
 // DecodeLeavePayload checks JSON field names from the Goa design and returns a service value.
 func DecodeLeavePayload(data []byte) (out *chorus.LeavePayload, err error) {
 	var body *LeavePayloadTransport
@@ -1303,7 +1069,15 @@ func DecodeLeavePayload(data []byte) (out *chorus.LeavePayload, err error) {
 		return out, fmt.Errorf("validate LeavePayload JSON: %w", err)
 	}
 	{
-		out = &chorus.LeavePayload{}
+		out = &chorus.LeavePayload{
+			Agent: *body.Agent,
+		}
+		if body.Swarm != nil {
+			out.Swarm = *body.Swarm
+		}
+		if body.Swarm == nil {
+			out.Swarm = "default"
+		}
 		out.Channels = make([]string, len(body.Channels))
 		for i, val := range body.Channels {
 			out.Channels[i] = val
@@ -1338,30 +1112,6 @@ func ValidateLeaveResultValue(in *chorus.TextResult) error {
 	return nil
 }
 
-// ValidateReadInputValue checks a service value against its declared field validation.
-
-func ValidateReadInputValue(in *chorus.ReadPayload) error {
-
-	if in == nil {
-		return goa.MissingFieldError("result", "ReadInput")
-	}
-
-	var body *ReadInputTransport
-	{
-		body = &ReadInputTransport{
-			Swarm:   &in.Swarm,
-			Agent:   &in.Agent,
-			From:    in.From,
-			WaitSec: &in.WaitSec,
-			Limit:   &in.Limit,
-		}
-	}
-	if err := ValidateReadInputTransport(body); err != nil {
-		return fmt.Errorf("validate ReadInput value: %w", err)
-	}
-	return nil
-}
-
 // DecodeReadPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 	var body *ReadPayloadTransport
@@ -1381,13 +1131,20 @@ func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 	}
 	{
 		out = &chorus.ReadPayload{
-			From: body.From,
+			Agent: *body.Agent,
+			From:  body.From,
+		}
+		if body.Swarm != nil {
+			out.Swarm = *body.Swarm
 		}
 		if body.WaitSec != nil {
 			out.WaitSec = int(*body.WaitSec)
 		}
 		if body.Limit != nil {
 			out.Limit = int(*body.Limit)
+		}
+		if body.Swarm == nil {
+			out.Swarm = "default"
 		}
 		if body.WaitSec == nil {
 			out.WaitSec = 0
@@ -1425,30 +1182,6 @@ func ValidateReadResultValue(in *chorus.TextResult) error {
 	return nil
 }
 
-// ValidateSendInputValue checks a service value against its declared field validation.
-
-func ValidateSendInputValue(in *chorus.SendPayload) error {
-
-	if in == nil {
-		return goa.MissingFieldError("result", "SendInput")
-	}
-
-	var body *SendInputTransport
-	{
-		body = &SendInputTransport{
-			Swarm:   &in.Swarm,
-			Agent:   &in.Agent,
-			To:      &in.To,
-			Text:    &in.Text,
-			ReplyTo: in.ReplyTo,
-		}
-	}
-	if err := ValidateSendInputTransport(body); err != nil {
-		return fmt.Errorf("validate SendInput value: %w", err)
-	}
-	return nil
-}
-
 // DecodeSendPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeSendPayload(data []byte) (out *chorus.SendPayload, err error) {
 	var body *SendPayloadTransport
@@ -1468,12 +1201,19 @@ func DecodeSendPayload(data []byte) (out *chorus.SendPayload, err error) {
 	}
 	{
 		out = &chorus.SendPayload{
-			To:   *body.To,
-			Text: *body.Text,
+			Agent: *body.Agent,
+			To:    *body.To,
+			Text:  *body.Text,
+		}
+		if body.Swarm != nil {
+			out.Swarm = *body.Swarm
 		}
 		if body.ReplyTo != nil {
 			replyTo := int(*body.ReplyTo)
 			out.ReplyTo = &replyTo
+		}
+		if body.Swarm == nil {
+			out.Swarm = "default"
 		}
 	}
 	return out, nil
@@ -1505,28 +1245,6 @@ func ValidateSendResultValue(in *chorus.TextResult) error {
 	return nil
 }
 
-// ValidateWhoInputValue checks a service value against its declared field validation.
-
-func ValidateWhoInputValue(in *chorus.WhoPayload) error {
-
-	if in == nil {
-		return goa.MissingFieldError("result", "WhoInput")
-	}
-
-	var body *WhoInputTransport
-	{
-		body = &WhoInputTransport{
-			Swarm: &in.Swarm,
-			Agent: &in.Agent,
-			Role:  in.Role,
-		}
-	}
-	if err := ValidateWhoInputTransport(body); err != nil {
-		return fmt.Errorf("validate WhoInput value: %w", err)
-	}
-	return nil
-}
-
 // DecodeWhoPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeWhoPayload(data []byte) (out *chorus.WhoPayload, err error) {
 	var body *WhoPayloadTransport
@@ -1546,7 +1264,14 @@ func DecodeWhoPayload(data []byte) (out *chorus.WhoPayload, err error) {
 	}
 	{
 		out = &chorus.WhoPayload{
-			Role: body.Role,
+			Agent: *body.Agent,
+			Role:  body.Role,
+		}
+		if body.Swarm != nil {
+			out.Swarm = *body.Swarm
+		}
+		if body.Swarm == nil {
+			out.Swarm = "default"
 		}
 	}
 	return out, nil

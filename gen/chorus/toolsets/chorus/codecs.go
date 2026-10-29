@@ -134,6 +134,16 @@ var joinPayloadFields = []tools.FieldMetadata{
 		JSONType: "object",
 	},
 	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
+		JSONType:    "string",
+		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
+		JSONType:    "string",
+		Description: "Swarm namespace (defaults to 'default').",
+	},
+	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("channels")},
 		JSONType:    "array",
 		Description: "Channels to create or subscribe to (each prefixed with '#').",
@@ -164,6 +174,16 @@ var leavePayloadFields = []tools.FieldMetadata{
 		JSONType: "object",
 	},
 	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
+		JSONType:    "string",
+		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
+		JSONType:    "string",
+		Description: "Swarm namespace (defaults to 'default').",
+	},
+	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("channels")},
 		JSONType:    "array",
 		Description: "Channels to unsubscribe from (each prefixed with '#').",
@@ -177,6 +197,16 @@ var leavePayloadFields = []tools.FieldMetadata{
 var readPayloadFields = []tools.FieldMetadata{
 	{
 		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
+		JSONType:    "string",
+		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
+		JSONType:    "string",
+		Description: "Swarm namespace (defaults to 'default').",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("from")},
@@ -199,6 +229,16 @@ var sendPayloadFields = []tools.FieldMetadata{
 		JSONType: "object",
 	},
 	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
+		JSONType:    "string",
+		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
+		JSONType:    "string",
+		Description: "Swarm namespace (defaults to 'default').",
+	},
+	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("to")},
 		JSONType:    "string",
 		Description: "Target '@agent' for direct messages or '#channel' for channel messages.",
@@ -217,6 +257,16 @@ var sendPayloadFields = []tools.FieldMetadata{
 var whoPayloadFields = []tools.FieldMetadata{
 	{
 		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
+		JSONType:    "string",
+		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
+		JSONType:    "string",
+		Description: "Swarm namespace (defaults to 'default').",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("role")},
@@ -506,6 +556,8 @@ func MarshalJoinPayload(v *JoinPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.JoinPayloadTransport
 	out = &toolhttp.JoinPayloadTransport{
+		Agent: &in.Agent,
+		Swarm: &in.Swarm,
 		Topic: in.Topic,
 		Role:  in.Role,
 		Tail:  &in.Tail,
@@ -538,11 +590,18 @@ func UnmarshalJoinPayload(data []byte) (*JoinPayload, error) {
 	_ = in
 	var out *JoinPayload
 	out = &JoinPayload{
+		Agent: *in.Agent,
 		Topic: in.Topic,
 		Role:  in.Role,
 	}
+	if in.Swarm != nil {
+		out.Swarm = *in.Swarm
+	}
 	if in.Tail != nil {
 		out.Tail = *in.Tail
+	}
+	if in.Swarm == nil {
+		out.Swarm = "default"
 	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
@@ -562,7 +621,10 @@ func MarshalLeavePayload(v *LeavePayload) ([]byte, error) {
 	in := v
 	_ = in
 	var out *toolhttp.LeavePayloadTransport
-	out = &toolhttp.LeavePayloadTransport{}
+	out = &toolhttp.LeavePayloadTransport{
+		Agent: &in.Agent,
+		Swarm: &in.Swarm,
+	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
 		out.Channels[i] = val
@@ -590,7 +652,15 @@ func UnmarshalLeavePayload(data []byte) (*LeavePayload, error) {
 	in := &tv
 	_ = in
 	var out *LeavePayload
-	out = &LeavePayload{}
+	out = &LeavePayload{
+		Agent: *in.Agent,
+	}
+	if in.Swarm != nil {
+		out.Swarm = *in.Swarm
+	}
+	if in.Swarm == nil {
+		out.Swarm = "default"
+	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
 		out.Channels[i] = val
@@ -607,6 +677,8 @@ func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.ReadPayloadTransport
 	out = &toolhttp.ReadPayloadTransport{
+		Agent:   &in.Agent,
+		Swarm:   &in.Swarm,
 		From:    in.From,
 		WaitSec: &in.WaitSec,
 		Limit:   &in.Limit,
@@ -635,13 +707,20 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	_ = in
 	var out *ReadPayload
 	out = &ReadPayload{
-		From: in.From,
+		Agent: *in.Agent,
+		From:  in.From,
+	}
+	if in.Swarm != nil {
+		out.Swarm = *in.Swarm
 	}
 	if in.WaitSec != nil {
 		out.WaitSec = *in.WaitSec
 	}
 	if in.Limit != nil {
 		out.Limit = *in.Limit
+	}
+	if in.Swarm == nil {
+		out.Swarm = "default"
 	}
 	if in.WaitSec == nil {
 		out.WaitSec = 0
@@ -661,6 +740,8 @@ func MarshalSendPayload(v *SendPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.SendPayloadTransport
 	out = &toolhttp.SendPayloadTransport{
+		Agent:   &in.Agent,
+		Swarm:   &in.Swarm,
 		To:      &in.To,
 		Text:    &in.Text,
 		ReplyTo: in.ReplyTo,
@@ -689,9 +770,16 @@ func UnmarshalSendPayload(data []byte) (*SendPayload, error) {
 	_ = in
 	var out *SendPayload
 	out = &SendPayload{
+		Agent:   *in.Agent,
 		To:      *in.To,
 		Text:    *in.Text,
 		ReplyTo: in.ReplyTo,
+	}
+	if in.Swarm != nil {
+		out.Swarm = *in.Swarm
+	}
+	if in.Swarm == nil {
+		out.Swarm = "default"
 	}
 	return out, nil
 }
@@ -705,7 +793,9 @@ func MarshalWhoPayload(v *WhoPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.WhoPayloadTransport
 	out = &toolhttp.WhoPayloadTransport{
-		Role: in.Role,
+		Agent: &in.Agent,
+		Swarm: &in.Swarm,
+		Role:  in.Role,
 	}
 	return json.Marshal(out)
 }
@@ -731,7 +821,14 @@ func UnmarshalWhoPayload(data []byte) (*WhoPayload, error) {
 	_ = in
 	var out *WhoPayload
 	out = &WhoPayload{
-		Role: in.Role,
+		Agent: *in.Agent,
+		Role:  in.Role,
+	}
+	if in.Swarm != nil {
+		out.Swarm = *in.Swarm
+	}
+	if in.Swarm == nil {
+		out.Swarm = "default"
 	}
 	return out, nil
 }
@@ -928,6 +1025,13 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "agent":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+			); err != nil {
+				return err
+			}
 		case "role":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -935,9 +1039,18 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 			); err != nil {
 				return err
 			}
+		case "swarm":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Swarm namespace (defaults to 'default').",
+			); err != nil {
+				return err
+			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"agent",
 				"role",
+				"swarm",
 			})
 		}
 	}
@@ -980,6 +1093,13 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "agent":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+			); err != nil {
+				return err
+			}
 		case "channels":
 			if err := validateJoinPayloadRootChannelsJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -991,6 +1111,13 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional role description to advertise for the calling agent.",
+			); err != nil {
+				return err
+			}
+		case "swarm":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Swarm namespace (defaults to 'default').",
 			); err != nil {
 				return err
 			}
@@ -1010,8 +1137,10 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"agent",
 				"channels",
 				"role",
+				"swarm",
 				"tail",
 				"topic",
 			})
@@ -1083,6 +1212,13 @@ func validateLeavePayloadJSONValue(path string, value any, description string) e
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "agent":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+			); err != nil {
+				return err
+			}
 		case "channels":
 			if err := validateJoinPayloadRootChannelsJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1090,9 +1226,18 @@ func validateLeavePayloadJSONValue(path string, value any, description string) e
 			); err != nil {
 				return err
 			}
+		case "swarm":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Swarm namespace (defaults to 'default').",
+			); err != nil {
+				return err
+			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"agent",
 				"channels",
+				"swarm",
 			})
 		}
 	}
@@ -1119,10 +1264,24 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "agent":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+			); err != nil {
+				return err
+			}
 		case "reply_to":
 			if err := validateIntJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional sequence number in the target conversation being replied to.",
+			); err != nil {
+				return err
+			}
+		case "swarm":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Swarm namespace (defaults to 'default').",
 			); err != nil {
 				return err
 			}
@@ -1142,7 +1301,9 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"agent",
 				"reply_to",
+				"swarm",
 				"text",
 				"to",
 			})
@@ -1171,6 +1332,13 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "agent":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
+			); err != nil {
+				return err
+			}
 		case "from":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1185,6 +1353,13 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "swarm":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Swarm namespace (defaults to 'default').",
+			); err != nil {
+				return err
+			}
 		case "wait_sec":
 			if err := validateIntJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1194,8 +1369,10 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"agent",
 				"from",
 				"limit",
+				"swarm",
 				"wait_sec",
 			})
 		}

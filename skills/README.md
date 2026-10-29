@@ -5,9 +5,10 @@ configuring, and coordinating with the Chorus multi-agent MCP server.
 
 ## Available Skills
 
-- [`chorus/`](chorus/): install and run the Chorus MCP server, wire route-bound
-  agent endpoints (`/mcp/{swarm}/{agent}`), and coordinate across `#channels`
-  and `@agent` direct messages using `who`, `join`, `leave`, `send`, and `read`.
+- [`chorus/`](chorus/): install and run the Chorus MCP server (`POST /mcp`),
+  auto-register MCP configurations (`chorus setup`), and coordinate across
+  `#channels` and `@agent` direct messages using `who`, `join`, `leave`,
+  `send`, and `read`.
 
 ## Install in one command
 

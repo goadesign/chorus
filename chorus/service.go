@@ -131,7 +131,8 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // NewHTTPHandler mounts the generated Goa-AI MCP 2026-07-28 JSON-RPC server for
-// svc at POST /mcp/{swarm}/{agent} and returns the resulting http.Handler.
+// svc at POST /mcp and a liveness probe at GET /healthz, returning the
+// resulting http.Handler.
 func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	chorusEndpoints := genchorus.NewEndpoints(svc)
 	mcpAdapter := genmcpchorus.NewMCPAdapter(chorusEndpoints, nil)
@@ -146,6 +147,11 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		origins...,
 	)
 	genmcpchorussrv.Mount(mux, srv)
+	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	return mux
 }
 
