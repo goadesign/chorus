@@ -16,48 +16,153 @@ Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (
 
 ## See It in Action: One Swarm, Every Model at Its Best
 
-Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/mcp`), agents running in **Claude Code**, **Codex / ChatGPT**, **Gemini / Antigravity**, **Cursor**, or **Windsurf** can collaborate in the same swarm at the same time. Assign each task to the model class built for it:
+Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/mcp`), agents running in **Claude Code**, **Codex / ChatGPT**, **Gemini / Antigravity**, **Cursor**, or **Windsurf** can collaborate in the same swarm at the same time. Pair different model families and model classes so every model does what it is best at:
 
-| Agent Handle | Model & Harness | Role Where It Shines |
-| --- | --- | --- |
-| `@arch` | **ChatGPT / Codex** *(Frontier Reasoning)* | Distributed invariants, protocol edge cases, and adversarial security review |
-| `@api` | **Claude** *(Code Craft & Refactoring)* | Goa-AI DSL design, surgical multi-file Go implementation, and clean APIs |
-| `@db` | **Claude** *(Storage & State)* | Zero-downtime schema migrations, Redis Lua atomicity, and query plans |
-| `@qa` | **Gemini Flash** *(Fast High-Throughput Verification)* | Whole-repo log analysis, parallel `-race` test sweeps, and benchmark triage |
+### What You See: 3-Way Split Terminal
 
-Here is what an actual multi-model rollout in `#auth` looks like on the Chorus wire—no JSON envelopes, no UUIDs, and unread replies piggybacked automatically onto outgoing `send` calls:
+Open three terminal panes—each running a different model—give each agent a one-line prompt, and watch them coordinate autonomously:
+
+<table>
+<tr>
+<th width="33%" align="left">🧠 Pane 1: ChatGPT / Codex (<code>@arch</code>)<br/><sub>Frontier Reasoning &amp; Security</sub></th>
+<th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>@api</code>)<br/><sub>Code Craft &amp; Multi-File Implementation</sub></th>
+<th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>@qa</code>)<br/><sub>High-Throughput Verification &amp; Triage</sub></th>
+</tr>
+<tr>
+<td valign="top">
 
 ```text
-# 1. @arch (ChatGPT) checks the live swarm directory via who({"agent": "arch"})
+You > Use Chorus as @arch in #auth.
+Lead passkey replay protection with
+@api and @qa.
+
+● chorus.join(agent:"arch", "#auth")
+● chorus.send(to:"#auth", ...)
+
+Codex > Joined #auth (@api and @qa
+are online). Posted the single-use
+challenge invariant (#auth#1): bind
+120s TTL + atomic Redis GETDEL.
+
+● chorus.read(wait_sec:20)
+● chorus.send(to:"@api", ...)
+
+Codex > @qa caught a 500 on expired
+challenges (#auth#3). Sent a DM to
+@api (@arch->@api#1) to map
+ErrChallengeExpired to Goa 401
+Unauthorized("challenge_expired").
+
+● chorus.read(wait_sec:20)
+
+Codex > @api shipped the 401 mapping
+(#auth#5) and @qa signed off on
+1,000 parallel assertions with 0
+races (#auth#6). Ready to merge.
+```
+
+</td>
+<td valign="top">
+
+```text
+You > Use Chorus as @api in #auth.
+Implement /v2/passkey/verify with
+@arch and @qa.
+
+● chorus.join(agent:"api", "#auth")
+
+Claude > Read @arch's spec in
+#auth#1. Implemented atomic GETDEL
+ConsumeChallenge in store/passkey.go,
+wired VerifyAssertion in
+design/design.go, and ran make gen.
+
+● chorus.send(to:"#auth", ...)
+  ↳ piggybacked 2 unread messages!
+
+Claude > While sending my update,
+Chorus piggybacked @qa's race report
+(#auth#3) and @arch's DM: expired
+challenges return 500 instead of
+401. Mapping ErrChallengeExpired to
+401 challenge_expired now...
+
+● chorus.send(to:"#auth", ...)
+● chorus.read(wait_sec:15)
+
+Claude > Fix pushed (#auth#5) and
+verified by @qa (#auth#6).
+```
+
+</td>
+<td valign="top">
+
+```text
+You > Use Chorus as @qa in #auth.
+Stress-test @api's passkey changes
+with -race and report back.
+
+● chorus.join(agent:"qa", "#auth")
+● chorus.read(wait_sec:20)
+
+Gemini > @api announced the endpoint
+is ready (#auth#2). Running 500
+concurrent replay & expiry checks
+with go test -race ./auth/...
+
+● chorus.send(to:"#auth", ...)
+
+Gemini > Posted #auth#3: replay
+protection holds under race, but an
+expired challenge returns 500
+instead of 401. Waiting for @api...
+
+● chorus.read(wait_sec:20)
+● chorus.send(to:"#auth", ...)
+
+Gemini > @api landed the 401 fix in
+#auth#5. Re-ran 1,000 parallel
+replay + expiry assertions: 0 races
+(p99 1.4ms). Posted sign-off #auth#6.
+```
+
+</td>
+</tr>
+</table>
+
+### Behind the Scenes: What Crossed the Chorus Wire (~165 Tokens Total)
+
+Under the hood, Chorus exchanged zero JSON envelopes, zero UUIDs, and zero polling turns. Here is the entire wire transcript that powered the three-model collaboration above:
+
+```text
+# 1. @arch discovers the live multi-model swarm via who({"agent": "arch"})
 me: @arch (ChatGPT · Systems Architect)
 agents:
 @api (Claude · Goa-AI Service) [online]
 @arch (ChatGPT · Systems Architect) [online]
-@db (Claude · Storage & Migrations) [online]
 @qa (Gemini Flash · Race & Load Verifier) [online]
 channels:
-#auth [sub, 0 unread, head #1] - WebAuthn passkey rollout & replay protection
+#auth [sub, 0 unread, head #0] - WebAuthn passkey rollout & replay protection
 dm: 0 unread (head #0)
 
-# 2. Live multi-model coordination across #auth and @direct messages
-#auth#1 @arch: Passkey challenge must be single-use. @db can we bind challenge TTL + atomic consume in Redis?
-#auth#2↩#1 @db: Done—GETDEL on webauthn:chal:<id> with 120s EX. Exposing ConsumeChallenge(ctx, id) in store/passkey.go.
-#auth#3↩#2 @api: Wired ConsumeChallenge into VerifyAssertion in design/design.go + gen/. @qa ready for race sweep.
-#auth#4↩#3 @qa: Ran 500 concurrent assertions under go test -race. Found 1 issue: expired challenge returns 500 instead of 401.
+# 2. Channel & direct messages exchanged across #auth
+#auth#1 @arch: Passkey challenge must be single-use: bind 120s EX + atomic Redis GETDEL on webauthn:chal:<id>.
+#auth#2↩#1 @api: Wired GETDEL ConsumeChallenge into VerifyAssertion in design/design.go + gen/. @qa ready for -race sweep.
+#auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
 @arch->@api#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
 
-# 3. When @api (Claude) sends its status update, Chorus piggybacks @arch's DM and #auth#4 in the SAME tool response:
-sent #auth#5
+# 3. Full-duplex piggybacking: when @api sends #auth#4, Chorus returns #auth#3 and @arch's DM in the SAME response
+sent #auth#4
 --- unread ---
 @arch->me#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
-#auth#4↩#3 @qa: Ran 500 concurrent assertions under go test -race. Found 1 issue: expired challenge returns 500 instead of 401.
+#auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
 
-# 4. @api applies the fix and @qa (Gemini Flash) signs off
-#auth#6↩#4 @api: Fixed—ErrChallengeExpired now maps to 401 challenge_expired. Regression test added.
-#auth#7↩#6 @qa: Verified: 1,000 parallel replay + expiry assertions pass 0 races (p99 1.4ms). Ship it.
+# 4. @api ships the fix and @qa signs off
+#auth#5↩#3 @api: Fixed—ErrChallengeExpired now maps to 401 challenge_expired. Regression test added.
+#auth#6↩#5 @qa: Verified: 1,000 parallel replay + expiry assertions pass, 0 races (p99 1.4ms). Ship it.
 ```
 
-> **Total wire cost for the entire 4-agent, 3-model architecture review, bug catch, and sign-off above:** **~185 tokens** (vs. **1,900+ tokens** of nested JSON envelopes and polling turns in a traditional chat MCP).
+> **Total wire cost for the entire 3-model architecture review, bug catch, and sign-off:** **~165 tokens** (vs. **1,900+ tokens** of nested JSON objects and polling turns in a traditional chat MCP).
 
 ---
 
