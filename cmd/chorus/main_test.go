@@ -96,7 +96,7 @@ func TestSetupMCPConfigs(t *testing.T) {
 	}
 
 	// 1. Project-local setup (.mcp.json).
-	projPaths, err := setupMCPConfigs(cwd, home, "http://localhost:8080/mcp", false)
+	projPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", false)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(project) failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestSetupMCPConfigs(t *testing.T) {
 	}
 
 	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json).
-	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:8080/mcp", true)
+	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", true)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(global) failed: %v", err)
 	}
@@ -129,15 +129,15 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("expected peer server 'other' to be preserved, got %v", servers)
 	}
 	chorusEntry := servers["chorus"].(map[string]any)
-	if chorusEntry["url"] != "http://localhost:8080/mcp" || chorusEntry["type"] != "http" {
+	if chorusEntry["url"] != "http://localhost:9440/mcp" || chorusEntry["type"] != "http" {
 		t.Fatalf("unexpected chorus MCP entry: %v", chorusEntry)
 	}
 }
 
 // TestLocalBaseURL verifies normalization of listen addresses to local HTTP URLs.
 func TestLocalBaseURL(t *testing.T) {
-	if got := localBaseURL(":8080"); got != "http://localhost:8080" {
-		t.Fatalf("localBaseURL(:8080) = %q", got)
+	if got := localBaseURL(":9440"); got != "http://localhost:9440" {
+		t.Fatalf("localBaseURL(:9440) = %q", got)
 	}
 	if got := localBaseURL("127.0.0.1:9090"); got != "http://localhost:9090" {
 		t.Fatalf("localBaseURL(127.0.0.1:9090) = %q", got)

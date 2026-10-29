@@ -44,8 +44,9 @@ type (
 )
 
 const (
-	// defaultListenAddr is the default HTTP listen address.
-	defaultListenAddr = ":8080"
+	// defaultListenAddr is the default HTTP listen address (9440 references A440,
+	// the 440 Hz concert pitch standard used to tune an ensemble).
+	defaultListenAddr = ":9440"
 	// defaultRedisAddr is the default Redis server address.
 	defaultRedisAddr = "localhost:6379"
 	// defaultSwarmTTL is the default sliding TTL for swarm state and streams.

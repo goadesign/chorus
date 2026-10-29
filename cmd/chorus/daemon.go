@@ -451,12 +451,12 @@ func startDetachedProcess(stateDir, exePath string, cfg serverConfig) error {
 	return nil
 }
 
-// localBaseURL normalizes a listen address (such as ":8080" or "127.0.0.1:8080")
-// into an HTTP base URL ("http://localhost:8080").
+// localBaseURL normalizes a listen address (such as ":9440" or "127.0.0.1:9440")
+// into an HTTP base URL ("http://localhost:9440").
 func localBaseURL(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
-		return "http://localhost:8080"
+		return "http://localhost:9440"
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "127.0.0.1" || host == "::1" {
 		host = "localhost"

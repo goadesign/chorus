@@ -24,7 +24,7 @@ Get a multi-agent swarm talking in under 30 seconds:
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
 ```
 
-This single command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:8080/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`).
+This single command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`).
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
@@ -36,7 +36,7 @@ Open two or more coding-agent sessions in your IDE or terminal and give each age
 >
 > **Agent 2**: *"Use Chorus as `@db` in `#arch`, review `@api`'s proposal, and post once the schema migration is ready."*
 
-Every agent connects to the same `http://localhost:8080/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from your prompt—no per-agent config files and no editor restarts.
+Every agent connects to the same `http://localhost:9440/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from your prompt—no per-agent config files and no editor restarts.
 
 ---
 
@@ -46,7 +46,7 @@ When multiple coding or research agents collaborate on a task, traditional chat 
 
 Chorus rethinks multi-agent coordination from the token budget up:
 
-- **Single Static MCP Endpoint (`POST /mcp`)**: Register `http://localhost:8080/mcp` once across all your projects and agents. Agents pick their own short handle (`"agent": "api"`) and optional swarm namespace (`"swarm": "default"`) directly from your prompt—no per-agent config files or IDE restarts.
+- **Single Static MCP Endpoint (`POST /mcp`)**: Register `http://localhost:9440/mcp` once across all your projects and agents. Agents pick their own short handle (`"agent": "api"`) and optional swarm namespace (`"swarm": "default"`) directly from your prompt—no per-agent config files or IDE restarts.
 - **Full-Duplex Piggybacked Delivery**: Every `send` automatically drains and appends any unread direct messages or subscribed channel posts waiting for the caller (`--- unread ---`) in the **same tool response**, cutting coordination round-trips in half.
 - **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` returns only messages published since the agent's last call.
 - **Pure Plain-Text Wire Grammar (`~12 tokens/message`)**: Tools return a single compact line-oriented text block (`#arch#14↩#12 @db: migration 004 applied`) with no `OutputSchema` and no duplicate `structuredContent` JSON payload.
@@ -170,15 +170,15 @@ flowchart TB
 | --- | --- |
 | `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` |
 | `chorus down` | Stop the background Chorus service |
-| `chorus status` | Check whether Chorus is responding at `http://localhost:8080/healthz` |
-| `chorus setup` | Register `http://localhost:8080/mcp` in `./.mcp.json` (pass `-global` for global agent configs) |
+| `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` |
+| `chorus setup` | Register `http://localhost:9440/mcp` in `./.mcp.json` (pass `-global` for global agent configs) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
 #### Server Flags (`chorus serve` / `chorus up`)
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-addr` | `:8080` | HTTP listen address |
+| `-addr` | `:9440` | HTTP listen address (`9440` references **A440**, the 440 Hz concert tuning pitch) |
 | `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`); auto-starts local `redis-server` or `redis:7-alpine` container when targeting loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
 | `-redis-db` | `0` | Redis database index |
@@ -196,7 +196,7 @@ Running `chorus setup` writes this configuration automatically:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:9440/mcp"
     }
   }
 }
@@ -224,7 +224,7 @@ func main() {
 	}
 	defer svc.Close()
 
-	http.ListenAndServe(":8080", chorus.NewHTTPHandler(svc))
+	http.ListenAndServe(":9440", chorus.NewHTTPHandler(svc))
 }
 ```
 

@@ -24,7 +24,7 @@ If the user asks you to coordinate on Chorus and the `chorus` MCP tools (`who`, 
    ```bash
    chorus up && chorus setup && chorus setup -global
    ```
-   `chorus up` starts Chorus as a background user service at `http://localhost:8080/mcp` (and automatically boots a local `redis-server` subprocess or `redis:7-alpine` Docker container if Redis is not already running).
+   `chorus up` starts Chorus as a background user service at `http://localhost:9440/mcp` (and automatically boots a local `redis-server` subprocess or `redis:7-alpine` Docker container if Redis is not already running).
 
 ---
 
