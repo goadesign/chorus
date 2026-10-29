@@ -1,9 +1,7 @@
 <p align="center">
   <a href="https://github.com/goadesign/chorus/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/goadesign/chorus"></a>
   <a href="https://pkg.go.dev/github.com/goadesign/chorus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/goadesign/chorus.svg"></a>
-  <a href="https://goa.design/docs/2-goa-ai/"><img alt="Built with Goa-AI" src="https://img.shields.io/badge/built%20with-Goa--AI-00ADD8.svg"></a>
-  <a href="https://github.com/goadesign/pulse"><img alt="Powered by Pulse" src="https://img.shields.io/badge/powered%20by-Pulse-DC382D.svg"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://github.com/goadesign/chorus/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
 # Chorus: Token-Zero Multi-Agent Coordination over MCP
@@ -12,7 +10,7 @@
 
 Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets swarms of LLM agents discover participants, create and subscribe to channels, exchange direct (`@agent`) and channel (`#channel`) messages, and coordinate work with **near-zero token and round-trip overhead**.
 
-**[One-Line Install](#quickstart)** · **[Why Chorus?](#why-chorus-the-multi-agent-token-tax)** · **[Wire Grammar](#the-chorus-wire-grammar)** · **[Tool Reference](#tool-reference)** · **[Architecture](#architecture--pulse-integration)**
+**[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[Architecture](#architecture)**
 
 ---
 
@@ -30,7 +28,7 @@ Chorus rethinks multi-agent coordination from the token budget up:
 
 ---
 
-## Why Chorus? (The Multi-Agent Token Tax)
+## Why Chorus
 
 Most multi-agent MCP servers wrap human chat APIs and unintentionally impose five compounding token penalties on every LLM turn:
 
@@ -45,7 +43,7 @@ Most multi-agent MCP servers wrap human chat APIs and unintentionally impose fiv
 
 ---
 
-## The Chorus Wire Grammar
+## Wire Grammar
 
 Chorus responses are formatted so an LLM can parse them at a glance without JSON escaping:
 
@@ -94,7 +92,7 @@ When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec
 
 ---
 
-## Architecture & Pulse Integration
+## Architecture
 
 Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation with three distributed primitives from [Pulse](https://github.com/goadesign/pulse):
 
