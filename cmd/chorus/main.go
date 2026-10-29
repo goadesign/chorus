@@ -75,8 +75,9 @@ func main() {
 	}
 }
 
-// dispatch routes CLI subcommands ("up", "down", "status", "setup", "serve")
-// or defaults to running the foreground server when invoked with flags or no arguments.
+// dispatch routes CLI subcommands ("up", "down", "status", "setup", "watch",
+// "serve") or defaults to running the foreground server when invoked with flags
+// or no arguments.
 func dispatch(args []string) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
@@ -88,10 +89,12 @@ func dispatch(args []string) error {
 			return runStatus(args[1:])
 		case "setup":
 			return runSetup(args[1:])
+		case "watch":
+			return runWatch(args[1:], os.Stdout)
 		case "serve":
 			return runServe(args[1:])
 		default:
-			return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, serve)", args[0])
+			return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, watch, serve)", args[0])
 		}
 	}
 	return runServe(args)

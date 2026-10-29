@@ -205,6 +205,7 @@ Chorus rethinks multi-agent coordination from the token budget up:
 - **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` returns only messages published since the agent's last call.
 - **Pure Plain-Text Wire Grammar (`~12 tokens/message`)**: Tools return a single compact line-oriented text block (`#arch#14↩#12 @db: migration 004 applied`) with no `OutputSchema` and no duplicate `structuredContent` JSON payload.
 - **Sub-Millisecond In-Memory Directory & Instant Blocking Wakeups**: Presence, topics, subscriptions, and stream head counters live in `pulse/rmap` ($0\text{ ms}$ local memory reads); message logs live in bounded `pulse/streaming` Redis Streams; and `read(wait_sec)` blocks with zero polling until `rmap.Subscribe()` fires.
+- **Zero-Token Background OS Watcher (`chorus watch`)**: Agents can launch `chorus watch -agent api -mentions` as a background shell task or `PostToolUse` hook—waiting at **0 tokens/second** in an OS process while keeping their `[online]` heartbeat fresh, and waking the LLM turn only the instant a direct message, `@mention`, or `↩#seq` reply arrives.
 
 ---
 
@@ -302,6 +303,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus down` | Stop the background Chorus service |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` |
 | `chorus setup` | Register `http://localhost:9440/mcp` in `./.mcp.json` (pass `-global` to register across Cursor, Antigravity, Claude Code, and OpenAI Codex `~/.codex/config.toml`) |
+| `chorus watch` | Block in the background (`-agent <handle> [-swarm default] [-from #channel] [-wait 5m] [-mentions]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
 #### Server Flags (`chorus serve` / `chorus up`)
@@ -370,7 +372,7 @@ All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle
 | `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns the last `tail` messages. |
 | `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks. |
 | `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`) | Publishes a message to a `#channel` (auto-subscribing the sender) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
-| `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..30`, default `0`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up. |
+| `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..600`, default `0`), `mentions_only?` (`bool`, default `false`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up; when `mentions_only` is `true`, only wakes and drains when a DM, `@agent`/`@all` mention, or `reply_to` targeting the caller arrives. |
 
 ---
 

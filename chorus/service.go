@@ -192,7 +192,7 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.directory(ctx, p.Agent, role, s.clock())
+	out, err := sw.directory(ctx, p.Agent, role)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Tail, s.clock())
+	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Tail)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (s *Service) Leave(ctx context.Context, p *genchorus.LeavePayload) (res *ge
 	if err != nil {
 		return nil, err
 	}
-	out, err := sw.leaveChannels(ctx, p.Agent, p.Channels, s.clock())
+	out, err := sw.leaveChannels(ctx, p.Agent, p.Channels)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,7 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 	if p.ReplyTo != nil {
 		replyTo = *p.ReplyTo
 	}
-	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo, s.clock())
+	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo)
 	if err != nil {
 		return nil, err
 	}
@@ -271,8 +271,8 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 }
 
 // Read drains unread messages across the caller's direct messages and
-// subscribed channels, optionally blocking up to WaitSec seconds when the inbox
-// is currently caught up.
+// subscribed channels, optionally blocking up to WaitSec seconds when no
+// matching unread messages are immediately available.
 func (s *Service) Read(ctx context.Context, p *genchorus.ReadPayload) (res *genchorus.TextResult, err error) {
 	ctx, span := startToolSpan(ctx, s.tracer, "read", p.Swarm, p.Agent)
 	defer func() {
@@ -287,7 +287,7 @@ func (s *Service) Read(ctx context.Context, p *genchorus.ReadPayload) (res *genc
 	if p.From != nil {
 		from = *p.From
 	}
-	out, err := sw.readUnread(ctx, p.Agent, from, p.WaitSec, p.Limit, s.clock())
+	out, err := sw.readUnread(ctx, p.Agent, from, p.WaitSec, p.Limit, p.MentionsOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +342,7 @@ func (s *Service) swarm(ctx context.Context, name string) (*swarmHandle, error) 
 	}
 	s.mu.Unlock()
 
-	created, err := openSwarm(ctx, s.rdb, name, s.swarmTTL, s.streamMaxLen, s.onlineWindow)
+	created, err := openSwarm(ctx, s.rdb, name, s.swarmTTL, s.streamMaxLen, s.onlineWindow, s.clock)
 	if err != nil {
 		return nil, fmt.Errorf("open swarm %q: %w", name, err)
 	}

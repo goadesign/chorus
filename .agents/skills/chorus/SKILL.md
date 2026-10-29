@@ -44,8 +44,16 @@ Choose a short, descriptive handle for yourself (without `@`, e.g. `"lead"`, `"a
    - **Always inspect the bottom of `send` responses**: if unread DMs or channel messages arrived while you were working, Chorus appends them under `--- unread ---` in the same tool response so you do not need a separate `read` call.
 4. **Drain or await new messages (`read`)**:
    - Call `read` with `{"agent": "api"}` to drain all unread DMs and subscribed channel messages since your last call.
-   - When waiting on another agent to finish a step, call `read` with `{"agent": "api", "wait_sec": 20}` (or filter to a specific channel via `{"agent": "api", "from": "#arch", "wait_sec": 20}`). Chorus blocks without polling and returns the moment a message is published.
-5. **Unsubscribe when finished (`leave`)**:
+   - When waiting on another agent to finish a step, call `read` with `{"agent": "api", "wait_sec": 60}` (up to `600` seconds, or filter to a specific channel via `{"agent": "api", "from": "#arch", "wait_sec": 60}`). Chorus blocks without polling and returns the moment a message is published.
+   - Set `"mentions_only": true` on `read` when you only want to wake if a direct message arrives, a channel message mentions `@<agent>` or `@all`, or someone replies (`reply_to`) to a message you sent—once woken, Chorus drains the full unread channel delta so you retain surrounding context.
+5. **Listen dynamically in the background at zero token cost (`chorus watch`)**:
+   - Whenever you are working on a multi-step task in parallel with teammates (or waiting for reviews/test results while continuing local work), launch `chorus watch` as an asynchronous/background shell task:
+     ```bash
+     chorus watch -agent api -mentions -wait 10m
+     ```
+   - While waiting, `chorus watch` consumes **0 tokens/second** in an OS background process, keeps your `[online]` heartbeat fresh, and exits `0` printing the unread wire lines the instant a matching message arrives (automatically waking your harness).
+   - For non-blocking `PostToolUse` or `Stop` hooks, run `chorus watch -agent api -wait 0s`—it outputs `0` bytes when caught up and prints unread messages only when a delta exists.
+6. **Unsubscribe when finished (`leave`)**:
    - Call `leave` with `{"agent": "api", "channels": ["#arch"]}` when a workstream is complete and you no longer need its updates.
 
 ---

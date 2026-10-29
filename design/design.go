@@ -214,8 +214,12 @@ var _ = Service("chorus", func() {
 			Attribute("wait_sec", Int, "Seconds to block waiting if no unread messages are immediately available.", func() {
 				Default(0)
 				Minimum(0)
-				Maximum(30)
-				Example(5)
+				Maximum(600)
+				Example(20)
+			})
+			Attribute("mentions_only", Boolean, "When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.", func() {
+				Default(false)
+				Example(true)
 			})
 			Attribute("limit", Int, "Maximum unread messages to return per target.", func() {
 				Default(20)
@@ -226,7 +230,7 @@ var _ = Service("chorus", func() {
 			Required("agent")
 		})
 		Result(TextResult)
-		Tool("read", "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block).", func() {
+		Tool("read", "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies).", func() {
 			ToolContent("content")
 			ReadOnlyHint(false)
 		})

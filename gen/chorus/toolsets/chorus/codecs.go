@@ -219,6 +219,11 @@ var readPayloadFields = []tools.FieldMetadata{
 		Description: "Seconds to block waiting if no unread messages are immediately available.",
 	},
 	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("mentions_only")},
+		JSONType:    "boolean",
+		Description: "When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.",
+	},
+	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("limit")},
 		JSONType:    "integer",
 		Description: "Maximum unread messages to return per target.",
@@ -677,11 +682,12 @@ func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.ReadPayloadTransport
 	out = &toolhttp.ReadPayloadTransport{
-		Agent:   &in.Agent,
-		Swarm:   &in.Swarm,
-		From:    in.From,
-		WaitSec: &in.WaitSec,
-		Limit:   &in.Limit,
+		Agent:        &in.Agent,
+		Swarm:        &in.Swarm,
+		From:         in.From,
+		WaitSec:      &in.WaitSec,
+		MentionsOnly: &in.MentionsOnly,
+		Limit:        &in.Limit,
 	}
 	return json.Marshal(out)
 }
@@ -716,6 +722,9 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	if in.WaitSec != nil {
 		out.WaitSec = *in.WaitSec
 	}
+	if in.MentionsOnly != nil {
+		out.MentionsOnly = *in.MentionsOnly
+	}
 	if in.Limit != nil {
 		out.Limit = *in.Limit
 	}
@@ -724,6 +733,9 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	}
 	if in.WaitSec == nil {
 		out.WaitSec = 0
+	}
+	if in.MentionsOnly == nil {
+		out.MentionsOnly = false
 	}
 	if in.Limit == nil {
 		out.Limit = 20
@@ -1353,6 +1365,13 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "mentions_only":
+			if err := validateBooleanJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.",
+			); err != nil {
+				return err
+			}
 		case "swarm":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1372,10 +1391,27 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 				"agent",
 				"from",
 				"limit",
+				"mentions_only",
 				"swarm",
 				"wait_sec",
 			})
 		}
+	}
+	return nil
+}
+
+// validateBooleanJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateBooleanJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }

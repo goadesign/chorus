@@ -1,17 +1,23 @@
-// This file tests the Chorus CLI helpers, local Redis auto-start, and MCP
-// configuration file merging.
+// This file tests the Chorus CLI helpers, local Redis auto-start, MCP
+// configuration file merging, and the background "chorus watch" listener.
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/goadesign/chorus/chorus"
+	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -255,5 +261,112 @@ func TestBuildServeArgs(t *testing.T) {
 		if !found {
 			t.Fatalf("expected %s %s in buildServeArgs output %v", flagName, wantVal, args)
 		}
+	}
+}
+
+// TestRunWatch verifies that "chorus watch" exits silently (0 bytes on stdout)
+// when no unread messages exist under -wait 0s, and blocks until a matching
+// mention arrives when -wait > 0 and -mentions are passed.
+func TestRunWatch(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	redisAddr := fmt.Sprintf("127.0.0.1:%d", port)
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer func() {
+		_ = rdb.Close()
+	}()
+	stopRedis, err := connectOrStartRedis(context.Background(), rdb, redisAddr)
+	if err != nil {
+		t.Fatalf("connectOrStartRedis: %v", err)
+	}
+	defer stopRedis()
+
+	svc, err := chorus.New(rdb)
+	if err != nil {
+		t.Fatalf("chorus.New: %v", err)
+	}
+	defer func() {
+		_ = svc.Close()
+	}()
+
+	httpSrv := httptest.NewServer(chorus.NewHTTPHandler(svc))
+	defer httpSrv.Close()
+	parsedURL, err := url.Parse(httpSrv.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+
+	ctx := context.Background()
+	if _, err := svc.Join(ctx, &genchorus.JoinPayload{
+		Agent:    "api",
+		Swarm:    "default",
+		Channels: []string{"#auth"},
+		Tail:     5,
+	}); err != nil {
+		t.Fatalf("Join(#auth): %v", err)
+	}
+
+	// 1. Instant hook check (-wait 0s) with no unread messages must write 0 bytes.
+	var emptyOut bytes.Buffer
+	if err := runWatch([]string{
+		"-addr", parsedURL.Host,
+		"-agent", "@api",
+		"-wait", "0s",
+	}, &emptyOut); err != nil {
+		t.Fatalf("runWatch(-wait 0s) failed: %v", err)
+	}
+	if emptyOut.Len() != 0 {
+		t.Fatalf("expected 0 bytes from caught-up -wait 0s watch, got %q", emptyOut.String())
+	}
+
+	// 2. Blocking watch with -mentions ignores unrelated messages and wakes
+	// immediately when @api is mentioned, printing the full unread delta.
+	var watchOut bytes.Buffer
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- runWatch([]string{
+			"-addr", parsedURL.Host,
+			"-agent", "api",
+			"-wait", "5s",
+			"-mentions",
+		}, &watchOut)
+	}()
+
+	time.Sleep(80 * time.Millisecond)
+	if _, err := svc.Send(ctx, &genchorus.SendPayload{
+		Agent: "db",
+		Swarm: "default",
+		To:    "#auth",
+		Text:  "starting passkey schema check",
+	}); err != nil {
+		t.Fatalf("Send(#auth#1): %v", err)
+	}
+	if _, err := svc.Send(ctx, &genchorus.SendPayload{
+		Agent: "qa",
+		Swarm: "default",
+		To:    "#auth",
+		Text:  "hey @api 500 on expired challenge",
+	}); err != nil {
+		t.Fatalf("Send(#auth#2): %v", err)
+	}
+
+	select {
+	case watchErr := <-doneCh:
+		if watchErr != nil {
+			t.Fatalf("runWatch(-mentions) failed: %v", watchErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for chorus watch to wake on @api mention")
+	}
+
+	got := watchOut.String()
+	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n"
+	if got != want {
+		t.Fatalf("runWatch output = %q, want %q", got, want)
 	}
 }

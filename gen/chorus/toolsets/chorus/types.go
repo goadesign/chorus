@@ -43,6 +43,9 @@ type (
 		From *string
 		// Seconds to block waiting if no unread messages are immediately available.
 		WaitSec int
+		// When true, only wake and drain when a direct message, @agent/@all mention,
+		// or reply to your message is unread.
+		MentionsOnly bool
 		// Maximum unread messages to return per target.
 		Limit int
 	}

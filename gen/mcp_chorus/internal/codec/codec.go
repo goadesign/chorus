@@ -334,6 +334,9 @@ type ReadPayloadTransport struct {
 	From *string `json:"from,omitempty"`
 	// Seconds to block waiting if no unread messages are immediately available.
 	WaitSec *ReadPayloadIntTransport `json:"wait_sec,omitempty"`
+	// When true, only wake and drain when a direct message, @agent/@all mention,
+	// or reply to your message is unread.
+	MentionsOnly *bool `json:"mentions_only,omitempty"`
 	// Maximum unread messages to return per target.
 	Limit *ReadPayloadIntTransport `json:"limit,omitempty"`
 }
@@ -359,8 +362,8 @@ func ValidateReadPayloadTransport(value *ReadPayloadTransport) (err error) {
 		if int(*value.WaitSec) < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", int(*value.WaitSec), 0, true))
 		}
-		if int(*value.WaitSec) > 30 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", int(*value.WaitSec), 30, false))
+		if int(*value.WaitSec) > 600 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", int(*value.WaitSec), 600, false))
 		}
 	}
 	if value.Limit != nil {
@@ -1140,6 +1143,9 @@ func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 		if body.WaitSec != nil {
 			out.WaitSec = int(*body.WaitSec)
 		}
+		if body.MentionsOnly != nil {
+			out.MentionsOnly = *body.MentionsOnly
+		}
 		if body.Limit != nil {
 			out.Limit = int(*body.Limit)
 		}
@@ -1148,6 +1154,9 @@ func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 		}
 		if body.WaitSec == nil {
 			out.WaitSec = 0
+		}
+		if body.MentionsOnly == nil {
+			out.MentionsOnly = false
 		}
 		if body.Limit == nil {
 			out.Limit = 20

@@ -251,3 +251,46 @@ func parseSeq(raw string) int {
 	}
 	return seq
 }
+
+// extractMentionedHandles returns the deduplicated, lowercase agent handles
+// (and "all") referenced as "@<handle>" tokens in text. Tokens preceded or
+// followed by handle characters (such as "user@api.com") are ignored.
+func extractMentionedHandles(text string) []string {
+	var handles []string
+	for i := 0; i < len(text); i++ {
+		if text[i] != '@' {
+			continue
+		}
+		if i > 0 && isHandleChar(text[i-1]) {
+			continue
+		}
+		start := i + 1
+		if start >= len(text) || !isAlnumByte(text[start]) {
+			continue
+		}
+		end := start + 1
+		for end < len(text) && isHandleChar(text[end]) {
+			end++
+		}
+		if end-start <= 32 {
+			h := strings.ToLower(text[start:end])
+			if !slices.Contains(handles, h) {
+				handles = append(handles, h)
+			}
+		}
+		i = end - 1
+	}
+	return handles
+}
+
+// isAlnumByte reports whether b is an ASCII letter or digit ([a-zA-Z0-9]).
+func isAlnumByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
+}
+
+// isHandleChar reports whether b is a valid agent handle byte ([a-zA-Z0-9_-]).
+func isHandleChar(b byte) bool {
+	return isAlnumByte(b) || b == '_' || b == '-'
+}

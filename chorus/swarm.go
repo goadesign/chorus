@@ -42,6 +42,8 @@ type (
 		// onlineWindow is the duration since an agent's last activity within
 		// which the agent is reported as "[online]".
 		onlineWindow time.Duration
+		// clock returns the current time for presence timestamps and heartbeats.
+		clock func() time.Time
 	}
 
 	// cursorUpdate records a pending watermark update for an agent on a target stream.
@@ -64,6 +66,8 @@ const (
 	prefixSeq = "seq:"
 	// prefixHead prefixes latest published sequence numbers in the swarm rmap.
 	prefixHead = "head:"
+	// prefixMention prefixes latest channel mention/reply sequence numbers in the swarm rmap.
+	prefixMention = "mention:"
 	// prefixCursor prefixes per-agent read watermarks in the swarm rmap.
 	prefixCursor = "cur:"
 
@@ -96,6 +100,7 @@ func openSwarm(
 	swarmTTL time.Duration,
 	streamMaxLen int,
 	onlineWindow time.Duration,
+	clock func() time.Time,
 ) (*swarmHandle, error) {
 	mapName := fmt.Sprintf("chorus:%s:state", name)
 	state, err := rmap.Join(ctx, mapName, rdb, rmap.WithSlidingTTL(swarmTTL))
@@ -109,6 +114,7 @@ func openSwarm(
 		swarmTTL:     swarmTTL,
 		streamMaxLen: streamMaxLen,
 		onlineWindow: onlineWindow,
+		clock:        clock,
 	}, nil
 }
 
@@ -138,6 +144,13 @@ func seqMapKey(target string) string {
 // to target ("#channel" or "@agent").
 func headMapKey(target string) string {
 	return prefixHead + target
+}
+
+// mentionMapKey returns the rmap key storing the latest sequence number in
+// channel where handleLower (lowercase agent handle or "all") was @mentioned
+// or replied to.
+func mentionMapKey(handleLower, channel string) string {
+	return prefixMention + handleLower + ":" + channel
 }
 
 // cursorMapKey returns the rmap key storing agent's read watermark on target
@@ -223,7 +236,8 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now ti
 
 // directory returns the formatted swarm snapshot for caller after refreshing
 // caller's presence and optional role.
-func (s *swarmHandle) directory(ctx context.Context, caller, role string, now time.Time) (string, error) {
+func (s *swarmHandle) directory(ctx context.Context, caller, role string) (string, error) {
+	now := s.clock()
 	if err := s.touchAgent(ctx, caller, role, now, false); err != nil {
 		return "", err
 	}
@@ -243,7 +257,6 @@ func (s *swarmHandle) joinChannels(
 	topic string,
 	role string,
 	tail int,
-	now time.Time,
 ) (string, error) {
 	unique := deduplicateStrings(channels)
 	var sections []string
@@ -287,7 +300,7 @@ func (s *swarmHandle) joinChannels(
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, role, now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, role, s.clock(), true); err != nil {
 		return "", err
 	}
 	return strings.Join(sections, "\n"), nil
@@ -295,7 +308,7 @@ func (s *swarmHandle) joinChannels(
 
 // leaveChannels unsubscribes agent from one or more channels and removes their
 // read watermarks from the swarm's replicated map.
-func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels []string, now time.Time) (string, error) {
+func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels []string) (string, error) {
 	unique := deduplicateStrings(channels)
 	for _, ch := range unique {
 		if _, err := s.state.Delete(ctx, cursorMapKey(agent, ch)); err != nil {
@@ -305,7 +318,7 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, "", s.clock(), true); err != nil {
 		return "", err
 	}
 	return "left " + strings.Join(unique, ", "), nil
@@ -321,9 +334,8 @@ func (s *swarmHandle) publish(
 	target string,
 	text string,
 	replyTo int,
-	now time.Time,
 ) (string, error) {
-	if err := s.touchAgent(ctx, sender, "", now, false); err != nil {
+	if err := s.touchAgent(ctx, sender, "", s.clock(), false); err != nil {
 		return "", err
 	}
 
@@ -348,7 +360,7 @@ func (s *swarmHandle) publish(
 		return "", err
 	}
 
-	unread, err := s.drainUnread(ctx, sender, "", defaultReadLimit, target, seq)
+	unread, err := s.drainUnread(ctx, sender, "", defaultReadLimit, false, target, seq)
 	if err != nil {
 		return "", err
 	}
@@ -357,8 +369,9 @@ func (s *swarmHandle) publish(
 
 // appendUnderSemaphore acquires the 1-slot publication semaphore for target,
 // increments the target sequence number, appends the message event to the
-// target's Pulse stream, and commits the updated head sequence to rmap via
-// SetAndWait before releasing the semaphore.
+// target's Pulse stream, records any channel @mentions or reply targets in
+// rmap, and commits the updated head sequence to rmap via SetAndWait before
+// releasing the semaphore.
 func (s *swarmHandle) appendUnderSemaphore(
 	ctx context.Context,
 	sender string,
@@ -399,6 +412,23 @@ func (s *swarmHandle) appendUnderSemaphore(
 		}
 	}
 
+	var mentions []string
+	if strings.HasPrefix(target, "#") {
+		mentions = extractMentionedHandles(text)
+		if replyTo > 0 {
+			replyAuthor, authorErr := s.findMessageSender(ctx, target, replyTo)
+			if authorErr != nil {
+				return 0, authorErr
+			}
+			if replyAuthor != "" {
+				authorLower := strings.ToLower(replyAuthor)
+				if !slices.Contains(mentions, authorLower) {
+					mentions = append(mentions, authorLower)
+				}
+			}
+		}
+	}
+
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
@@ -417,33 +447,69 @@ func (s *swarmHandle) appendUnderSemaphore(
 		return 0, fmt.Errorf("append message to %s stream: %w", target, err)
 	}
 
+	senderLower := strings.ToLower(sender)
+	for _, h := range mentions {
+		if h == senderLower {
+			continue
+		}
+		if _, err := s.state.Set(ctx, mentionMapKey(h, target), strconv.Itoa(seq)); err != nil {
+			return 0, fmt.Errorf("record mention of %q in %s: %w", h, target, err)
+		}
+	}
+
 	if _, err := s.state.SetAndWait(ctx, headMapKey(target), strconv.Itoa(seq)); err != nil {
 		return 0, fmt.Errorf("commit head sequence for %s: %w", target, err)
 	}
 	return seq, nil
 }
 
+// findMessageSender returns the sender handle of the message with sequence
+// number seq in target, or "" if not found in the retained stream history.
+func (s *swarmHandle) findMessageSender(ctx context.Context, target string, seq int) (string, error) {
+	events, err := s.snapshotTarget(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		var msg messageEvent
+		if err := json.Unmarshal(ev.Payload(), &msg); err != nil {
+			return "", fmt.Errorf("decode message event %s in %s: %w", ev.ID(), target, err)
+		}
+		if msg.Seq == seq {
+			return msg.Sender, nil
+		}
+		if msg.Seq < seq {
+			break
+		}
+	}
+	return "", nil
+}
+
 // readUnread drains unread messages for agent from the specified channel (or
 // across direct messages and all subscribed channels when from is empty). When
-// no unread messages are immediately available and waitSec > 0, readUnread
-// blocks on the swarm's replicated map notification channel until a message
-// arrives or waitSec elapses.
+// mentionsOnly is true, readUnread only drains targets that contain a direct
+// message to agent, a case-insensitive @<agent> or @all mention, or a reply to
+// an earlier message sent by agent. When no matching unread messages are
+// immediately available and waitSec > 0, readUnread blocks on the swarm's
+// replicated map notification channel (refreshing agent online presence
+// periodically) until a matching message arrives or waitSec elapses.
 func (s *swarmHandle) readUnread(
 	ctx context.Context,
 	agent string,
 	from string,
 	waitSec int,
 	limit int,
-	now time.Time,
+	mentionsOnly bool,
 ) (string, error) {
-	if err := s.touchAgent(ctx, agent, "", now, false); err != nil {
+	if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
 		return "", err
 	}
 	if limit <= 0 {
 		limit = defaultReadLimit
 	}
 
-	lines, err := s.drainUnread(ctx, agent, from, limit, "", 0)
+	lines, err := s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
 	if err != nil {
 		return "", err
 	}
@@ -458,8 +524,8 @@ func (s *swarmHandle) readUnread(
 	defer s.state.Unsubscribe(notifyCh)
 
 	// Re-check immediately after subscribing so a publication that committed
-	// between the first drain and Subscribe cannot be missed.
-	lines, err = s.drainUnread(ctx, agent, from, limit, "", 0)
+	// between the first check and Subscribe cannot be missed.
+	lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
 	if err != nil {
 		return "", err
 	}
@@ -470,17 +536,25 @@ func (s *swarmHandle) readUnread(
 	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
 	defer timer.Stop()
 
+	heartbeatInterval := max(time.Second, s.onlineWindow/2)
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timer.C:
 			return "none", nil
+		case <-heartbeat.C:
+			if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
+				return "", err
+			}
 		case _, ok := <-notifyCh:
 			if !ok {
 				return "none", nil
 			}
-			lines, err = s.drainUnread(ctx, agent, from, limit, "", 0)
+			lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
 			if err != nil {
 				return "", err
 			}
@@ -493,29 +567,28 @@ func (s *swarmHandle) readUnread(
 
 // drainUnread compares agent's watermarks against head sequence numbers in the
 // in-memory replicated map and reads only targets where headSeq > curSeq. When
-// called from publish, excludeTarget and excludeSeq identify the message just
-// sent by agent so it is not echoed back as unread while still advancing agent's
-// watermark on excludeTarget.
+// mentionsOnly is true, channel targets where neither mention:<agent>:<ch> nor
+// mention:all:<ch> exceeds curSeq are skipped in local memory without reading
+// Redis or advancing watermarks. When called from publish, excludeTarget and
+// excludeSeq identify the message just sent by agent so it is not echoed back
+// as unread while still advancing agent's watermark on excludeTarget.
 func (s *swarmHandle) drainUnread(
 	ctx context.Context,
 	agent string,
 	from string,
 	limit int,
+	mentionsOnly bool,
 	excludeTarget string,
 	excludeSeq int,
 ) ([]string, error) {
 	snap := s.state.Map()
 	targets := s.readTargets(agent, from)
+	agentLower := strings.ToLower(agent)
 
 	var lines []string
 	var updates []cursorUpdate
 
 	for _, target := range targets {
-		remaining := limit - len(lines)
-		if remaining <= 0 {
-			break
-		}
-
 		headSeq := parseSeq(snap[headMapKey(target)])
 		if headSeq <= 0 {
 			continue
@@ -523,6 +596,15 @@ func (s *swarmHandle) drainUnread(
 		curSeq := parseSeq(snap[cursorMapKey(agent, target)])
 		if headSeq <= curSeq {
 			continue
+		}
+		if mentionsOnly && strings.HasPrefix(target, "#") {
+			mentionSeq := max(
+				parseSeq(snap[mentionMapKey(agentLower, target)]),
+				parseSeq(snap[mentionMapKey("all", target)]),
+			)
+			if mentionSeq <= curSeq || headSeq < mentionSeq {
+				continue
+			}
 		}
 
 		// Fast path when draining right after publishing to target: if no other
@@ -536,7 +618,7 @@ func (s *swarmHandle) drainUnread(
 			continue
 		}
 
-		targetLines, newSeq, err := s.readTargetDelta(ctx, target, curSeq, remaining, excludeTarget, excludeSeq)
+		targetLines, newSeq, err := s.readTargetDelta(ctx, target, curSeq, limit, excludeTarget, excludeSeq)
 		if err != nil {
 			return nil, err
 		}

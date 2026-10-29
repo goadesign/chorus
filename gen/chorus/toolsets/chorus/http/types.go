@@ -52,6 +52,9 @@ type (
 		From *string `json:"from,omitempty"`
 		// Seconds to block waiting if no unread messages are immediately available.
 		WaitSec *int `json:"wait_sec,omitempty"`
+		// When true, only wake and drain when a direct message, @agent/@all mention,
+		// or reply to your message is unread.
+		MentionsOnly *bool `json:"mentions_only,omitempty"`
 		// Maximum unread messages to return per target.
 		Limit *int `json:"limit,omitempty"`
 	}

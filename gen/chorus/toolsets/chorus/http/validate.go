@@ -101,8 +101,8 @@ func ValidateReadPayloadTransport(body *ReadPayloadTransport) (err error) {
 		if *body.WaitSec < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", *body.WaitSec, 0, true))
 		}
-		if *body.WaitSec > 30 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", *body.WaitSec, 30, false))
+		if *body.WaitSec > 600 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", *body.WaitSec, 600, false))
 		}
 	}
 	if body.Limit != nil {

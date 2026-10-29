@@ -1,25 +1,33 @@
 // This file implements background service lifecycle management ("chorus up",
-// "chorus down", "chorus status") and automatic MCP client configuration
-// ("chorus setup").
+// "chorus down", "chorus status"), automatic MCP client configuration
+// ("chorus setup"), and zero-token background message watching ("chorus watch").
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	genmcpchorusclient "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/client"
+	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
+	goahttp "goa.design/goa/v3/http"
 )
 
 const (
@@ -31,6 +39,10 @@ const (
 	daemonReadyTimeout = 15 * time.Second
 	// healthProbeTimeout bounds a single GET /healthz HTTP check.
 	healthProbeTimeout = 500 * time.Millisecond
+	// defaultWatchWait is the default blocking duration for "chorus watch".
+	defaultWatchWait = 5 * time.Minute
+	// maxReadWaitSec is the maximum wait_sec accepted by a single MCP read call.
+	maxReadWaitSec = 600
 )
 
 // runUp starts Chorus in the background (installing a user service when
@@ -133,6 +145,84 @@ func runSetup(args []string) error {
 		fmt.Printf("Registered Chorus MCP (%s) in %s\n", mcpURL, p)
 	}
 	return nil
+}
+
+// runWatch blocks until unread Chorus messages arrive for the specified agent
+// (consuming zero LLM tokens while waiting in a background shell or hook),
+// writes the unread wire lines to out, and exits 0. When no matching messages
+// arrive before -wait elapses, runWatch writes nothing to out and exits 0.
+func runWatch(args []string, out io.Writer) error {
+	var (
+		addr         string
+		agent        string
+		swarm        string
+		from         string
+		wait         time.Duration
+		mentionsOnly bool
+		limit        int
+	)
+	fs := flag.NewFlagSet("chorus watch", flag.ContinueOnError)
+	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
+	fs.StringVar(&agent, "agent", "", "Your agent handle (e.g. 'api' or '@api')")
+	fs.StringVar(&swarm, "swarm", "default", "Swarm namespace")
+	fs.StringVar(&from, "from", "", "Optional '#channel' filter")
+	fs.DurationVar(&wait, "wait", defaultWatchWait, "Maximum duration to wait for unread messages (0s for instant hook check)")
+	fs.BoolVar(&mentionsOnly, "mentions", false, "Only wake on direct messages, @agent/@all mentions, or replies to your messages")
+	fs.IntVar(&limit, "limit", 20, "Maximum unread messages to drain per target")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	agent = strings.TrimPrefix(strings.TrimSpace(agent), "@")
+	if agent == "" {
+		return errors.New("chorus watch requires -agent <handle>")
+	}
+	if wait < 0 {
+		return errors.New("-wait must not be negative")
+	}
+	if limit < 1 || limit > 50 {
+		return errors.New("-limit must be between 1 and 50")
+	}
+
+	parsedURL, err := url.Parse(localBaseURL(addr))
+	if err != nil {
+		return fmt.Errorf("parse chorus address %q: %w", addr, err)
+	}
+
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	deadline := time.Now().Add(wait)
+	for {
+		chunkSec := 0
+		if wait > 0 {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return nil
+			}
+			chunkSec = max(1, int(remaining.Round(time.Second).Seconds()))
+			if chunkSec > maxReadWaitSec {
+				chunkSec = maxReadWaitSec
+			}
+		}
+
+		text, err := callWatchRead(sigCtx, parsedURL, agent, swarm, from, chunkSec, limit, mentionsOnly)
+		if err != nil {
+			if sigCtx.Err() != nil && errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		if text != "" && text != "none" {
+			if _, err := fmt.Fprintln(out, text); err != nil {
+				return fmt.Errorf("write watch output: %w", err)
+			}
+			return nil
+		}
+		if wait == 0 || !time.Now().Before(deadline) {
+			return nil
+		}
+	}
 }
 
 // setupMCPConfigs merges the Chorus MCP server entry into the project's
@@ -556,6 +646,69 @@ func startDetachedProcess(stateDir, exePath string, cfg serverConfig) error {
 	}
 	_ = cmd.Process.Release()
 	return nil
+}
+
+// callWatchRead invokes the Chorus MCP "read" tool over HTTP JSON-RPC and
+// returns its plain-text wire result.
+func callWatchRead(
+	ctx context.Context,
+	baseURL *url.URL,
+	agent string,
+	swarm string,
+	from string,
+	waitSec int,
+	limit int,
+	mentionsOnly bool,
+) (string, error) {
+	toolArgs := map[string]any{
+		"agent":         agent,
+		"swarm":         swarm,
+		"wait_sec":      waitSec,
+		"limit":         limit,
+		"mentions_only": mentionsOnly,
+	}
+	if from != "" {
+		toolArgs["from"] = from
+	}
+	rawArgs, err := json.Marshal(toolArgs)
+	if err != nil {
+		return "", fmt.Errorf("marshal read arguments: %w", err)
+	}
+
+	httpClient := &http.Client{
+		Timeout: time.Duration(waitSec)*time.Second + 10*time.Second,
+	}
+	mcpClient := genmcpchorusclient.NewClient(
+		baseURL.Scheme,
+		baseURL.Host,
+		httpClient,
+		goahttp.RequestEncoder,
+		goahttp.ResponseDecoder,
+		false,
+	)
+	resAny, err := mcpClient.ToolsCall()(ctx, &genmcpchorus.ToolsCallPayload{
+		Name:      "read",
+		Arguments: rawArgs,
+	})
+	if err != nil {
+		return "", fmt.Errorf("call chorus read at %s/mcp: %w", baseURL.String(), err)
+	}
+	res := resAny.(*genmcpchorus.ToolsCallResult)
+	complete, ok := res.Outcome.AsComplete()
+	if !ok {
+		return "", errors.New("unexpected streaming outcome from chorus read")
+	}
+	if complete.IsError != nil && *complete.IsError {
+		errText := "tool call failed"
+		if len(complete.Content) > 0 && complete.Content[0].Text != nil {
+			errText = *complete.Content[0].Text
+		}
+		return "", errors.New(errText)
+	}
+	if len(complete.Content) == 0 || complete.Content[0].Text == nil {
+		return "", nil
+	}
+	return *complete.Content[0].Text, nil
 }
 
 // localBaseURL normalizes a listen address (such as ":9440" or "127.0.0.1:9440")

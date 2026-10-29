@@ -252,7 +252,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		"from": "@dm_not_allowed_in_from",
 	})
 	lead.callExpectingError("read", map[string]any{
-		"wait_sec": 99,
+		"wait_sec": 601,
 	})
 	lead.callExpectingError("read", map[string]any{
 		"limit": 0,
@@ -617,6 +617,120 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	}
 	if !strings.Contains(whoAlpha, "@observer (Observer) [online]") {
 		t.Fatalf("expected @observer to be [online], got:\n%s", whoAlpha)
+	}
+}
+
+// TestMentionsOnlyWakeupAndFullContextDrain verifies that read with
+// mentions_only=true ignores unrelated channel chatter and partial handle
+// substrings without advancing watermarks, then wakes and drains full channel
+// context when the agent is @mentioned, addressed via @all, replied to via
+// reply_to, or sent a direct message.
+func TestMentionsOnlyWakeupAndFullContextDrain(t *testing.T) {
+	c := newTestCluster(t, 2, nil)
+	swarm := "selective-wake"
+
+	lead := c.newAgent(0, swarm, "lead")
+	db := c.newAgent(0, swarm, "db")
+	api := c.newAgent(1, swarm, "api")
+	qa := c.newAgent(1, swarm, "qa")
+
+	for _, ag := range []*emulatedAgent{lead, db, api, qa} {
+		ag.call("join", map[string]any{"channels": []string{"#arch"}})
+	}
+
+	// 1. Unrelated chatter and partial substrings (@api-v2, user@api.com) must
+	// not trigger mentions_only or advance @api's watermark.
+	db.send("#arch", "starting schema migration 004", 0)
+	lead.send("#arch", "checking @api-v2 compatibility and user@api.com fixture", 0)
+
+	if got := api.call("read", map[string]any{"mentions_only": true}); got != "none" {
+		t.Fatalf("expected mentions_only read to return 'none' on unrelated chatter, got:\n%s", got)
+	}
+
+	// 2. Mentioning @api wakes mentions_only and drains all 3 unread messages
+	// (#arch#1..#3) so @api receives the surrounding conversation context.
+	db.send("#arch", "migration complete, (@api) you can wire the handler now", 0)
+	mentionDrain := parseWireMessages(t, api.call("read", map[string]any{"mentions_only": true}))
+	if len(mentionDrain) != 3 || mentionDrain[0].seq != 1 || mentionDrain[1].seq != 2 || mentionDrain[2].seq != 3 {
+		t.Fatalf("expected mentions_only wakeup to drain #arch#1..#3 for full context, got %+v", mentionDrain)
+	}
+
+	// 3. Blocking mentions_only read wakes when a peer replies (reply_to) to a
+	// message authored by @api, even without typing "@api" in the reply body.
+	apiPost := api.send("#arch", "VerifyAssertion handler is wired", 0)
+	if apiPost.seq != 4 {
+		t.Fatalf("expected @api post to be #arch#4, got %d", apiPost.seq)
+	}
+
+	replyWakeCh := make(chan []parsedMessage, 1)
+	go func() {
+		raw := api.call("read", map[string]any{
+			"wait_sec":      5,
+			"mentions_only": true,
+		})
+		replyWakeCh <- parseWireMessages(t, raw)
+	}()
+
+	time.Sleep(80 * time.Millisecond)
+	// Unrelated post #arch#5 from @db while @api is blocking on mentions_only.
+	db.send("#arch", "vacuuming index tables", 0)
+	// @qa replies to @api's #arch#4 without mentioning "@api" in text (#arch#6↩#4).
+	qa.send("#arch", "500 concurrent replay checks pass", apiPost.seq)
+
+	select {
+	case wokenMsgs := <-replyWakeCh:
+		if len(wokenMsgs) != 2 || wokenMsgs[0].seq != 5 || wokenMsgs[1].seq != 6 || wokenMsgs[1].replyTo != 4 {
+			t.Fatalf("expected reply wakeup to drain #arch#5 and #arch#6↩#4, got %+v", wokenMsgs)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for mentions_only read to wake on reply_to")
+	}
+
+	// 4. Case-insensitive @ALL mention and direct messages (@lead->@api) both wake mentions_only.
+	lead.send("#arch", "@ALL freeze merges for release tag", 0)
+	allDrain := parseWireMessages(t, api.call("read", map[string]any{"mentions_only": true}))
+	if len(allDrain) != 1 || allDrain[0].seq != 7 {
+		t.Fatalf("expected @ALL mention to wake mentions_only and drain #arch#7, got %+v", allDrain)
+	}
+
+	lead.send("@api", "tag v0.2.0 when ready", 0)
+	dmDrain := parseWireMessages(t, api.call("read", map[string]any{"mentions_only": true}))
+	if len(dmDrain) != 1 || dmDrain[0].target != "@me" || dmDrain[0].seq != 1 {
+		t.Fatalf("expected direct message to wake mentions_only, got %+v", dmDrain)
+	}
+
+	// 5. Multi-channel starvation protection and FIFO pagination across mentions:
+	// @api joins #alerts and #noise. #noise receives 25 unrelated messages while
+	// #alerts receives #alerts#1 (mentioning @api), #alerts#2 (context), and
+	// #alerts#3 (uppercase @API mention). Calling read(mentions_only: true,
+	// limit: 2) must skip #noise completely, deliver #alerts#1..#2 on the first
+	// call, and deliver #alerts#3 on the second call without losing any mention.
+	for _, ag := range []*emulatedAgent{lead, db, api} {
+		ag.call("join", map[string]any{"channels": []string{"#alerts", "#noise"}})
+	}
+	for i := 1; i <= 25; i++ {
+		db.send("#noise", fmt.Sprintf("background job %d", i), 0)
+	}
+	lead.send("#alerts", "first ping: @api check auth logs", 0)
+	db.send("#alerts", "correlating request IDs", 0)
+	lead.send("#alerts", "second ping: @API check the latency spike", 0)
+
+	page1 := parseWireMessages(t, api.call("read", map[string]any{
+		"mentions_only": true,
+		"limit":         2,
+	}))
+	if len(page1) != 2 ||
+		page1[0].target != "#alerts" || page1[0].seq != 1 ||
+		page1[1].target != "#alerts" || page1[1].seq != 2 {
+		t.Fatalf("expected FIFO page 1 #alerts#1..#2 (skipping #noise), got %+v", page1)
+	}
+
+	page2 := parseWireMessages(t, api.call("read", map[string]any{
+		"mentions_only": true,
+		"limit":         2,
+	}))
+	if len(page2) != 1 || page2[0].target != "#alerts" || page2[0].seq != 3 {
+		t.Fatalf("expected FIFO page 2 #alerts#3 (skipping #noise), got %+v", page2)
 	}
 }
 

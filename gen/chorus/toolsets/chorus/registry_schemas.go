@@ -30,8 +30,8 @@ func ToolSchemas() []*genregistry.ToolSchema {
 		declarations.schema1(),
 		declarations.schema20(),
 		declarations.schema33(),
-		declarations.schema48(),
-		declarations.schema63(),
+		declarations.schema50(),
+		declarations.schema65(),
 	}
 } // schema1 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
@@ -491,30 +491,30 @@ func (registryDeclarations) field32() *genregistry.ToolFieldMetadata {
 
 // schema33 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema33() *genregistry.ToolSchema {
-	registryText1 := "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block)."
+	registryText1 := "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies)."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.read",
 		Description:            &registryText1,
-		PayloadSchema:          []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-		ExecutionPayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+		PayloadSchema:          []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+		ExecutionPayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 		ResultSchema:           []byte("{\"type\":\"null\"}"),
 		ConsumerContract: &genregistry.ConsumerContract{
 			Kind:  "service",
 			Title: "Read",
 			Search: &genregistry.ToolSearchDocument{
-				Length: 17,
-				Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 1, "for": 1, "from": 1, "messages": 1, "omit": 1, "read": 3, "sec": 1, "set": 1, "subscriptions": 1, "to": 1, "unread": 1, "wait": 1},
+				Length: 28,
+				Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 2, "for": 1, "from": 1, "mentions": 2, "messages": 1, "omit": 1, "on": 1, "only": 2, "or": 1, "read": 3, "replies": 1, "sec": 1, "set": 2, "subscriptions": 1, "to": 2, "unread": 1, "wait": 1, "wake": 1},
 			},
 			RequiresUI: false,
 			TextOnly: &genregistry.TextOnlyToolContract{
-				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-				Description:     "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block).",
+				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+				Description:     "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies).",
 				Search: &genregistry.ToolSearchDocument{
-					Length: 17,
-					Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 1, "for": 1, "from": 1, "messages": 1, "omit": 1, "read": 3, "sec": 1, "set": 1, "subscriptions": 1, "to": 1, "unread": 1, "wait": 1},
+					Length: 28,
+					Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 2, "for": 1, "from": 1, "mentions": 2, "messages": 1, "omit": 1, "on": 1, "only": 2, "or": 1, "read": 3, "replies": 1, "sec": 1, "set": 2, "subscriptions": 1, "to": 2, "unread": 1, "wait": 1, "wake": 1},
 				},
-				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-				Payload:       declarations.metadata41(),
+				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+				Payload:       declarations.metadata42(),
 			},
 			Payload: declarations.metadata34(),
 		},
@@ -526,7 +526,7 @@ func (declarations registryDeclarations) metadata34() *genregistry.ToolTypeMetad
 	registryText1 := "ReadPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field35(),
 			declarations.field36(),
@@ -534,6 +534,7 @@ func (declarations registryDeclarations) metadata34() *genregistry.ToolTypeMetad
 			declarations.field38(),
 			declarations.field39(),
 			declarations.field40(),
+			declarations.field41(),
 		},
 	}
 }
@@ -600,6 +601,19 @@ func (registryDeclarations) field39() *genregistry.ToolFieldMetadata {
 
 // field40 constructs one generated field declaration.
 func (registryDeclarations) field40() *genregistry.ToolFieldMetadata {
+	registryText1 := "boolean"
+	registryText2 := "When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("mentions_only")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field41 constructs one generated field declaration.
+func (registryDeclarations) field41() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Maximum unread messages to return per target."
 	return &genregistry.ToolFieldMetadata{
@@ -611,33 +625,34 @@ func (registryDeclarations) field40() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata41 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata41() *genregistry.ToolTypeMetadata {
+// metadata42 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata42() *genregistry.ToolTypeMetadata {
 	registryText1 := "ReadPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":5,\"format\":\"int64\",\"maximum\":30,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field42(),
 			declarations.field43(),
 			declarations.field44(),
 			declarations.field45(),
 			declarations.field46(),
 			declarations.field47(),
+			declarations.field48(),
+			declarations.field49(),
 		},
 	}
 }
 
-// field42 constructs one generated field declaration.
-func (registryDeclarations) field42() *genregistry.ToolFieldMetadata {
+// field43 constructs one generated field declaration.
+func (registryDeclarations) field43() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field43 constructs one generated field declaration.
-func (registryDeclarations) field43() *genregistry.ToolFieldMetadata {
+// field44 constructs one generated field declaration.
+func (registryDeclarations) field44() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
 	return &genregistry.ToolFieldMetadata{
@@ -649,8 +664,8 @@ func (registryDeclarations) field43() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field44 constructs one generated field declaration.
-func (registryDeclarations) field44() *genregistry.ToolFieldMetadata {
+// field45 constructs one generated field declaration.
+func (registryDeclarations) field45() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Swarm namespace (defaults to 'default')."
 	return &genregistry.ToolFieldMetadata{
@@ -662,8 +677,8 @@ func (registryDeclarations) field44() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field45 constructs one generated field declaration.
-func (registryDeclarations) field45() *genregistry.ToolFieldMetadata {
+// field46 constructs one generated field declaration.
+func (registryDeclarations) field46() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages."
 	return &genregistry.ToolFieldMetadata{
@@ -675,8 +690,8 @@ func (registryDeclarations) field45() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field46 constructs one generated field declaration.
-func (registryDeclarations) field46() *genregistry.ToolFieldMetadata {
+// field47 constructs one generated field declaration.
+func (registryDeclarations) field47() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Seconds to block waiting if no unread messages are immediately available."
 	return &genregistry.ToolFieldMetadata{
@@ -688,8 +703,21 @@ func (registryDeclarations) field46() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field47 constructs one generated field declaration.
-func (registryDeclarations) field47() *genregistry.ToolFieldMetadata {
+// field48 constructs one generated field declaration.
+func (registryDeclarations) field48() *genregistry.ToolFieldMetadata {
+	registryText1 := "boolean"
+	registryText2 := "When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("mentions_only")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field49 constructs one generated field declaration.
+func (registryDeclarations) field49() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Maximum unread messages to return per target."
 	return &genregistry.ToolFieldMetadata{
@@ -701,8 +729,8 @@ func (registryDeclarations) field47() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// schema48 constructs one generated schema declaration.
-func (declarations registryDeclarations) schema48() *genregistry.ToolSchema {
+// schema50 constructs one generated schema declaration.
+func (declarations registryDeclarations) schema50() *genregistry.ToolSchema {
 	registryText1 := "Send a message to @agent or #channel; also drains and returns your unread messages."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.send",
@@ -726,71 +754,45 @@ func (declarations registryDeclarations) schema48() *genregistry.ToolSchema {
 					Terms:  map[string]int{"a": 1, "agent": 1, "also": 1, "and": 1, "channel": 1, "chorus": 1, "drains": 1, "message": 1, "messages": 1, "or": 1, "returns": 1, "send": 3, "to": 1, "unread": 1, "your": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
-				Payload:       declarations.metadata56(),
+				Payload:       declarations.metadata58(),
 			},
-			Payload: declarations.metadata49(),
+			Payload: declarations.metadata51(),
 		},
 	}
 }
 
-// metadata49 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata49() *genregistry.ToolTypeMetadata {
+// metadata51 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata51() *genregistry.ToolTypeMetadata {
 	registryText1 := "SendPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field50(),
-			declarations.field51(),
 			declarations.field52(),
 			declarations.field53(),
 			declarations.field54(),
 			declarations.field55(),
+			declarations.field56(),
+			declarations.field57(),
 		},
 	}
 }
 
-// field50 constructs one generated field declaration.
-func (registryDeclarations) field50() *genregistry.ToolFieldMetadata {
+// field52 constructs one generated field declaration.
+func (registryDeclarations) field52() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field51 constructs one generated field declaration.
-func (registryDeclarations) field51() *genregistry.ToolFieldMetadata {
+// field53 constructs one generated field declaration.
+func (registryDeclarations) field53() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
 	return &genregistry.ToolFieldMetadata{
 		Path: []*genregistry.ToolFieldPathSegment{
 			{Segment: genregistry.NewToolFieldSegmentField("agent")},
-		},
-		JSONType:    &registryText1,
-		Description: &registryText2,
-	}
-}
-
-// field52 constructs one generated field declaration.
-func (registryDeclarations) field52() *genregistry.ToolFieldMetadata {
-	registryText1 := "string"
-	registryText2 := "Swarm namespace (defaults to 'default')."
-	return &genregistry.ToolFieldMetadata{
-		Path: []*genregistry.ToolFieldPathSegment{
-			{Segment: genregistry.NewToolFieldSegmentField("swarm")},
-		},
-		JSONType:    &registryText1,
-		Description: &registryText2,
-	}
-}
-
-// field53 constructs one generated field declaration.
-func (registryDeclarations) field53() *genregistry.ToolFieldMetadata {
-	registryText1 := "string"
-	registryText2 := "Target '@agent' for direct messages or '#channel' for channel messages."
-	return &genregistry.ToolFieldMetadata{
-		Path: []*genregistry.ToolFieldPathSegment{
-			{Segment: genregistry.NewToolFieldSegmentField("to")},
 		},
 		JSONType:    &registryText1,
 		Description: &registryText2,
@@ -800,70 +802,6 @@ func (registryDeclarations) field53() *genregistry.ToolFieldMetadata {
 // field54 constructs one generated field declaration.
 func (registryDeclarations) field54() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
-	registryText2 := "Message text to send."
-	return &genregistry.ToolFieldMetadata{
-		Path: []*genregistry.ToolFieldPathSegment{
-			{Segment: genregistry.NewToolFieldSegmentField("text")},
-		},
-		JSONType:    &registryText1,
-		Description: &registryText2,
-	}
-}
-
-// field55 constructs one generated field declaration.
-func (registryDeclarations) field55() *genregistry.ToolFieldMetadata {
-	registryText1 := "integer"
-	registryText2 := "Optional sequence number in the target conversation being replied to."
-	return &genregistry.ToolFieldMetadata{
-		Path: []*genregistry.ToolFieldPathSegment{
-			{Segment: genregistry.NewToolFieldSegmentField("reply_to")},
-		},
-		JSONType:    &registryText1,
-		Description: &registryText2,
-	}
-}
-
-// metadata56 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata56() *genregistry.ToolTypeMetadata {
-	registryText1 := "SendPayload"
-	return &genregistry.ToolTypeMetadata{
-		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
-		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field57(),
-			declarations.field58(),
-			declarations.field59(),
-			declarations.field60(),
-			declarations.field61(),
-			declarations.field62(),
-		},
-	}
-}
-
-// field57 constructs one generated field declaration.
-func (registryDeclarations) field57() *genregistry.ToolFieldMetadata {
-	registryText1 := "object"
-	return &genregistry.ToolFieldMetadata{
-		JSONType: &registryText1,
-	}
-}
-
-// field58 constructs one generated field declaration.
-func (registryDeclarations) field58() *genregistry.ToolFieldMetadata {
-	registryText1 := "string"
-	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
-	return &genregistry.ToolFieldMetadata{
-		Path: []*genregistry.ToolFieldPathSegment{
-			{Segment: genregistry.NewToolFieldSegmentField("agent")},
-		},
-		JSONType:    &registryText1,
-		Description: &registryText2,
-	}
-}
-
-// field59 constructs one generated field declaration.
-func (registryDeclarations) field59() *genregistry.ToolFieldMetadata {
-	registryText1 := "string"
 	registryText2 := "Swarm namespace (defaults to 'default')."
 	return &genregistry.ToolFieldMetadata{
 		Path: []*genregistry.ToolFieldPathSegment{
@@ -874,8 +812,8 @@ func (registryDeclarations) field59() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field60 constructs one generated field declaration.
-func (registryDeclarations) field60() *genregistry.ToolFieldMetadata {
+// field55 constructs one generated field declaration.
+func (registryDeclarations) field55() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Target '@agent' for direct messages or '#channel' for channel messages."
 	return &genregistry.ToolFieldMetadata{
@@ -887,8 +825,8 @@ func (registryDeclarations) field60() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field61 constructs one generated field declaration.
-func (registryDeclarations) field61() *genregistry.ToolFieldMetadata {
+// field56 constructs one generated field declaration.
+func (registryDeclarations) field56() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Message text to send."
 	return &genregistry.ToolFieldMetadata{
@@ -900,8 +838,8 @@ func (registryDeclarations) field61() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field62 constructs one generated field declaration.
-func (registryDeclarations) field62() *genregistry.ToolFieldMetadata {
+// field57 constructs one generated field declaration.
+func (registryDeclarations) field57() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Optional sequence number in the target conversation being replied to."
 	return &genregistry.ToolFieldMetadata{
@@ -913,8 +851,98 @@ func (registryDeclarations) field62() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// schema63 constructs one generated schema declaration.
-func (declarations registryDeclarations) schema63() *genregistry.ToolSchema {
+// metadata58 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata58() *genregistry.ToolTypeMetadata {
+	registryText1 := "SendPayload"
+	return &genregistry.ToolTypeMetadata{
+		Name:                     &registryText1,
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
+		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field59(),
+			declarations.field60(),
+			declarations.field61(),
+			declarations.field62(),
+			declarations.field63(),
+			declarations.field64(),
+		},
+	}
+}
+
+// field59 constructs one generated field declaration.
+func (registryDeclarations) field59() *genregistry.ToolFieldMetadata {
+	registryText1 := "object"
+	return &genregistry.ToolFieldMetadata{
+		JSONType: &registryText1,
+	}
+}
+
+// field60 constructs one generated field declaration.
+func (registryDeclarations) field60() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("agent")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field61 constructs one generated field declaration.
+func (registryDeclarations) field61() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "Swarm namespace (defaults to 'default')."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("swarm")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field62 constructs one generated field declaration.
+func (registryDeclarations) field62() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "Target '@agent' for direct messages or '#channel' for channel messages."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("to")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field63 constructs one generated field declaration.
+func (registryDeclarations) field63() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "Message text to send."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("text")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// field64 constructs one generated field declaration.
+func (registryDeclarations) field64() *genregistry.ToolFieldMetadata {
+	registryText1 := "integer"
+	registryText2 := "Optional sequence number in the target conversation being replied to."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("reply_to")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// schema65 constructs one generated schema declaration.
+func (declarations registryDeclarations) schema65() *genregistry.ToolSchema {
 	registryText1 := "List active participants (@agent), channels (#channel), and your unread message counts."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.who",
@@ -938,38 +966,38 @@ func (declarations registryDeclarations) schema63() *genregistry.ToolSchema {
 					Terms:  map[string]int{"active": 1, "agent": 1, "and": 1, "channel": 1, "channels": 1, "chorus": 1, "counts": 1, "list": 1, "message": 1, "participants": 1, "unread": 1, "who": 2, "your": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-				Payload:       declarations.metadata69(),
+				Payload:       declarations.metadata71(),
 			},
-			Payload: declarations.metadata64(),
+			Payload: declarations.metadata66(),
 		},
 	}
 }
 
-// metadata64 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata64() *genregistry.ToolTypeMetadata {
+// metadata66 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata66() *genregistry.ToolTypeMetadata {
 	registryText1 := "WhoPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field65(),
-			declarations.field66(),
 			declarations.field67(),
 			declarations.field68(),
+			declarations.field69(),
+			declarations.field70(),
 		},
 	}
 }
 
-// field65 constructs one generated field declaration.
-func (registryDeclarations) field65() *genregistry.ToolFieldMetadata {
+// field67 constructs one generated field declaration.
+func (registryDeclarations) field67() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field66 constructs one generated field declaration.
-func (registryDeclarations) field66() *genregistry.ToolFieldMetadata {
+// field68 constructs one generated field declaration.
+func (registryDeclarations) field68() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
 	return &genregistry.ToolFieldMetadata{
@@ -981,8 +1009,8 @@ func (registryDeclarations) field66() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field67 constructs one generated field declaration.
-func (registryDeclarations) field67() *genregistry.ToolFieldMetadata {
+// field69 constructs one generated field declaration.
+func (registryDeclarations) field69() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Swarm namespace (defaults to 'default')."
 	return &genregistry.ToolFieldMetadata{
@@ -994,8 +1022,8 @@ func (registryDeclarations) field67() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field68 constructs one generated field declaration.
-func (registryDeclarations) field68() *genregistry.ToolFieldMetadata {
+// field70 constructs one generated field declaration.
+func (registryDeclarations) field70() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Optional role description to advertise to peers in this swarm."
 	return &genregistry.ToolFieldMetadata{
@@ -1007,31 +1035,31 @@ func (registryDeclarations) field68() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata69 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata69() *genregistry.ToolTypeMetadata {
+// metadata71 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata71() *genregistry.ToolTypeMetadata {
 	registryText1 := "WhoPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field70(),
-			declarations.field71(),
 			declarations.field72(),
 			declarations.field73(),
+			declarations.field74(),
+			declarations.field75(),
 		},
 	}
 }
 
-// field70 constructs one generated field declaration.
-func (registryDeclarations) field70() *genregistry.ToolFieldMetadata {
+// field72 constructs one generated field declaration.
+func (registryDeclarations) field72() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field71 constructs one generated field declaration.
-func (registryDeclarations) field71() *genregistry.ToolFieldMetadata {
+// field73 constructs one generated field declaration.
+func (registryDeclarations) field73() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'."
 	return &genregistry.ToolFieldMetadata{
@@ -1043,8 +1071,8 @@ func (registryDeclarations) field71() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field72 constructs one generated field declaration.
-func (registryDeclarations) field72() *genregistry.ToolFieldMetadata {
+// field74 constructs one generated field declaration.
+func (registryDeclarations) field74() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Swarm namespace (defaults to 'default')."
 	return &genregistry.ToolFieldMetadata{
@@ -1056,8 +1084,8 @@ func (registryDeclarations) field72() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field73 constructs one generated field declaration.
-func (registryDeclarations) field73() *genregistry.ToolFieldMetadata {
+// field75 constructs one generated field declaration.
+func (registryDeclarations) field75() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Optional role description to advertise to peers in this swarm."
 	return &genregistry.ToolFieldMetadata{
