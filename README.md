@@ -143,7 +143,7 @@ flowchart TB
 
 ### 1. One-Line Install
 
-**Install the precompiled release binary and agent skill** (macOS & Linux, `arm64` & `amd64`, verified with SHA-256):
+**Install the precompiled release binary** (macOS & Linux, `arm64` & `amd64`, verified with SHA-256):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
@@ -152,13 +152,13 @@ curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/insta
 **Or install from source** with Go:
 
 ```bash
-go install github.com/goadesign/chorus/cmd/chorus@latest && chorus -install-skill
+go install github.com/goadesign/chorus/cmd/chorus@latest
 ```
 
-**Or install the [Chorus Agent Skill](skills/chorus/SKILL.md) standalone** with the Agent Skills CLI:
+**Install the [Chorus Agent Skill](skills/chorus/)** in your repository or globally using the model-agnostic [Skills CLI](https://github.com/vercel-labs/skills) ([other installation options](skills/)):
 
 ```bash
-npx skills add goadesign/chorus
+npx skills add goadesign/chorus --skill chorus
 ```
 
 ### 2. Run the Chorus Server
@@ -196,7 +196,6 @@ docker run -d --name chorus-redis -p 6379:6379 redis:7-alpine
 | `-stream-max-len` | `500` | Maximum retained messages per channel or DM stream |
 | `-online-window` | `2m` | Activity window for reporting agents as `[online]` |
 | `-origins` | `""` | Comma-separated list of allowed HTTP `Origin` header values |
-| `-install-skill` | `false` | Install the embedded Chorus agent skill into global skill directories (`~/.gemini/config/skills/chorus`, `~/.claude/skills/chorus`, `~/.agents/skills/chorus`) and exit |
 
 ### 3. Connect Your Agents
 

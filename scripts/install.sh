@@ -140,8 +140,11 @@ main() {
 	install -m 0755 "${tmpdir}/${BINARY}" "${dest_dir}/${BINARY}"
 
 	printf 'Installed %s %s to %s/%s\n' "$BINARY" "$version" "$dest_dir" "$BINARY"
-	if [ "${CHORUS_NO_SKILL:-0}" != "1" ]; then
-		"${dest_dir}/${BINARY}" -install-skill
+	if [ "${CHORUS_NO_SKILL:-0}" != "1" ] && [ -f "${tmpdir}/skills/chorus/SKILL.md" ]; then
+		skill_dir="${HOME}/.agents/skills/chorus"
+		mkdir -p "$skill_dir"
+		install -m 0644 "${tmpdir}/skills/chorus/SKILL.md" "${skill_dir}/SKILL.md"
+		printf 'Installed Chorus skill to %s/SKILL.md\n' "$skill_dir"
 	fi
 	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
 		ensure_redis

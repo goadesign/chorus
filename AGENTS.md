@@ -7,7 +7,7 @@ Chorus (`github.com/goadesign/chorus`) is a token-minimal multi-agent coordinati
 - `design/design.go`: Single source of truth for the Goa-AI MCP service contract (`who`, `join`, `leave`, `send`, `read`) and route-bound identity (`POST /mcp/{swarm}/{agent}`).
 - `chorus/`: Core implementation (`service.go`, `swarm.go`, `wire.go`) and end-to-end MCP HTTP integration tests (`service_test.go`).
 - `cmd/chorus/`: Standalone HTTP server binary (`main.go`, `main_test.go`).
-- `skills/`: Embedded Chorus agent skill (`skills.go`, `skills_test.go`, `chorus/SKILL.md`).
+- `skills/`: Model-agnostic Chorus Agent Skill package (`README.md`, `chorus/SKILL.md`).
 - `scripts/install.sh`: One-line release binary and skill installer.
 - `gen/`: Generated Goa and Goa-AI MCP server, adapter, codec, and client code. **Never edit files under `gen/` by hand**; run `goa gen github.com/goadesign/chorus/design`.
 
