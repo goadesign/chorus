@@ -119,35 +119,11 @@ When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec
 
 ## Architecture
 
-Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation with three distributed primitives from [Pulse](https://github.com/goadesign/pulse):
+Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation with three distributed primitives from [Pulse](https://github.com/goadesign/pulse) (modeled with [`goa.design/model`](https://github.com/goadesign/model) in [`diagram/`](diagram/)):
 
-```mermaid
-flowchart TB
-    subgraph Agents["LLM Agents (MCP 2026-07-28 Clients)"]
-        A1["@lead<br/>POST /mcp"]
-        A2["@api<br/>POST /mcp"]
-        A3["@db<br/>POST /mcp"]
-    end
-
-    subgraph Chorus["Chorus Stateless Server Replicas (Goa-AI)"]
-        Adapter["Generated MCP JSON-RPC Adapter<br/>(POST /mcp · GET /healthz)"]
-        Svc["Chorus Service<br/>(who · join · leave · send · read)"]
-        RMapLocal["In-Memory rmap Replica<br/>0ms Reads · Subscribe() Wakeups"]
-        Adapter --> Svc
-        Svc <--> RMapLocal
-    end
-
-    subgraph Redis["Redis Cluster / Instance (via Pulse)"]
-        RMapRedis[("pulse/rmap<br/>chorus:{swarm}:state<br/>Presence · Topics · Subs · Watermarks")]
-        Streams[("pulse/streaming<br/>chorus:{swarm}:chan:{ch}<br/>chorus:{swarm}:dm:{agent}<br/>Bounded MAXLEN Streams")]
-        Sem[("pulse/semaphore<br/>chorus:{swarm}:pub:{target}<br/>1-Slot Leased Publication Fence")]
-    end
-
-    A1 & A2 & A3 -->|JSON-RPC 2.0| Adapter
-    RMapLocal <-->|Lua HSET/HINCRBY + Pub/Sub| RMapRedis
-    Svc <-->|Add / Snapshot XRANGE| Streams
-    Svc <-->|Acquire / Release| Sem
-```
+<p align="center">
+  <img src="diagram/Chorus%20Architecture.svg" alt="Chorus Multi-Agent Coordination Architecture" width="100%">
+</p>
 
 ### How Pulse Primitives Work Together
 
@@ -158,7 +134,7 @@ flowchart TB
 2. **Data Plane in `pulse/streaming` (`chorus:<swarm>:chan:<ch>` & `chorus:<swarm>:dm:<agent>`)**:
    - Each channel and DM inbox is a bounded Pulse stream (`WithStreamMaxLen`, `WithStreamSlidingTTL`).
    - Only when `rmap` shows `head.seq > cur.seq` does Chorus read the target stream via `stream.Snapshot(ctx)`.
-3. **Linearizable Publication Fence via `pulse/semaphore` + `rmap.SetAndWait`**:
+3. **Linearizable Publication Lock via `pulse/semaphore` + `rmap.SetAndWait`**:
    - Publishing to `target` acquires a 1-slot leased semaphore (`chorus:<swarm>:pub:<target>`), increments `seq:<target>` via `state.Inc`, appends the event to the target's `streaming.Stream`, and commits `head:<target> = <seq>:<event_id>` via `state.SetAndWait`.
    - Because `SetAndWait` blocks until the local `rmap` replica has applied the committed revision after `stream.Add`, any agent woken via `state.Subscribe()` on `read(wait_sec > 0)` is guaranteed to observe the message in `stream.Snapshot(ctx)` immediately.
 
@@ -250,6 +226,11 @@ All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle
 .
 ├── design/
 │   └── design.go          # Goa-AI DSL contract (API, Service, MCP, 5 tools)
+├── diagram/
+│   ├── model/
+│   │   └── model.go       # goa.design/model C4 architecture model
+│   ├── views.go           # Diagram views, layout, and visual styles
+│   └── Chorus Architecture.svg
 ├── chorus/
 │   ├── service.go         # Service lifecycle, Goa-AI tool handlers, OTel spans, HTTP mux
 │   ├── swarm.go           # Per-swarm Pulse rmap, stream, and semaphore coordination
@@ -257,23 +238,24 @@ All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle
 │   └── service_test.go    # End-to-end multi-agent MCP HTTP tests against redis-server
 ├── cmd/
 │   └── chorus/
-│       └── main.go        # Standalone CLI server binary
+│       ├── main.go        # Standalone CLI server binary & Redis bootstrap
+│       └── daemon.go      # Background service manager (up, down, status) & MCP setup
 ├── scripts/
-│   └── install.sh         # One-line binary release installer
+│   └── install.sh         # One-line binary release & skill installer
 ├── skills/
 │   └── chorus/
 │       └── SKILL.md       # Agent skill for installing and coordinating with Chorus
+├── .agents/
+│   └── skills/            # Contributor skills (chorus, editing-model-diagrams, chorus-release)
+├── Makefile               # Code generation, diagram rendering, testing, and release automation
 └── gen/                   # Generated Goa & Goa-AI MCP 2026-07-28 server/client packages
 ```
 
-### Regenerating Code and Running Tests
+### Regenerating Code, Diagrams, and Running Tests
 
 ```bash
-# Regenerate Goa and Goa-AI MCP packages from design/design.go
-goa gen github.com/goadesign/chorus/design
-
-# Run the end-to-end test suite with the race detector
-go test -v -race ./...
+# Regenerate Goa/Goa-AI MCP packages, render architecture SVG, vet, and run tests
+make all
 ```
 
 ---

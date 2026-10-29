@@ -1,0 +1,105 @@
+<svg id="graph" width="1420" height="1494.3976287841797" viewBox="0 0 1420 1494.3976287841797" xmlns="http://www.w3.org/2000/svg"><script type="application/json"><![CDATA[{
+  "name": "Chorus Multi-Agent Coordination Architecture",
+  "description": "How LLM coding agents coordinate through the Chorus Goa-AI MCP server and Pulse primitives in Redis.",
+  "version": "0.1.0",
+  "elements": [
+    {
+      "id": "17lwoy0",
+      "tags": "Element,Container,Event Queue,DataPlane",
+      "technology": "Redis Streams & Pulse streaming"
+    },
+    {
+      "id": "1ca6gcd",
+      "tags": "Element,Container,Database,ControlPlane",
+      "technology": "Redis & Pulse rmap"
+    },
+    {
+      "id": "1fnj5rf",
+      "tags": "Element,Container,Server",
+      "technology": "Go, Goa-AI & Pulse",
+      "url": "https://github.com/goadesign/chorus"
+    },
+    {
+      "id": "1gl0uzg",
+      "tags": "Element,Software System,Agent",
+      "location": "External"
+    },
+    {
+      "id": "1qt01kv",
+      "tags": "Element,Container,Lock",
+      "technology": "Redis & Pulse semaphore"
+    }
+  ],
+  "layout": {
+    "17lwoy0": {
+      "x": 749.4615325927734,
+      "y": 1174.4176330566406
+    },
+    "1ca6gcd": {
+      "x": 361,
+      "y": 1198.1544723510742
+    },
+    "1fnj5rf": {
+      "x": 735,
+      "y": 731.9176330566406
+    },
+    "1gl0uzg": {
+      "x": 735,
+      "y": 163.91070556640625
+    },
+    "1qt01kv": {
+      "x": 1110,
+      "y": 1203.1576309204102
+    },
+    "e-1x48xvb": [
+      {
+        "x": 735,
+        "y": 551.9176330566406,
+        "auto": true
+      }
+    ],
+    "e-nbsalm": [
+      {
+        "x": 805,
+        "y": 851.9176330566406,
+        "auto": true
+      },
+      {
+        "x": 1110,
+        "y": 851.9176330566406,
+        "auto": true
+      }
+    ],
+    "e-ro0jkd": [
+      {
+        "x": 665,
+        "y": 851.9176330566406,
+        "auto": true
+      },
+      {
+        "x": 361,
+        "y": 851.9176330566406,
+        "auto": true
+      }
+    ]
+  }
+}]]></script>
+<defs>
+	<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="strokeWidth">
+		<path fill="context-stroke" stroke="none" d="M0,0 L10,5 L0,10 Z" class="arrowHead"></path>
+	</marker>
+	<g id="icon-circle" transform="translate(0,-12)" class="icon">
+		<circle cx="7" cy="7" r="7"></circle>
+	</g>
+	<g id="icon-cube" transform="translate(0, -14)" class="icon">
+		<path d="M 5 0 h 10 v 10 l -5 5 h -10 v -10 l 5 -5 M 0 5 h 10 v 10 M 15 0 l -5 5"></path>
+	</g>
+	<filter id="shadow">
+		<feDropShadow dx="3" dy="3" stdDeviation="5" flood-color="#00000030" flood-opacity="1"></feDropShadow>
+	</filter>
+</defs><g class="zoom" transform="scale(1) translate(50, 50)"><g class="groups"><g class="group"><rect x="40" y="556.9176330566406" rx="0" ry="0" width="1240" height="797.4799957275391" style="fill: rgba(0, 0, 0, 0.02); stroke: rgb(102, 102, 102); stroke-width: 3; stroke-dasharray: 4;"></rect><text x="45" y="561.9176330566406" dominant-baseline="hanging" style="font-family: Arial, sans-serif; fill: rgb(102, 102, 102); font-size: 22px; font-weight: bold; cursor: default;">Chorus</text></g></g><g class="edges"><g class="edge" id="1x48xvb" data-from="1gl0uzg" data-to="1fnj5rf"><rect x="512" y="371.9176330566406" rx="0" ry="0" width="210.703125" height="100" style="fill: none; stroke: none;"></rect><text x="0" y="371.9176330566406" text-anchor="middle" stroke="none" font-size="20" fill="var(--mdl-rel-relationship-color, #475569)" data-field="label" style="font-family: Arial, sans-serif; stroke: none;"><tspan x="617.3515625" dy="22px" font-size="20px" font-weight="normal">Calls who, join, leave,</tspan><tspan x="617.3515625" dy="22px" font-size="20px" font-weight="normal">send, and read;</tspan><tspan x="617.3515625" dy="22px" font-size="20px" font-weight="normal">receives piggybacked</tspan><tspan x="617.3515625" dy="22px" font-size="20px" font-weight="normal">unread deltas</tspan></text><path marker-end="url(#arrow)" d="M735,291.9176330566406 L735,551.9176330566406 L735,641.9176330566406" class="edge" fill="none" stroke="var(--mdl-rel-relationship-color, #475569)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8"></path><circle id="v-1x48xvb-a-1271wc2" cx="735" cy="551.9176330566406" r="7" fill="none" class="v-dot auto"></circle></g><g class="edge" id="1yvdce7" data-from="1fnj5rf" data-to="17lwoy0"><rect x="509" y="901.9176330566406" rx="0" ry="0" width="214.046875" height="100" style="fill: none; stroke: none;"></rect><text x="0" y="901.9176330566406" text-anchor="middle" stroke="none" font-size="20" fill="var(--mdl-rel-relationship-color, #475569)" data-field="label" style="font-family: Arial, sans-serif; stroke: none;"><tspan x="616.0234375" dy="22px" font-size="20px" font-weight="normal">Appends messages</tspan><tspan x="616.0234375" dy="22px" font-size="20px" font-weight="normal">and snapshots unread</tspan><tspan x="616.0234375" dy="22px" font-size="20px" font-weight="normal">deltas when head &gt;</tspan><tspan x="616.0234375" dy="22px" font-size="20px" font-weight="normal">watermark</tspan></text><path marker-end="url(#arrow)" d="M735,821.9176330566406 L735,1081.9176330566406" class="edge" fill="none" stroke="var(--mdl-rel-relationship-color, #475569)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8"></path></g><g class="edge" id="nbsalm" data-from="1fnj5rf" data-to="1qt01kv"><rect x="893" y="901.9176330566406" rx="0" ry="0" width="204.890625" height="100" style="fill: none; stroke: none;"></rect><text x="0" y="901.9176330566406" text-anchor="middle" stroke="none" font-size="20" fill="var(--mdl-rel-relationship-color, #475569)" data-field="label" style="font-family: Arial, sans-serif; stroke: none;"><tspan x="995.4453125" dy="22px" font-size="20px" font-weight="normal">Acquires 1-slot lease</tspan><tspan x="995.4453125" dy="22px" font-size="20px" font-weight="normal">to linearize sequence</tspan><tspan x="995.4453125" dy="22px" font-size="20px" font-weight="normal">numbers and head</tspan><tspan x="995.4453125" dy="22px" font-size="20px" font-weight="normal">updates</tspan></text><path marker-end="url(#arrow)" d="M805,821.9176330566406 L805,851.9176330566406 L1110,851.9176330566406 L1110,1081.9176330566406" class="edge" fill="none" stroke="var(--mdl-rel-relationship-color, #475569)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8"></path><circle id="v-nbsalm-a-1lzjz81" cx="805" cy="851.9176330566406" r="7" fill="none" class="v-dot auto"></circle><circle id="v-nbsalm-a-fa46ft" cx="1110" cy="851.9176330566406" r="7" fill="none" class="v-dot auto"></circle></g><g class="edge" id="ro0jkd" data-from="1fnj5rf" data-to="1ca6gcd"><rect x="152" y="901.9176330566406" rx="0" ry="0" width="197.25" height="100" style="fill: none; stroke: none;"></rect><text x="0" y="901.9176330566406" text-anchor="middle" stroke="none" font-size="20" fill="var(--mdl-rel-relationship-color, #475569)" data-field="label" style="font-family: Arial, sans-serif; stroke: none;"><tspan x="250.625" dy="22px" font-size="20px" font-weight="normal">Replicates state in</tspan><tspan x="250.625" dy="22px" font-size="20px" font-weight="normal">memory (0ms</tspan><tspan x="250.625" dy="22px" font-size="20px" font-weight="normal">directory reads &amp;</tspan><tspan x="250.625" dy="22px" font-size="20px" font-weight="normal">Subscribe wakeups)</tspan></text><path marker-end="url(#arrow)" d="M665,821.9176330566406 L665,851.9176330566406 L361,851.9176330566406 L361,1081.9176330566406" class="edge" fill="none" stroke="var(--mdl-rel-relationship-color, #475569)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8"></path><circle id="v-ro0jkd-a-4nwnbc" cx="665" cy="851.9176330566406" r="7" fill="none" class="v-dot auto"></circle><circle id="v-ro0jkd-a-12q3tj7" cx="361" cy="851.9176330566406" r="7" fill="none" class="v-dot auto"></circle></g></g><g class="nodes"><g class="node" id="17lwoy0" transform="translate(749.4615325927734,1174.4176330566406)"><path d="M-14.23076923076923,0
+		a14.23076923076923,92.5 0,0,1 0,185
+		a14.23076923076923,92.5 0,0,1 0,-185
+		l280,0
+		a14.23076923076923,92.5 0,0,1 0,185
+		l-280,0" transform="translate(-140,-92.5)" class="nodeBorder" fill="var(--mdl-dataplane-bg, #0284c7)" stroke="var(--mdl-dataplane-stroke, #0369a1)" stroke-width="3" opacity="0.9" style="filter: url(&quot;#shadow&quot;);"></path><g transform="translate(0,0)"><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="name" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-52.5" font-size="22px" font-weight="bold">Message Streams</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-28" font-size="16.5px" font-weight="normal">[DataPlane: Redis Streams &amp;</tspan><tspan x="0" y="-9.5" font-size="16.5px" font-weight="normal">Pulse streaming]</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="description" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="18.5" font-size="16px" font-weight="normal">Bounded append-only streams</tspan><tspan x="0" y="36.5" font-size="16px" font-weight="normal">storing channel (#channel) and</tspan><tspan x="0" y="54.5" font-size="16px" font-weight="normal">direct (@agent) messages with</tspan><tspan x="0" y="72.5" font-size="16px" font-weight="normal">sliding TTL.</tspan></text></g></g><g class="node" id="1ca6gcd" transform="translate(361,1198.1544723510742)" label-offset-y="29.473684210526315"><path d="M 0,14.736842105263158 a140,14.736842105263158 0,0,0 280 0 a 140,14.736842105263158 0,0,0 -280 0 l 0,203 a 140,14.736842105263158 0,0,0 280 0 l 0,-203" transform="translate(-140,-116.23684210526315)" class="nodeBorder" fill="var(--mdl-controlplane-bg, #4f46e5)" stroke="var(--mdl-controlplane-stroke, #3730a3)" stroke-width="3" opacity="0.9" style="filter: url(&quot;#shadow&quot;);"></path><g transform="translate(0,14.736842105263158)"><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="name" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-61.5" font-size="22px" font-weight="bold">Swarm Control Plane</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-37" font-size="16.5px" font-weight="normal">[ControlPlane: Redis &amp; Pulse</tspan><tspan x="0" y="-18.5" font-size="16.5px" font-weight="normal">rmap]</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="description" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="9.5" font-size="16px" font-weight="normal">Replicated hash map holding</tspan><tspan x="0" y="27.5" font-size="16px" font-weight="normal">agent presence, channel topics,</tspan><tspan x="0" y="45.5" font-size="16px" font-weight="normal">subscriptions, sequence</tspan><tspan x="0" y="63.5" font-size="16px" font-weight="normal">counters, stream heads, and read</tspan><tspan x="0" y="81.5" font-size="16px" font-weight="normal">watermarks.</tspan></text></g></g><g class="node linked" id="1fnj5rf" transform="translate(735,731.9176330566406)"><a href="https://github.com/goadesign/chorus" aria-label="Open Chorus MCP Server" class="nodeLink"><rect rx="35" ry="35" x="-140" y="-90" width="280" height="180" class="nodeBorder" fill="var(--mdl-server-bg, #0d9488)" stroke="var(--mdl-server-stroke, #0f766e)" stroke-width="3" opacity="0.9" style="filter: url(&quot;#shadow&quot;);"></rect><g transform="translate(0,0)"><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="name" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-43.25" font-size="22px" font-weight="bold">Chorus MCP Server</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-18.75" font-size="16.5px" font-weight="normal">[Server: Go, Goa-AI &amp; Pulse]</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="description" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="9.25" font-size="16px" font-weight="normal">Stateless HTTP server (:9440)</tspan><tspan x="0" y="27.25" font-size="16px" font-weight="normal">serving POST /mcp (who, join,</tspan><tspan x="0" y="45.25" font-size="16px" font-weight="normal">leave, send, read) with an</tspan><tspan x="0" y="63.25" font-size="16px" font-weight="normal">in-memory Pulse rmap replica.</tspan></text></g></a></g><g class="node" id="1gl0uzg" transform="translate(735,163.91070556640625)" label-offset-y="89.60484930468749"><g class="nodeBorder" fill="var(--mdl-agent-bg, #2563eb)" stroke="var(--mdl-agent-stroke, #1d4ed8)" stroke-width="3" opacity="0.9" style="filter: url(&quot;#shadow&quot;);"><rect rx="1.9201039136718747" ry="1.9201039136718747" x="33.00173189453125" y="-96.00519568359374" width="7.680415654687499" height="19.201039136718748"></rect><rect rx="1.9201039136718747" ry="1.9201039136718747" x="-40.68214754921875" y="-96.00519568359374" width="7.680415654687499" height="19.201039136718748"></rect><path class="robot-mouth" d="M-8.96048493046875,-67.20363697851562 Q0,-61.827346020234366 8.96048493046875,-67.20363697851562" fill="none" stroke-width="2.5601385515625" stroke-linecap="round"></path><circle class="robot-eye" cx="14.080762033593748" cy="-86.40467611523437" r="7.680415654687499"></circle><circle class="robot-eye" cx="-14.080762033593748" cy="-86.40467611523437" r="7.680415654687499"></circle><circle class="robot-antenna-ball" cx="0" cy="-117.76637337187499" r="6.144332523749999"></circle><line class="robot-antenna" x1="0" y1="-112.00606163085936" x2="0" y2="-117.76637337187499" stroke-width="3.0721662618749996" stroke-linecap="round"></line><rect rx="12.800692757812499" ry="12.800692757812499" x="-32.00173189453125" y="-112.00606163085936" width="64.0034637890625" height="64.0034637890625"></rect><rect rx="3" ry="3" x="-140" y="-48.00259784179687" width="280" height="176.00952541992186"></rect></g><g transform="translate(0,44.802424652343745)"><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="name" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-43.25" font-size="22px" font-weight="bold">LLM Coding Agents</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-18.75" font-size="16.5px" font-weight="normal">[Agent]</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="description" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="9.25" font-size="16px" font-weight="normal">Peer coding agents (@lead,</tspan><tspan x="0" y="27.25" font-size="16px" font-weight="normal">@api, @db) coordinating work via</tspan><tspan x="0" y="45.25" font-size="16px" font-weight="normal">MCP 2026-07-28 tool calls at</tspan><tspan x="0" y="63.25" font-size="16px" font-weight="normal">POST /mcp.</tspan></text></g></g><g class="node" id="1qt01kv" transform="translate(1110,1203.1576309204102)"><polygon points="70,121.24,140,0,70,-121.24,-70,-121.24,-140,0,-70,121.24,70,121.24" width="280" height="180" class="nodeBorder" fill="var(--mdl-lock-bg, #d97706)" stroke="var(--mdl-lock-stroke, #b45309)" stroke-width="3" opacity="0.9" style="filter: url(&quot;#shadow&quot;);"></polygon><g transform="translate(0,0)"><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="name" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-34.5" font-size="22px" font-weight="bold">Publication Lock</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="-10" font-size="16.5px" font-weight="normal">[Lock: Redis &amp; Pulse</tspan><tspan x="0" y="8.5" font-size="16.5px" font-weight="normal">semaphore]</tspan></text><text text-anchor="middle" fill="var(--mdl-server-color, #ffffff)" data-field="description" style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; stroke: none;"><tspan x="0" y="36.5" font-size="16px" font-weight="normal">1-slot leased semaphore</tspan><tspan x="0" y="54.5" font-size="16px" font-weight="normal">serializing sequence numbers.</tspan></text></g></g></g></g></svg>

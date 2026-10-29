@@ -1,0 +1,199 @@
+{
+    "name": "Chorus Architecture",
+    "description": "Views and visual styles for the Chorus multi-agent coordination architecture.",
+    "version": "0.1.0",
+    "model": {
+        "softwareSystems": [
+            {
+                "id": "1idt1v",
+                "name": "Chorus",
+                "description": "Multi-agent coordination MCP server backed by Pulse replicated maps, streams, and semaphores.",
+                "tags": "Element,Software System,Chorus",
+                "containers": [
+                    {
+                        "id": "1fnj5rf",
+                        "name": "Chorus MCP Server",
+                        "description": "Stateless HTTP server (:9440) serving POST /mcp (who, join, leave, send, read) with an in-memory Pulse rmap replica.",
+                        "technology": "Go, Goa-AI \u0026 Pulse",
+                        "tags": "Element,Container,Server",
+                        "url": "https://github.com/goadesign/chorus",
+                        "relationships": [
+                            {
+                                "id": "1yvdce7",
+                                "description": "Appends messages and snapshots unread deltas when head \u003e watermark",
+                                "tags": "Relationship",
+                                "sourceId": "1fnj5rf",
+                                "destinationId": "17lwoy0",
+                                "technology": "Redis XADD / XRANGE",
+                                "interactionStyle": "Synchronous"
+                            },
+                            {
+                                "id": "nbsalm",
+                                "description": "Acquires 1-slot lease to linearize sequence numbers and head updates",
+                                "tags": "Relationship",
+                                "sourceId": "1fnj5rf",
+                                "destinationId": "1qt01kv",
+                                "technology": "Pulse Semaphore",
+                                "interactionStyle": "Synchronous"
+                            },
+                            {
+                                "id": "ro0jkd",
+                                "description": "Replicates state in memory (0ms directory reads \u0026 Subscribe wakeups)",
+                                "tags": "Relationship,Asynchronous",
+                                "sourceId": "1fnj5rf",
+                                "destinationId": "1ca6gcd",
+                                "technology": "Redis Lua + Pub/Sub",
+                                "interactionStyle": "Asynchronous"
+                            }
+                        ]
+                    },
+                    {
+                        "id": "17lwoy0",
+                        "name": "Message Streams",
+                        "description": "Bounded append-only streams storing channel (#channel) and direct (@agent) messages with sliding TTL.",
+                        "technology": "Redis Streams \u0026 Pulse streaming",
+                        "tags": "Element,Container,Event Queue,DataPlane"
+                    },
+                    {
+                        "id": "1qt01kv",
+                        "name": "Publication Lock",
+                        "description": "1-slot leased semaphore serializing sequence numbers.",
+                        "technology": "Redis \u0026 Pulse semaphore",
+                        "tags": "Element,Container,Lock"
+                    },
+                    {
+                        "id": "1ca6gcd",
+                        "name": "Swarm Control Plane",
+                        "description": "Replicated hash map holding agent presence, channel topics, subscriptions, sequence counters, stream heads, and read watermarks.",
+                        "technology": "Redis \u0026 Pulse rmap",
+                        "tags": "Element,Container,Database,ControlPlane"
+                    }
+                ]
+            },
+            {
+                "id": "1gl0uzg",
+                "name": "LLM Coding Agents",
+                "description": "Peer coding agents (@lead, @api, @db) coordinating work via MCP 2026-07-28 tool calls at POST /mcp.",
+                "tags": "Element,Software System,Agent",
+                "relationships": [
+                    {
+                        "id": "1x48xvb",
+                        "description": "Calls who, join, leave, send, and read; receives piggybacked unread deltas",
+                        "tags": "Relationship",
+                        "sourceId": "1gl0uzg",
+                        "destinationId": "1fnj5rf",
+                        "technology": "MCP 2026-07-28 JSON-RPC / HTTP (:9440)",
+                        "interactionStyle": "Synchronous"
+                    }
+                ],
+                "location": "External"
+            }
+        ]
+    },
+    "views": {
+        "containerViews": [
+            {
+                "title": "Chorus Multi-Agent Coordination Architecture",
+                "description": "How LLM coding agents coordinate through the Chorus Goa-AI MCP server and Pulse primitives in Redis.",
+                "key": "Chorus Architecture",
+                "order": 0,
+                "automaticLayout": {
+                    "implementation": "Dagre",
+                    "rankDirection": "TopBottom",
+                    "rankSeparation": 180,
+                    "nodeSeparation": 120,
+                    "edgeSeparation": 200
+                },
+                "elements": [
+                    {
+                        "id": "17lwoy0"
+                    },
+                    {
+                        "id": "1ca6gcd"
+                    },
+                    {
+                        "id": "1fnj5rf"
+                    },
+                    {
+                        "id": "1gl0uzg"
+                    },
+                    {
+                        "id": "1qt01kv"
+                    }
+                ],
+                "relationships": [
+                    {
+                        "id": "1x48xvb",
+                        "description": "Calls who, join, leave, send, and read; receives piggybacked unread deltas"
+                    },
+                    {
+                        "id": "1yvdce7",
+                        "description": "Appends messages and snapshots unread deltas when head \u003e watermark"
+                    },
+                    {
+                        "id": "nbsalm",
+                        "description": "Acquires 1-slot lease to linearize sequence numbers and head updates"
+                    },
+                    {
+                        "id": "ro0jkd",
+                        "description": "Replicates state in memory (0ms directory reads \u0026 Subscribe wakeups)"
+                    }
+                ],
+                "externalSoftwareSystemBoundariesVisible": true,
+                "softwareSystemId": "1idt1v"
+            }
+        ],
+        "styles": {
+            "elements": [
+                {
+                    "tag": "Agent",
+                    "background": "#2563eb",
+                    "stroke": "#1d4ed8",
+                    "color": "#ffffff",
+                    "fontSize": 22,
+                    "shape": "Robot"
+                },
+                {
+                    "tag": "ControlPlane",
+                    "background": "#4f46e5",
+                    "stroke": "#3730a3",
+                    "color": "#ffffff",
+                    "fontSize": 22,
+                    "shape": "Cylinder"
+                },
+                {
+                    "tag": "DataPlane",
+                    "background": "#0284c7",
+                    "stroke": "#0369a1",
+                    "color": "#ffffff",
+                    "fontSize": 22,
+                    "shape": "Pipe"
+                },
+                {
+                    "tag": "Lock",
+                    "background": "#d97706",
+                    "stroke": "#b45309",
+                    "color": "#ffffff",
+                    "fontSize": 22,
+                    "shape": "Hexagon"
+                },
+                {
+                    "tag": "Server",
+                    "background": "#0d9488",
+                    "stroke": "#0f766e",
+                    "color": "#ffffff",
+                    "fontSize": 22,
+                    "shape": "RoundedBox"
+                }
+            ],
+            "relationships": [
+                {
+                    "tag": "Relationship",
+                    "thickness": 2,
+                    "color": "#475569",
+                    "fontSize": 20
+                }
+            ]
+        }
+    }
+}

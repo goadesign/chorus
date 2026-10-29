@@ -5,11 +5,14 @@
 Chorus (`github.com/goadesign/chorus`) is a token-minimal multi-agent coordination MCP (`2026-07-28`) server built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`goa.design/goa-ai`) and backed by [Pulse](https://github.com/goadesign/pulse) (`goa.design/pulse`).
 
 - `design/design.go`: Single source of truth for the Goa-AI MCP service contract (`who`, `join`, `leave`, `send`, `read`) at `POST /mcp`.
+- `diagram/`: [`goa.design/model`](https://github.com/goadesign/model) C4 architecture model (`model/model.go`), view/style DSL (`views.go`), and rendered SVG (`Chorus Architecture.svg`). **Never edit `diagram/*.svg` or `diagram/design.json` by hand**; run `make diagram`.
 - `chorus/`: Core implementation (`service.go`, `swarm.go`, `wire.go`) and end-to-end MCP HTTP integration tests (`service_test.go`).
 - `cmd/chorus/`: Standalone HTTP server binary, background service manager (`up`, `down`, `status`), and MCP config registrar (`setup`) (`main.go`, `daemon.go`, `main_test.go`).
 - `skills/`: Model-agnostic Chorus Agent Skill package (`README.md`, `chorus/SKILL.md`).
+- `.agents/skills/`: Contributor and maintainer skills (`chorus`, `editing-model-diagrams`, `chorus-release`).
 - `scripts/install.sh`: One-line release binary and skill installer.
-- `gen/`: Generated Goa and Goa-AI MCP server, adapter, codec, and client code. **Never edit files under `gen/` by hand**; run `goa gen github.com/goadesign/chorus/design`.
+- `Makefile`: Code generation (`make gen`), diagram rendering (`make diagram`), dependency updates (`make depend`), tests (`make test`), and release automation (`make release`).
+- `gen/`: Generated Goa and Goa-AI MCP server, adapter, codec, and client code. **Never edit files under `gen/` by hand**; run `make gen` (`goa gen github.com/goadesign/chorus/design`).
 
 ---
 
