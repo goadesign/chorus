@@ -112,6 +112,8 @@ var (
 	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)->me#(\d+)(?:↩#(\d+))?: (.*)$`)
 )
 
+// TestMain boots a shared local redis-server instance for all integration tests
+// in chorus_test and tears it down after the suite finishes.
 func TestMain(m *testing.M) {
 	addr, cleanup, err := startSharedRedis()
 	if err != nil {
@@ -124,6 +126,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// TestMCPProtocolAndValidationFlows verifies the GET /healthz probe, MCP
+// discovery and tool schemas at POST /mcp, default swarm resolution, Origin
+// header enforcement, and boundary input validation.
 func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	c := newTestCluster(t, 1, nil, "https://allowed.example.com")
 	replica := c.replicas[0]
@@ -260,6 +265,9 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	})
 }
 
+// TestEmulatedLLMAgentSwarmWorkflow simulates four LLM agents (@lead, @db,
+// @api, and @qa) collaborating across two Chorus server replicas to design,
+// implement, and verify a feature using who, join, send, read, and leave.
 func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
 	// Deploy a 2-replica Chorus cluster sharing Redis to verify cross-replica
 	// state replication, distributed semaphore fencing, and cross-node wakeups.
@@ -425,6 +433,9 @@ func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
 	}
 }
 
+// TestPaginationFilteringAndRetentionFlows verifies read limit pagination,
+// channel-filtered reads, blocking read timeouts, and stream max-length
+// trimming when an agent's watermark falls behind trimmed history.
 func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 	// Configure streamMaxLen = 5 so we can also test bounded stream retention.
 	c := newTestCluster(t, 1, []chorus.Option{
@@ -517,6 +528,9 @@ func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 	}
 }
 
+// TestConcurrentMultiAgentHammer verifies that concurrent publishes from
+// multiple agents across multiple replicas produce strictly contiguous sequence
+// numbers with zero lost or duplicated messages.
 func TestConcurrentMultiAgentHammer(t *testing.T) {
 	c := newTestCluster(t, 2, nil)
 	swarm := "hammer"
@@ -565,6 +579,9 @@ func TestConcurrentMultiAgentHammer(t *testing.T) {
 	}
 }
 
+// TestMultiSwarmIsolationAndLiveness verifies that distinct swarm namespaces
+// are completely isolated and that agent online/idle transitions reflect the
+// configured online activity window.
 func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	c := newTestCluster(t, 1, []chorus.Option{
 		chorus.WithOnlineWindow(2 * time.Minute),

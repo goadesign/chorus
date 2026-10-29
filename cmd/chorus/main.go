@@ -66,9 +66,10 @@ const (
 	dockerRedisImage = "redis:7-alpine"
 )
 
+// main is the CLI entrypoint for the chorus command.
 func main() {
 	if err := dispatch(os.Args[1:]); err != nil {
-		slog.Error("chorus exited with error", "err", err)
+		fmt.Fprintf(os.Stderr, "chorus: %v\n", err)
 		os.Exit(1)
 	}
 }

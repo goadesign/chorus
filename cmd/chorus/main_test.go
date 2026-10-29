@@ -1,3 +1,5 @@
+// This file tests the Chorus CLI helpers, local Redis auto-start, and MCP
+// configuration file merging.
 package main
 
 import (
@@ -139,5 +141,44 @@ func TestLocalBaseURL(t *testing.T) {
 	}
 	if got := localBaseURL("127.0.0.1:9090"); got != "http://localhost:9090" {
 		t.Fatalf("localBaseURL(127.0.0.1:9090) = %q", got)
+	}
+}
+
+// TestBuildServeArgs verifies that buildServeArgs forwards all non-secret
+// serverConfig fields and never leaks redisPassword onto the command line.
+func TestBuildServeArgs(t *testing.T) {
+	cfg, err := parseServerFlags([]string{
+		"-addr", "127.0.0.1:9091",
+		"-redis-addr", "127.0.0.1:6380",
+		"-redis-password", "super-secret",
+		"-redis-db", "2",
+		"-origins", "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("parseServerFlags failed: %v", err)
+	}
+	args := buildServeArgs(cfg)
+	for _, a := range args {
+		if a == "super-secret" || a == "-redis-password" {
+			t.Fatalf("buildServeArgs leaked redisPassword in argv: %v", args)
+		}
+	}
+	wantPairs := map[string]string{
+		"-addr":       "127.0.0.1:9091",
+		"-redis-addr": "127.0.0.1:6380",
+		"-redis-db":   "2",
+		"-origins":    "https://example.com",
+	}
+	for flagName, wantVal := range wantPairs {
+		found := false
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == flagName && args[i+1] == wantVal {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %s %s in buildServeArgs output %v", flagName, wantVal, args)
+		}
 	}
 }

@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
@@ -223,15 +225,15 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 }
 
 // startBackgroundService attempts to start Chorus via the OS user service
-// manager (launchd on macOS, systemd --user on Linux) when using default
-// settings, falling back to a detached background process.
+// manager (launchd on macOS, systemd --user on Linux) when no secret password
+// needs to be persisted on disk, falling back to a detached background process.
 func startBackgroundService(homeDir, exePath string, cfg serverConfig) error {
 	stateDir := filepath.Join(homeDir, ".chorus")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", stateDir, err)
 	}
 
-	if cfg.addr == defaultListenAddr {
+	if cfg.redisPassword == "" {
 		switch runtime.GOOS {
 		case "darwin":
 			if err := startLaunchdService(homeDir, stateDir, exePath, cfg); err == nil {
@@ -276,6 +278,45 @@ func stopBackgroundService(homeDir string) {
 	}
 }
 
+// buildServeArgs constructs the CLI argument list for "chorus serve" from cfg,
+// excluding redisPassword so credentials are never exposed in process tables or
+// service unit files.
+func buildServeArgs(cfg serverConfig) []string {
+	args := []string{
+		"serve",
+		"-addr", cfg.addr,
+		"-redis-addr", cfg.redisAddr,
+		"-redis-db", strconv.Itoa(cfg.redisDB),
+		"-swarm-ttl", cfg.swarmTTL.String(),
+		"-stream-max-len", strconv.Itoa(cfg.streamMaxLen),
+		"-online-window", cfg.onlineWindow.String(),
+	}
+	if cfg.origins != "" {
+		args = append(args, "-origins", cfg.origins)
+	}
+	return args
+}
+
+// daemonPathEnv returns a PATH string that includes standard package-manager
+// binary directories so auto-started redis-server or docker binaries are found.
+func daemonPathEnv() string {
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+	}
+	if !strings.Contains(pathEnv, "/opt/homebrew/bin") {
+		pathEnv = pathEnv + ":/opt/homebrew/bin:/usr/local/bin"
+	}
+	return pathEnv
+}
+
+// xmlEscape returns the XML-escaped representation of s for plist generation.
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
 // startLaunchdService writes and loads a macOS LaunchAgent plist for Chorus.
 func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) error {
 	if _, err := exec.LookPath("launchctl"); err != nil {
@@ -287,11 +328,11 @@ func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) er
 	}
 	plistPath := filepath.Join(agentsDir, launchdLabel+".plist")
 	logPath := filepath.Join(stateDir, "chorus.log")
-	pathEnv := os.Getenv("PATH")
-	if pathEnv == "" {
-		pathEnv = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-	} else if !strings.Contains(pathEnv, "/opt/homebrew/bin") {
-		pathEnv = pathEnv + ":/opt/homebrew/bin:/usr/local/bin"
+
+	var argItems strings.Builder
+	argItems.WriteString("\t\t<string>" + xmlEscape(exePath) + "</string>\n")
+	for _, arg := range buildServeArgs(cfg) {
+		argItems.WriteString("\t\t<string>" + xmlEscape(arg) + "</string>\n")
 	}
 
 	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -302,13 +343,7 @@ func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) er
 	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>%s</string>
-		<string>serve</string>
-		<string>-addr</string>
-		<string>%s</string>
-		<string>-redis-addr</string>
-		<string>%s</string>
-	</array>
+%s	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -324,7 +359,7 @@ func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) er
 	<string>%s</string>
 </dict>
 </plist>
-`, launchdLabel, exePath, cfg.addr, cfg.redisAddr, pathEnv, logPath, logPath)
+`, xmlEscape(launchdLabel), argItems.String(), xmlEscape(daemonPathEnv()), xmlEscape(logPath), xmlEscape(logPath))
 
 	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return err
@@ -346,18 +381,26 @@ func startSystemdService(homeDir, exePath string, cfg serverConfig) error {
 		return err
 	}
 	unitPath := filepath.Join(unitDir, systemdUnitName)
+
+	quotedArgs := make([]string, 0, 12)
+	quotedArgs = append(quotedArgs, strconv.Quote(exePath))
+	for _, arg := range buildServeArgs(cfg) {
+		quotedArgs = append(quotedArgs, strconv.Quote(arg))
+	}
+
 	unit := fmt.Sprintf(`[Unit]
 Description=Chorus Multi-Agent Coordination MCP Server
 After=network.target
 
 [Service]
-ExecStart=%s serve -addr %s -redis-addr %s
+Environment="PATH=%s"
+ExecStart=%s
 Restart=on-failure
 RestartSec=2
 
 [Install]
 WantedBy=default.target
-`, exePath, cfg.addr, cfg.redisAddr)
+`, daemonPathEnv(), strings.Join(quotedArgs, " "))
 
 	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
 		return err
@@ -371,8 +414,8 @@ WantedBy=default.target
 	return nil
 }
 
-// startDetachedProcess spawns "chorus serve" in the background and records its
-// PID in ~/.chorus/chorus.pid.
+// startDetachedProcess spawns "chorus serve" in a new process group in the
+// background and records its PID in ~/.chorus/chorus.pid.
 func startDetachedProcess(stateDir, exePath string, cfg serverConfig) error {
 	logPath := filepath.Join(stateDir, "chorus.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -383,15 +426,16 @@ func startDetachedProcess(stateDir, exePath string, cfg serverConfig) error {
 		_ = logFile.Close()
 	}()
 
-	cmd := exec.Command(
-		exePath,
-		"serve",
-		"-addr", cfg.addr,
-		"-redis-addr", cfg.redisAddr,
-	)
+	cmd := exec.Command(exePath, buildServeArgs(cfg)...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	env := os.Environ()
+	if cfg.redisPassword != "" {
+		env = append(env, "REDIS_PASSWORD="+cfg.redisPassword)
+	}
+	cmd.Env = env
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start background chorus process: %w", err)
 	}
