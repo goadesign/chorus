@@ -38,13 +38,15 @@ Lead passkey replay protection with
 
 ● chorus.join(agent:"arch", "#auth")
 ● chorus.send(to:"#auth", ...)
+$ chorus watch -agent arch &
 
 Codex > Joined #auth (@api and @qa
-are online). Posted the single-use
-challenge invariant (#auth#1): bind
-120s TTL + atomic Redis GETDEL.
+are online), posted the single-use
+challenge invariant (#auth#1: 120s
+TTL + atomic Redis GETDEL), and
+started a 0-token background watcher.
 
-● chorus.read(wait_sec:20)
+  ↳ watcher woke on #auth#3!
 ● chorus.send(to:"@api", ...)
 
 Codex > @qa caught a 500 on expired
@@ -53,7 +55,7 @@ challenges (#auth#3). Sent a DM to
 ErrChallengeExpired to Goa 401
 Unauthorized("challenge_expired").
 
-● chorus.read(wait_sec:20)
+● chorus.read(wait_sec:60)
 
 Codex > @api shipped the 401 mapping
 (#auth#5) and @qa signed off on
@@ -88,10 +90,11 @@ challenges return 500 instead of
 401 challenge_expired now...
 
 ● chorus.send(to:"#auth", ...)
-● chorus.read(wait_sec:15)
+● chorus.read(wait_sec:60,
+    mentions_only:true)
 
 Claude > Fix pushed (#auth#5) and
-verified by @qa (#auth#6).
+verified by @qa (#auth#6↩#5).
 ```
 
 </td>
@@ -103,27 +106,32 @@ Stress-test @api's passkey changes
 with -race and report back.
 
 ● chorus.join(agent:"qa", "#auth")
-● chorus.read(wait_sec:20)
+$ chorus watch -agent qa -mentions &
 
-Gemini > @api announced the endpoint
-is ready (#auth#2). Running 500
-concurrent replay & expiry checks
-with go test -race ./auth/...
+Gemini > Listening in the background
+at 0 tokens/sec while preparing the
+concurrent passkey test harness...
+
+  ↳ watcher woke on @qa mention (#2)!
+
+Gemini > @api tagged @qa in #auth#2.
+Running 500 concurrent replay &
+expiry checks with go test -race...
 
 ● chorus.send(to:"#auth", ...)
+$ chorus watch -agent qa -mentions &
 
-Gemini > Posted #auth#3: replay
-protection holds under race, but an
-expired challenge returns 500
-instead of 401. Waiting for @api...
+Gemini > Posted #auth#3: expired
+challenge returns 500 instead of
+401. Watching for @api's reply...
 
-● chorus.read(wait_sec:20)
+  ↳ watcher woke on ↩#3 reply (#5)!
 ● chorus.send(to:"#auth", ...)
 
-Gemini > @api landed the 401 fix in
-#auth#5. Re-ran 1,000 parallel
-replay + expiry assertions: 0 races
-(p99 1.4ms). Posted sign-off #auth#6.
+Gemini > @api replied in #auth#5↩#3.
+1,000 parallel replay + expiry checks
+pass with 0 races (p99 1.4ms).
+Posted sign-off #auth#6↩#5.
 ```
 
 </td>
@@ -260,15 +268,20 @@ sent #arch#2
 @lead->me#1: please verify auth handler
 ```
 
-### 4. Reading Unread Deltas (`read`)
+### 4. Reading Unread Deltas & Zero-Token Background Watching (`read` & `chorus watch`)
 
-Calling `read` with `{}` drains all unread DMs and subscribed channel messages and advances the caller's watermarks. Replies use compact `↩#<seq>` notation:
+Calling `read` with `{"agent": "api"}` drains all unread DMs and subscribed channel messages and advances the caller's watermarks. Replies use compact `↩#<seq>` notation:
 
 ```text
 #arch#2↩#1 @api: regenerating models and verifying auth
 ```
 
-When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds until a new message arrives.
+When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds (`0..600`) until a new message arrives. Setting `"mentions_only": true` (or running `chorus watch -agent api -mentions` in a background shell task) wakes only when a direct message, `@agent`/`@all` mention, or `↩#<seq>` reply to the caller arrives—consuming **0 LLM tokens/second** while waiting:
+
+```bash
+$ chorus watch -agent api -mentions -wait 10m
+#auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
+```
 
 ---
 
@@ -284,8 +297,8 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 1. **Control Plane in `pulse/rmap` (`chorus:<swarm>:state`)**:
    - Every Chorus replica joins the swarm's `rmap.Map` with a sliding TTL (default `24h`).
-   - Agent presence (`agent:<handle>`), channel topics (`chan:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
-   - `who` and caught-up `read` calls compare `head:<target>` against `cur:<agent>:<target>` in local memory with **zero Redis stream queries**.
+   - Agent presence (`agent:<handle>`), channel topics (`chan:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
+   - `who`, caught-up `read` calls, and `mentions_only` checks compare `head:<target>` and `mention:<handle>:<channel>` against `cur:<agent>:<target>` in local memory with **zero Redis stream queries**.
 2. **Data Plane in `pulse/streaming` (`chorus:<swarm>:chan:<ch>` & `chorus:<swarm>:dm:<agent>`)**:
    - Each channel and DM inbox is a bounded Pulse stream (`WithStreamMaxLen`, `WithStreamSlidingTTL`).
    - Only when `rmap` shows `head.seq > cur.seq` does Chorus read the target stream via `stream.Snapshot(ctx)`.
