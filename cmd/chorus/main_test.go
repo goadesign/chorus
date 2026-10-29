@@ -96,6 +96,24 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("write cursor mcp.json: %v", err)
 	}
 
+	// Pre-populate ~/.gemini/config/mcp_config.json with existing Antigravity servers.
+	agyDir := filepath.Join(home, ".gemini", "config")
+	if err := os.MkdirAll(agyDir, 0o755); err != nil {
+		t.Fatalf("mkdir .gemini/config: %v", err)
+	}
+	existingAgyJSON := `{
+  "mcpServers": {
+    "slack": {
+      "disabled": false,
+      "serverUrl": "https://mcp.slack.com/mcp"
+    }
+  }
+}`
+	agyConfig := filepath.Join(agyDir, "mcp_config.json")
+	if err := os.WriteFile(agyConfig, []byte(existingAgyJSON), 0o600); err != nil {
+		t.Fatalf("write agy mcp_config.json: %v", err)
+	}
+
 	// Pre-populate ~/.codex/config.toml with existing model settings and another MCP server.
 	codexDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexDir, 0o755); err != nil {
@@ -116,13 +134,30 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("unexpected project paths: %v", projPaths)
 	}
 
-	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json and ~/.codex/config.toml).
+	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json, ~/.gemini/config/mcp_config.json, and ~/.codex/config.toml).
 	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", true)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(global) failed: %v", err)
 	}
-	if len(globalPaths) != 2 || globalPaths[0] != cursorConfig || globalPaths[1] != codexConfig {
+	if len(globalPaths) != 3 || globalPaths[0] != cursorConfig || globalPaths[1] != agyConfig || globalPaths[2] != codexConfig {
 		t.Fatalf("unexpected global paths: %v", globalPaths)
+	}
+
+	agyRaw, err := os.ReadFile(agyConfig)
+	if err != nil {
+		t.Fatalf("read updated agy mcp_config.json: %v", err)
+	}
+	var agyParsed map[string]any
+	if err := json.Unmarshal(agyRaw, &agyParsed); err != nil {
+		t.Fatalf("unmarshal updated agy mcp_config.json: %v", err)
+	}
+	agyServers := agyParsed["mcpServers"].(map[string]any)
+	if _, ok := agyServers["slack"]; !ok {
+		t.Fatalf("expected peer server 'slack' to be preserved in mcp_config.json, got %v", agyServers)
+	}
+	agyChorus := agyServers["chorus"].(map[string]any)
+	if agyChorus["url"] != "http://localhost:9440/mcp" || len(agyChorus) != 1 {
+		t.Fatalf("expected Antigravity chorus entry {\"url\": \"http://localhost:9440/mcp\"}, got %v", agyChorus)
 	}
 
 	raw, err := os.ReadFile(cursorConfig)

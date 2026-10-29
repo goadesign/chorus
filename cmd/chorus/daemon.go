@@ -159,8 +159,8 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 				config:    filepath.Join(homeDir, ".cursor", "mcp.json"),
 			},
 			{
-				parentDir: filepath.Join(homeDir, ".gemini", "antigravity"),
-				config:    filepath.Join(homeDir, ".gemini", "antigravity", "mcp_config.json"),
+				parentDir: filepath.Join(homeDir, ".gemini", "config"),
+				config:    filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"),
 			},
 		}
 		for _, c := range candidates {
@@ -228,9 +228,15 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 	if !ok || servers == nil {
 		servers = make(map[string]any)
 	}
-	servers["chorus"] = map[string]any{
-		"type": "http",
-		"url":  mcpURL,
+	if filepath.Base(path) == "mcp_config.json" {
+		servers["chorus"] = map[string]any{
+			"url": mcpURL,
+		}
+	} else {
+		servers["chorus"] = map[string]any{
+			"type": "http",
+			"url":  mcpURL,
+		}
 	}
 	root["mcpServers"] = servers
 
