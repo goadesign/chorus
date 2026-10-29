@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -55,10 +57,16 @@ const (
 	defaultStreamMaxLen = 500
 	// defaultOnlineWindow is the default online activity window.
 	defaultOnlineWindow = 2 * time.Minute
-	// startupPingTimeout bounds the initial Redis connectivity check.
-	startupPingTimeout = 5 * time.Second
+	// initialPingTimeout bounds the fast check for an already-running Redis instance.
+	initialPingTimeout = 500 * time.Millisecond
+	// autoStartTimeout bounds waiting for an auto-started local Redis or Docker container.
+	autoStartTimeout = 15 * time.Second
 	// shutdownTimeout bounds graceful HTTP and Pulse shutdown.
 	shutdownTimeout = 10 * time.Second
+	// dockerContainerName is the container name used when auto-starting Redis via Docker.
+	dockerContainerName = "chorus-redis"
+	// dockerRedisImage is the Redis image used when auto-starting Redis via Docker.
+	dockerRedisImage = "redis:7-alpine"
 )
 
 func main() {
@@ -68,8 +76,8 @@ func main() {
 	}
 }
 
-// run parses command-line flags, connects to Redis, and serves the Chorus MCP
-// endpoint until interrupted.
+// run parses command-line flags, connects to (or auto-starts) Redis, and serves
+// the Chorus MCP endpoint until interrupted.
 func run() error {
 	cfg := parseFlags()
 	if cfg.installSkill {
@@ -92,12 +100,11 @@ func run() error {
 		_ = rdb.Close()
 	}()
 
-	pingCtx, cancelPing := context.WithTimeout(context.Background(), startupPingTimeout)
-	err := rdb.Ping(pingCtx).Err()
-	cancelPing()
+	stopRedis, err := connectOrStartRedis(context.Background(), rdb, cfg.redisAddr)
 	if err != nil {
-		return fmt.Errorf("connect to redis at %s: %w", cfg.redisAddr, err)
+		return err
 	}
+	defer stopRedis()
 
 	svc, err := chorus.New(
 		rdb,
@@ -171,4 +178,126 @@ func parseFlags() serverConfig {
 	flag.BoolVar(&cfg.installSkill, "install-skill", false, "Install the embedded Chorus agent skill into global skill directories and exit")
 	flag.Parse()
 	return cfg
+}
+
+// connectOrStartRedis verifies connectivity to rdb at redisAddr. When redisAddr
+// targets a local loopback port and no server is listening, it automatically
+// launches a managed redis-server subprocess or Docker container.
+func connectOrStartRedis(ctx context.Context, rdb *redis.Client, redisAddr string) (func(), error) {
+	noop := func() {}
+	if err := pingRedis(ctx, rdb, initialPingTimeout); err == nil {
+		return noop, nil
+	}
+
+	port, ok := loopbackPort(redisAddr)
+	if !ok {
+		return noop, fmt.Errorf("connect to redis at %s: server unreachable", redisAddr)
+	}
+
+	stopFn, startErr := startLocalRedis(port)
+	if startErr != nil {
+		return noop, fmt.Errorf(
+			"redis is not running at %s and could not be auto-started (%w); install Redis with 'brew install redis', 'sudo apt-get install -y redis-server', or start Docker",
+			redisAddr,
+			startErr,
+		)
+	}
+
+	deadline := time.Now().Add(autoStartTimeout)
+	for time.Now().Before(deadline) {
+		if err := pingRedis(ctx, rdb, initialPingTimeout); err == nil {
+			return stopFn, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	stopFn()
+	return noop, fmt.Errorf("timed out waiting for auto-started redis at %s", redisAddr)
+}
+
+// pingRedis pings rdb with a bounded timeout.
+func pingRedis(ctx context.Context, rdb *redis.Client, timeout time.Duration) error {
+	pingCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return rdb.Ping(pingCtx).Err()
+}
+
+// loopbackPort extracts the TCP port if addr is a local loopback address
+// (localhost, 127.0.0.1, or ::1).
+func loopbackPort(addr string) (string, bool) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "", false
+	}
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return port, true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return "", false
+	}
+	return port, true
+}
+
+// startLocalRedis starts a local Redis instance on port using either a local
+// redis-server binary or a Docker container, returning a cleanup function.
+func startLocalRedis(port string) (func(), error) {
+	if redisBin, err := exec.LookPath("redis-server"); err == nil {
+		return startRedisSubprocess(redisBin, port)
+	}
+	if dockerBin, err := exec.LookPath("docker"); err == nil {
+		return startRedisDocker(dockerBin, port)
+	}
+	return nil, errors.New("neither redis-server nor docker found in PATH")
+}
+
+// startRedisSubprocess launches an ephemeral redis-server child process bound
+// to 127.0.0.1:port.
+func startRedisSubprocess(redisBin, port string) (func(), error) {
+	tmpDir, err := os.MkdirTemp("", "chorus-redis-*")
+	if err != nil {
+		return nil, fmt.Errorf("create redis temp dir: %w", err)
+	}
+	cmd := exec.Command(
+		redisBin,
+		"--bind", "127.0.0.1",
+		"--port", port,
+		"--dir", tmpDir,
+		"--save", "",
+		"--appendonly", "no",
+		"--loglevel", "warning",
+	)
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("start redis-server: %w", err)
+	}
+	slog.Info("auto-started local redis-server subprocess", "addr", "127.0.0.1:"+port, "pid", cmd.Process.Pid)
+	return func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			_, _ = cmd.Process.Wait()
+		}
+		_ = os.RemoveAll(tmpDir)
+	}, nil
+}
+
+// startRedisDocker launches an ephemeral redis:7-alpine container bound to
+// 127.0.0.1:port via Docker.
+func startRedisDocker(dockerBin, port string) (func(), error) {
+	container := fmt.Sprintf("%s-%s", dockerContainerName, port)
+	_ = exec.Command(dockerBin, "rm", "-f", container).Run()
+	out, err := exec.Command(
+		dockerBin,
+		"run", "-d", "--rm",
+		"--name", container,
+		"-p", fmt.Sprintf("127.0.0.1:%s:6379", port),
+		dockerRedisImage,
+		"redis-server", "--save", "", "--appendonly", "no",
+	).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker run %s: %w (%s)", dockerRedisImage, err, strings.TrimSpace(string(out)))
+	}
+	slog.Info("auto-started redis Docker container", "container", container, "addr", "127.0.0.1:"+port)
+	return func() {
+		_ = exec.Command(dockerBin, "stop", container).Run()
+	}, nil
 }

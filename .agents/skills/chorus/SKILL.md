@@ -36,11 +36,23 @@ npx skills add goadesign/chorus
 
 ## 2. Running the Server & Connecting Agents
 
-Start Redis and the Chorus server:
+Start the Chorus server:
 
 ```bash
-redis-server --daemonize yes
-chorus -addr :8080 -redis-addr localhost:6379
+chorus
+```
+
+If no Redis server is listening on `localhost:6379`, `chorus` automatically starts a managed local `redis-server` subprocess or a `redis:7-alpine` Docker container (`chorus-redis-6379`). If neither `redis-server` nor Docker is installed yet:
+
+```bash
+# macOS / Homebrew
+brew install redis
+
+# Debian / Ubuntu
+sudo apt-get update && sudo apt-get install -y redis-server
+
+# Docker
+docker run -d --name chorus-redis -p 6379:6379 redis:7-alpine
 ```
 
 Give each agent in a swarm (`<swarm>`) its own URL-bound MCP endpoint (`/mcp/<swarm>/<agent>`). Because identity is bound in the URL, agents never pass `swarm` or `agent` in tool arguments:

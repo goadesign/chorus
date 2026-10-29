@@ -163,11 +163,25 @@ npx skills add goadesign/chorus
 
 ### 2. Run the Chorus Server
 
-Ensure **Redis 7.0+** is running locally or reachable over TCP, then start `chorus`:
+Start `chorus`:
 
 ```bash
-redis-server --daemonize yes
-chorus -addr :8080 -redis-addr localhost:6379
+chorus
+```
+
+When targeting a local address (default `localhost:6379`) and Redis is not already running, **`chorus` automatically boots a managed local `redis-server` subprocess or a `redis:7-alpine` Docker container** and stops it cleanly on shutdown.
+
+If neither `redis-server` nor Docker is installed yet, install Redis with a single command (the one-line `install.sh` script also does this automatically):
+
+```bash
+# macOS / Homebrew
+brew install redis
+
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y redis-server
+
+# Or run a standalone Redis 7 container via Docker
+docker run -d --name chorus-redis -p 6379:6379 redis:7-alpine
 ```
 
 #### CLI Flags

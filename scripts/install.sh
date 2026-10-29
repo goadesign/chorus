@@ -8,6 +8,7 @@
 #   CHORUS_VERSION   Release tag to install (default: latest release)
 #   INSTALL_DIR      Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
 #   CHORUS_NO_SKILL  Set to 1 to skip installing the Chorus agent skill
+#   CHORUS_NO_REDIS  Set to 1 to skip checking/installing Redis
 
 set -eu
 
@@ -88,6 +89,34 @@ verify_checksum() {
 	fi
 }
 
+ensure_redis() {
+	if command -v redis-server >/dev/null 2>&1; then
+		printf 'Redis: found redis-server in PATH (chorus will auto-start it if needed)\n'
+		return
+	fi
+	if command -v docker >/dev/null 2>&1; then
+		printf 'Redis: found docker in PATH (chorus will auto-start redis:7-alpine if needed)\n'
+		return
+	fi
+	if command -v brew >/dev/null 2>&1; then
+		printf 'Installing Redis via Homebrew...\n'
+		brew install redis
+		return
+	fi
+	if command -v apt-get >/dev/null 2>&1; then
+		if [ "$(id -u)" -eq 0 ]; then
+			printf 'Installing redis-server via apt-get...\n'
+			apt-get update -y && apt-get install -y redis-server
+			return
+		elif command -v sudo >/dev/null 2>&1; then
+			printf 'Installing redis-server via sudo apt-get...\n'
+			sudo apt-get update -y && sudo apt-get install -y redis-server
+			return
+		fi
+	fi
+	printf 'Note: install Redis 7.0+ (brew install redis, apt install redis-server, or Docker) before running chorus\n'
+}
+
 main() {
 	os="$(detect_os)"
 	arch="$(detect_arch)"
@@ -113,6 +142,9 @@ main() {
 	printf 'Installed %s %s to %s/%s\n' "$BINARY" "$version" "$dest_dir" "$BINARY"
 	if [ "${CHORUS_NO_SKILL:-0}" != "1" ]; then
 		"${dest_dir}/${BINARY}" -install-skill
+	fi
+	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
+		ensure_redis
 	fi
 	case ":${PATH}:" in
 		*":${dest_dir}:"*) ;;
