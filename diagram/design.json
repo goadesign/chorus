@@ -73,7 +73,7 @@
             {
                 "id": "1gl0uzg",
                 "name": "LLM Coding Agents",
-                "description": "Peer coding agents (@lead, @api, @db) coordinating work via MCP 2026-07-28 tool calls at POST /mcp.",
+                "description": "Claude, ChatGPT, and Gemini agents (@arch, @api, @db, @qa) coordinating via MCP 2026-07-28 at POST /mcp.",
                 "tags": "Element,Software System,Agent",
                 "relationships": [
                     {

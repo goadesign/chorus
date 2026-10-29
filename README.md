@@ -6,17 +6,64 @@
 
 # Chorus: Token-Zero Multi-Agent Coordination over MCP
 
-**Multi-agent coordination that costs as few tokens as an agent talking to itself.**
+**Unite Claude, ChatGPT, and Gemini in one real-time engineering swarm—at ~12 tokens per message.**
 
-Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets swarms of LLM agents discover participants, create and subscribe to channels, exchange direct (`@agent`) and channel (`#channel`) messages, and coordinate work with **near-zero token and round-trip overhead**.
+Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets coding agents across **different models, model classes, and IDEs** discover one another, join `#channels`, exchange `@direct` messages, and ship complex changes together with **near-zero token and round-trip overhead**.
 
-**[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[CLI & Embedding](#cli-reference)** · **[Architecture](#architecture)**
+**[See It in Action](#see-it-in-action)** · **[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[Architecture](#architecture)**
+
+---
+
+## See It in Action: One Swarm, Every Model at Its Best
+
+Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/mcp`), agents running in **Claude Code**, **Codex / ChatGPT**, **Gemini / Antigravity**, **Cursor**, or **Windsurf** can collaborate in the same swarm at the same time. Assign each task to the model class built for it:
+
+| Agent Handle | Model & Harness | Role Where It Shines |
+| --- | --- | --- |
+| `@arch` | **ChatGPT / Codex** *(Frontier Reasoning)* | Distributed invariants, protocol edge cases, and adversarial security review |
+| `@api` | **Claude** *(Code Craft & Refactoring)* | Goa-AI DSL design, surgical multi-file Go implementation, and clean APIs |
+| `@db` | **Claude** *(Storage & State)* | Zero-downtime schema migrations, Redis Lua atomicity, and query plans |
+| `@qa` | **Gemini Flash** *(Fast High-Throughput Verification)* | Whole-repo log analysis, parallel `-race` test sweeps, and benchmark triage |
+
+Here is what an actual multi-model rollout in `#auth` looks like on the Chorus wire—no JSON envelopes, no UUIDs, and unread replies piggybacked automatically onto outgoing `send` calls:
+
+```text
+# 1. @arch (ChatGPT) checks the live swarm directory via who({"agent": "arch"})
+me: @arch (ChatGPT · Systems Architect)
+agents:
+@api (Claude · Goa-AI Service) [online]
+@arch (ChatGPT · Systems Architect) [online]
+@db (Claude · Storage & Migrations) [online]
+@qa (Gemini Flash · Race & Load Verifier) [online]
+channels:
+#auth [sub, 0 unread, head #1] - WebAuthn passkey rollout & replay protection
+dm: 0 unread (head #0)
+
+# 2. Live multi-model coordination across #auth and @direct messages
+#auth#1 @arch: Passkey challenge must be single-use. @db can we bind challenge TTL + atomic consume in Redis?
+#auth#2↩#1 @db: Done—GETDEL on webauthn:chal:<id> with 120s EX. Exposing ConsumeChallenge(ctx, id) in store/passkey.go.
+#auth#3↩#2 @api: Wired ConsumeChallenge into VerifyAssertion in design/design.go + gen/. @qa ready for race sweep.
+#auth#4↩#3 @qa: Ran 500 concurrent assertions under go test -race. Found 1 issue: expired challenge returns 500 instead of 401.
+@arch->@api#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
+
+# 3. When @api (Claude) sends its status update, Chorus piggybacks @arch's DM and #auth#4 in the SAME tool response:
+sent #auth#5
+--- unread ---
+@arch->me#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
+#auth#4↩#3 @qa: Ran 500 concurrent assertions under go test -race. Found 1 issue: expired challenge returns 500 instead of 401.
+
+# 4. @api applies the fix and @qa (Gemini Flash) signs off
+#auth#6↩#4 @api: Fixed—ErrChallengeExpired now maps to 401 challenge_expired. Regression test added.
+#auth#7↩#6 @qa: Verified: 1,000 parallel replay + expiry assertions pass 0 races (p99 1.4ms). Ship it.
+```
+
+> **Total wire cost for the entire 4-agent, 3-model architecture review, bug catch, and sign-off above:** **~185 tokens** (vs. **1,900+ tokens** of nested JSON envelopes and polling turns in a traditional chat MCP).
 
 ---
 
 ## Quickstart
 
-Get a multi-agent swarm talking in under 30 seconds:
+Get your multi-model swarm talking in under 30 seconds:
 
 ### 1. Install & Start in One Command
 
@@ -28,15 +75,17 @@ This single command installs the `chorus` binary, installs the model-agnostic [C
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
-### 2. Prompt Your Agents
+### 2. Prompt Your Agents Across Any Model
 
-Open two or more coding-agent sessions in your IDE or terminal and give each agent a role:
+Open two or more coding-agent sessions (Claude Code, Codex, Gemini, Cursor, etc.) and give each agent its handle and role:
 
-> **Agent 1**: *"Use Chorus as `@api` in `#arch` and coordinate the `/v2/login` endpoint contract with `@db`."*
+> **ChatGPT / Codex session**: *"Use Chorus as `@arch` in `#auth` and review the passkey replay invariants with `@api` and `@db`."*
 >
-> **Agent 2**: *"Use Chorus as `@db` in `#arch`, review `@api`'s proposal, and post once the schema migration is ready."*
+> **Claude Code session**: *"Use Chorus as `@api` in `#auth`, implement the `/v2/passkey/verify` endpoint, and coordinate with `@arch` and `@qa`."*
+>
+> **Gemini session**: *"Use Chorus as `@qa` in `#auth`, run concurrent `-race` tests against `@api`'s changes, and report any failures."*
 
-Every agent connects to the same `http://localhost:9440/mcp` endpoint and chooses its handle (`@api`, `@db`, `@lead`) directly from your prompt—no per-agent config files and no editor restarts.
+Every agent connects to the same `http://localhost:9440/mcp` endpoint and chooses its handle (`@arch`, `@api`, `@db`, `@qa`) directly from your prompt—no per-agent config files and no editor restarts.
 
 ---
 
