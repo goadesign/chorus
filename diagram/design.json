@@ -15,7 +15,7 @@
                         "name": "Chorus MCP Server",
                         "description": "Stateless HTTP server (:9440) serving POST /mcp (who, join, leave, send, read) with an in-memory Pulse rmap replica.",
                         "technology": "Go, Goa-AI \u0026 Pulse",
-                        "tags": "Element,Container,Server",
+                        "tags": "Element,Container",
                         "url": "https://github.com/goadesign/chorus",
                         "relationships": [
                             {
@@ -52,12 +52,12 @@
                         "name": "Message Streams",
                         "description": "Bounded append-only streams storing channel (#channel) and direct (@agent) messages with sliding TTL.",
                         "technology": "Redis Streams \u0026 Pulse streaming",
-                        "tags": "Element,Container,Event Queue,DataPlane"
+                        "tags": "Element,Container,Event Queue"
                     },
                     {
                         "id": "1qt01kv",
                         "name": "Publication Lock",
-                        "description": "1-slot leased semaphore serializing sequence numbers.",
+                        "description": "1-slot leased lock serializing sequence numbers.",
                         "technology": "Redis \u0026 Pulse semaphore",
                         "tags": "Element,Container,Lock"
                     },
@@ -66,7 +66,7 @@
                         "name": "Swarm Control Plane",
                         "description": "Replicated hash map holding agent presence, channel topics, subscriptions, sequence counters, stream heads, and read watermarks.",
                         "technology": "Redis \u0026 Pulse rmap",
-                        "tags": "Element,Container,Database,ControlPlane"
+                        "tags": "Element,Container,Database"
                     }
                 ]
             },
@@ -147,50 +147,50 @@
             "elements": [
                 {
                     "tag": "Agent",
-                    "background": "#2563eb",
-                    "stroke": "#1d4ed8",
-                    "color": "#ffffff",
+                    "background": "#1e293b",
+                    "stroke": "#94a3b8",
+                    "color": "#f8fafc",
                     "fontSize": 22,
                     "shape": "Robot"
                 },
                 {
-                    "tag": "ControlPlane",
-                    "background": "#4f46e5",
-                    "stroke": "#3730a3",
-                    "color": "#ffffff",
+                    "tag": "Container",
+                    "background": "#0f293a",
+                    "stroke": "#2dd4bf",
+                    "color": "#f8fafc",
+                    "fontSize": 22,
+                    "shape": "RoundedBox"
+                },
+                {
+                    "tag": "Database",
+                    "background": "#1e293b",
+                    "stroke": "#38bdf8",
+                    "color": "#f8fafc",
                     "fontSize": 22,
                     "shape": "Cylinder"
                 },
                 {
-                    "tag": "DataPlane",
-                    "background": "#0284c7",
-                    "stroke": "#0369a1",
-                    "color": "#ffffff",
+                    "tag": "Event Queue",
+                    "background": "#1e293b",
+                    "stroke": "#38bdf8",
+                    "color": "#f8fafc",
                     "fontSize": 22,
                     "shape": "Pipe"
                 },
                 {
                     "tag": "Lock",
-                    "background": "#d97706",
-                    "stroke": "#b45309",
-                    "color": "#ffffff",
+                    "background": "#1e293b",
+                    "stroke": "#38bdf8",
+                    "color": "#f8fafc",
                     "fontSize": 22,
                     "shape": "Hexagon"
-                },
-                {
-                    "tag": "Server",
-                    "background": "#0d9488",
-                    "stroke": "#0f766e",
-                    "color": "#ffffff",
-                    "fontSize": 22,
-                    "shape": "RoundedBox"
                 }
             ],
             "relationships": [
                 {
                     "tag": "Relationship",
                     "thickness": 2,
-                    "color": "#475569",
+                    "color": "#8b949e",
                     "fontSize": 20
                 }
             ]
