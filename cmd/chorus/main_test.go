@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -95,6 +96,17 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("write cursor mcp.json: %v", err)
 	}
 
+	// Pre-populate ~/.codex/config.toml with existing model settings and another MCP server.
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatalf("mkdir .codex: %v", err)
+	}
+	existingTOML := "model = \"o3\"\n\n[mcp_servers.other]\nurl = \"http://localhost:9000/mcp\"\n"
+	codexConfig := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(codexConfig, []byte(existingTOML), 0o600); err != nil {
+		t.Fatalf("write codex config.toml: %v", err)
+	}
+
 	// 1. Project-local setup (.mcp.json).
 	projPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", false)
 	if err != nil {
@@ -104,12 +116,12 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("unexpected project paths: %v", projPaths)
 	}
 
-	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json).
+	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json and ~/.codex/config.toml).
 	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", true)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(global) failed: %v", err)
 	}
-	if len(globalPaths) != 1 || globalPaths[0] != cursorConfig {
+	if len(globalPaths) != 2 || globalPaths[0] != cursorConfig || globalPaths[1] != codexConfig {
 		t.Fatalf("unexpected global paths: %v", globalPaths)
 	}
 
@@ -131,6 +143,34 @@ func TestSetupMCPConfigs(t *testing.T) {
 	chorusEntry := servers["chorus"].(map[string]any)
 	if chorusEntry["url"] != "http://localhost:9440/mcp" || chorusEntry["type"] != "http" {
 		t.Fatalf("unexpected chorus MCP entry: %v", chorusEntry)
+	}
+
+	codexRaw, err := os.ReadFile(codexConfig)
+	if err != nil {
+		t.Fatalf("read updated codex config.toml: %v", err)
+	}
+	codexStr := string(codexRaw)
+	if !strings.Contains(codexStr, "model = \"o3\"") || !strings.Contains(codexStr, "[mcp_servers.other]") {
+		t.Fatalf("expected existing TOML settings to be preserved, got:\n%s", codexStr)
+	}
+	if !strings.Contains(codexStr, "[mcp_servers.chorus]\nurl = \"http://localhost:9440/mcp\"") {
+		t.Fatalf("expected chorus section in codex config.toml, got:\n%s", codexStr)
+	}
+
+	// 3. Re-running with a new port updates the existing [mcp_servers.chorus] section in place without duplication.
+	if _, err := setupMCPConfigs(cwd, home, "http://localhost:9550/mcp", true); err != nil {
+		t.Fatalf("setupMCPConfigs(global update) failed: %v", err)
+	}
+	codexUpdatedRaw, err := os.ReadFile(codexConfig)
+	if err != nil {
+		t.Fatalf("read re-updated codex config.toml: %v", err)
+	}
+	codexUpdated := string(codexUpdatedRaw)
+	if strings.Count(codexUpdated, "[mcp_servers.chorus]") != 1 {
+		t.Fatalf("expected exactly one [mcp_servers.chorus] section, got:\n%s", codexUpdated)
+	}
+	if !strings.Contains(codexUpdated, "url = \"http://localhost:9550/mcp\"") {
+		t.Fatalf("expected updated chorus URL in codex config.toml, got:\n%s", codexUpdated)
 	}
 }
 

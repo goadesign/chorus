@@ -20,7 +20,7 @@ If the user asks you to coordinate on Chorus and the `chorus` MCP tools (`who`, 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
    ```
-2. **Start the background daemon and register the MCP server** in the current workspace (`.mcp.json`) and global agent configs:
+2. **Start the background daemon and register the MCP server** in the current workspace (`.mcp.json`) and global agent configs (Cursor, Antigravity, Claude Code, and OpenAI Codex `~/.codex/config.toml`):
    ```bash
    chorus up && chorus setup && chorus setup -global
    ```

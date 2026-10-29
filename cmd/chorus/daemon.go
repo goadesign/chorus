@@ -136,12 +136,19 @@ func runSetup(args []string) error {
 }
 
 // setupMCPConfigs merges the Chorus MCP server entry into the project's
-// .mcp.json (when global is false) or into detected global agent MCP config
-// files under homeDir (when global is true).
+// .mcp.json (and .codex/config.toml if .codex exists) when global is false, or
+// into detected global agent MCP config files under homeDir (Cursor,
+// Antigravity, Claude Code, and OpenAI Codex) when global is true.
 func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error) {
-	var targets []string
+	var (
+		jsonTargets []string
+		tomlTargets []string
+	)
 	if !global {
-		targets = append(targets, filepath.Join(cwd, ".mcp.json"))
+		jsonTargets = append(jsonTargets, filepath.Join(cwd, ".mcp.json"))
+		if info, err := os.Stat(filepath.Join(cwd, ".codex")); err == nil && info.IsDir() {
+			tomlTargets = append(tomlTargets, filepath.Join(cwd, ".codex", "config.toml"))
+		}
 	} else {
 		candidates := []struct {
 			parentDir string
@@ -158,21 +165,35 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 		}
 		for _, c := range candidates {
 			if info, err := os.Stat(c.parentDir); err == nil && info.IsDir() {
-				targets = append(targets, c.config)
+				jsonTargets = append(jsonTargets, c.config)
 			}
 		}
 		claudeConfig := filepath.Join(homeDir, ".claude.json")
 		if _, err := os.Stat(claudeConfig); err == nil {
-			targets = append(targets, claudeConfig)
+			jsonTargets = append(jsonTargets, claudeConfig)
 		}
-		if len(targets) == 0 {
-			targets = append(targets, filepath.Join(homeDir, ".chorus", "mcp.json"))
+		codexDir := filepath.Join(homeDir, ".codex")
+		if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
+			tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
+		} else if realHome, homeErr := os.UserHomeDir(); homeErr == nil && realHome == homeDir {
+			if _, lookErr := exec.LookPath("codex"); lookErr == nil {
+				tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
+			}
+		}
+		if len(jsonTargets) == 0 && len(tomlTargets) == 0 {
+			jsonTargets = append(jsonTargets, filepath.Join(homeDir, ".chorus", "mcp.json"))
 		}
 	}
 
-	updated := make([]string, 0, len(targets))
-	for _, target := range targets {
+	updated := make([]string, 0, len(jsonTargets)+len(tomlTargets))
+	for _, target := range jsonTargets {
 		if err := mergeMCPConfigFile(target, mcpURL); err != nil {
+			return nil, err
+		}
+		updated = append(updated, target)
+	}
+	for _, target := range tomlTargets {
+		if err := mergeCodexConfigFile(target, mcpURL); err != nil {
 			return nil, err
 		}
 		updated = append(updated, target)
@@ -219,6 +240,86 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 	}
 	encoded = append(encoded, '\n')
 	if err := os.WriteFile(path, encoded, perm); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// mergeCodexConfigFile idempotently inserts or updates the
+// "[mcp_servers.chorus]" section in an OpenAI Codex TOML configuration file
+// while preserving all existing tables, keys, and comments.
+func mergeCodexConfigFile(path, mcpURL string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config directory for %s: %w", path, err)
+	}
+
+	perm := os.FileMode(0o600)
+	var content string
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", path, readErr)
+		}
+		content = string(raw)
+	}
+
+	urlLine := fmt.Sprintf("url = %q", mcpURL)
+	if strings.TrimSpace(content) == "" {
+		out := fmt.Sprintf("[mcp_servers.chorus]\n%s\n", urlLine)
+		if err := os.WriteFile(path, []byte(out), perm); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+		return nil
+	}
+
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	var (
+		out         []string
+		inChorusSec bool
+		foundSec    bool
+		wroteURL    bool
+	)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inChorusSec && !wroteURL {
+				out = append(out, urlLine)
+				wroteURL = true
+			}
+			inChorusSec = trimmed == "[mcp_servers.chorus]"
+			if inChorusSec {
+				foundSec = true
+			}
+			out = append(out, line)
+			continue
+		}
+		if inChorusSec {
+			if key, _, ok := strings.Cut(trimmed, "="); ok && strings.TrimSpace(key) == "url" {
+				if !wroteURL {
+					out = append(out, urlLine)
+					wroteURL = true
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	if inChorusSec && !wroteURL {
+		out = append(out, urlLine)
+	}
+	if !foundSec {
+		for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+			out = out[:len(out)-1]
+		}
+		out = append(out, "", "[mcp_servers.chorus]", urlLine, "")
+	}
+
+	rendered := strings.Join(out, "\n")
+	if !strings.HasSuffix(rendered, "\n") {
+		rendered += "\n"
+	}
+	if err := os.WriteFile(path, []byte(rendered), perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

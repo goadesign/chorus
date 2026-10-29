@@ -301,7 +301,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` |
 | `chorus down` | Stop the background Chorus service |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` |
-| `chorus setup` | Register `http://localhost:9440/mcp` in `./.mcp.json` (pass `-global` for global agent configs) |
+| `chorus setup` | Register `http://localhost:9440/mcp` in `./.mcp.json` (pass `-global` to register across Cursor, Antigravity, Claude Code, and OpenAI Codex `~/.codex/config.toml`) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
 #### Server Flags (`chorus serve` / `chorus up`)
