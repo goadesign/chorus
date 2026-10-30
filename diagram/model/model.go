@@ -10,7 +10,7 @@ import (
 var _ = Design("Chorus Architecture", "Token-minimal multi-agent coordination MCP server built on Goa-AI and Pulse.", func() {
 	Version("0.3.0")
 
-	SoftwareSystem("LLM Coding Agents", "Claude, ChatGPT, and Gemini agents (@arch, @api, @db, @qa) coordinating via MCP 2026-07-28 at POST /mcp.", func() {
+	SoftwareSystem("LLM Coding Agents", "Claude, ChatGPT, and Gemini agents (arch, api, db, qa) coordinating via MCP 2026-07-28 at POST /mcp.", func() {
 		External()
 		Tag("Software System", "Agent")
 		Uses("Chorus/Chorus MCP Server", "Calls who, join, leave, send, and read; receives piggybacked unread deltas", "MCP 2026-07-28 JSON-RPC / HTTP (:9440)", Synchronous)
