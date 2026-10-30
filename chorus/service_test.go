@@ -134,7 +134,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	replica := c.replicas[0]
 	ctx := context.Background()
 
-	// 1. Verify GET /healthz liveness probe.
+	// 1. Verify GET /healthz liveness probe and X-Chorus-Version header.
 	healthResp, err := replica.httpServer.Client().Get(replica.httpServer.URL + "/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz failed: %v", err)
@@ -142,6 +142,9 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	_ = healthResp.Body.Close()
 	if healthResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK from /healthz, got %d", healthResp.StatusCode)
+	}
+	if gotVer := healthResp.Header.Get("X-Chorus-Version"); gotVer != genmcpchorus.APIVersion {
+		t.Fatalf("expected X-Chorus-Version %q from /healthz, got %q", genmcpchorus.APIVersion, gotVer)
 	}
 
 	// 2. Verify server/discover and tools/list schemas via generated MCP client.
@@ -263,6 +266,136 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	lead.callExpectingError("who", map[string]any{
 		"swarm": "invalid/swarm",
 	})
+}
+
+// TestHealthzAndPing verifies that Service.Ping and GET /healthz report 200 OK
+// when Redis is healthy and 503 Service Unavailable when Redis is unreachable or closed.
+func TestHealthzAndPing(t *testing.T) {
+	// 1. Healthy service backed by shared test Redis.
+	rdb := redis.NewClient(&redis.Options{Addr: sharedRedisAddr})
+	defer func() { _ = rdb.Close() }()
+	svc, err := chorus.New(rdb)
+	if err != nil {
+		t.Fatalf("chorus.New: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	srv := httptest.NewServer(chorus.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	if err := svc.Ping(context.Background()); err != nil {
+		t.Fatalf("svc.Ping failed on healthy Redis: %v", err)
+	}
+	resp, err := srv.Client().Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /healthz, got %d", resp.StatusCode)
+	}
+	if gotVer := resp.Header.Get("X-Chorus-Version"); gotVer != genmcpchorus.APIVersion {
+		t.Fatalf("expected X-Chorus-Version %q on /healthz, got %q", genmcpchorus.APIVersion, gotVer)
+	}
+
+	// 2. Closed service returns 503.
+	_ = svc.Close()
+	if err := svc.Ping(context.Background()); err == nil {
+		t.Fatal("expected svc.Ping to fail on closed service")
+	}
+	respClosed, err := srv.Client().Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed on closed service: %v", err)
+	}
+	_ = respClosed.Body.Close()
+	if respClosed.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 from /healthz on closed service, got %d", respClosed.StatusCode)
+	}
+
+	// 3. Service with unreachable Redis returns 503.
+	deadRDB := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	defer func() { _ = deadRDB.Close() }()
+	deadSvc, err := chorus.New(deadRDB)
+	if err != nil {
+		t.Fatalf("chorus.New with dead Redis: %v", err)
+	}
+	defer func() { _ = deadSvc.Close() }()
+	deadSrv := httptest.NewServer(chorus.NewHTTPHandler(deadSvc))
+	defer deadSrv.Close()
+
+	if err := deadSvc.Ping(context.Background()); err == nil {
+		t.Fatal("expected deadSvc.Ping to fail on unreachable Redis")
+	}
+	respDead, err := deadSrv.Client().Get(deadSrv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed on unreachable Redis: %v", err)
+	}
+	_ = respDead.Body.Close()
+	if respDead.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 from /healthz on unreachable Redis, got %d", respDead.StatusCode)
+	}
+}
+
+// TestSelfMessageSuppressionAndWatchNoSelfWake verifies that an agent never
+// receives its own sent messages back on send, read, or a concurrent blocking
+// read(wait_sec, mentions_only) watcher—even when sending @all or posting after
+// unmentioned peer chatter.
+func TestSelfMessageSuppressionAndWatchNoSelfWake(t *testing.T) {
+	c := newTestCluster(t, 2, nil)
+	swarm := "no-self-echo"
+
+	arch := c.newAgent(0, swarm, "arch")
+	impl := c.newAgent(1, swarm, "impl")
+
+	arch.call("join", map[string]any{"channels": []string{"#foundry"}})
+	impl.call("join", map[string]any{"channels": []string{"#foundry"}})
+
+	// 1. @arch starts a blocking mentions_only read (simulating background
+	// `chorus watch -agent arch -mentions`).
+	watchCh := make(chan string, 1)
+	go func() {
+		watchCh <- arch.call("read", map[string]any{
+			"wait_sec":      5,
+			"mentions_only": true,
+		})
+	}()
+	time.Sleep(80 * time.Millisecond)
+
+	// 2. @impl posts unmentioned chatter (#foundry#1), then @arch posts an @all
+	// broadcast (#foundry#2) and a self-mention (#foundry#3).
+	impl.send("#foundry", "routine build progress", 0)
+	sendRes := arch.send("#foundry", "@all starting architecture review", 0)
+	if sendRes.seq != 2 {
+		t.Fatalf("expected @arch post to be #foundry#2, got %d", sendRes.seq)
+	}
+	// @arch receives @impl's #foundry#1 piggybacked on send, and never its own #foundry#2.
+	if len(sendRes.unread) != 1 || sendRes.unread[0].seq != 1 || sendRes.unread[0].sender != "impl" {
+		t.Fatalf("expected send piggyback to contain only #foundry#1 from @impl, got %+v", sendRes.unread)
+	}
+
+	archSelfMention := arch.send("#foundry", "note for @arch and @all", 0)
+	if archSelfMention.seq != 3 || len(archSelfMention.unread) != 0 {
+		t.Fatalf("expected #foundry#3 with 0 piggybacked unread, got %+v", archSelfMention)
+	}
+
+	// Verify @arch's concurrent watcher did NOT wake up on @arch's own @all or @arch messages!
+	select {
+	case unexpected := <-watchCh:
+		t.Fatalf("expected @arch watcher not to wake on self-sent @all/@arch messages, but it woke with: %q", unexpected)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// 3. Now @impl mentions @arch (#foundry#4) -> @arch's watcher must wake immediately with only #foundry#4.
+	impl.send("#foundry", "@arch ready for review", 0)
+	select {
+	case raw := <-watchCh:
+		msgs := parseWireMessages(t, raw)
+		if len(msgs) != 1 || msgs[0].seq != 4 || msgs[0].sender != "impl" {
+			t.Fatalf("expected @arch watcher to wake with only #foundry#4 from @impl, got %+v", msgs)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for @arch watcher to wake on peer mention")
+	}
 }
 
 // TestEmulatedLLMAgentSwarmWorkflow simulates four LLM agents (@lead, @db,

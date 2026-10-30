@@ -60,6 +60,8 @@ const (
 	defaultStreamMaxLen = 500
 	// defaultOnlineWindow is the default inactivity threshold before an agent is shown as idle.
 	defaultOnlineWindow = 2 * time.Minute
+	// healthPingTimeout bounds the Redis ping executed during GET /healthz probes.
+	healthPingTimeout = 500 * time.Millisecond
 	// instrumentationName is the OpenTelemetry tracer name for Chorus.
 	instrumentationName = "goa.design/chorus"
 )
@@ -131,8 +133,8 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // NewHTTPHandler mounts the generated Goa-AI MCP 2026-07-28 JSON-RPC server for
-// svc at POST /mcp and a liveness probe at GET /healthz, returning the
-// resulting http.Handler.
+// svc at POST /mcp and a liveness probe reporting X-Chorus-Version at
+// GET /healthz, returning the resulting http.Handler.
 func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	chorusEndpoints := genchorus.NewEndpoints(svc)
 	mcpAdapter := genmcpchorus.NewMCPAdapter(chorusEndpoints, nil)
@@ -147,8 +149,14 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		origins...,
 	)
 	genmcpchorussrv.Mount(mux, srv)
-	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Chorus-Version", genchorus.APIVersion)
+		if err := svc.Ping(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, "redis unreachable: %v\n", err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -174,6 +182,24 @@ func (s *Service) Close() error {
 		h.close()
 	}
 	return nil
+}
+
+// Ping verifies connectivity to the backing Redis instance with a short bounded
+// timeout, returning an error if the service is closed or Redis is unreachable.
+func (s *Service) Ping(ctx context.Context) error {
+	if s == nil || s.rdb == nil {
+		return errors.New("chorus: service or redis client is nil")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("chorus: service is closed")
+	}
+	s.mu.Unlock()
+
+	pingCtx, cancel := context.WithTimeout(ctx, healthPingTimeout)
+	defer cancel()
+	return s.rdb.Ping(pingCtx).Err()
 }
 
 // Who lists all participants, channels, subscriptions, and unread counts in the
@@ -319,9 +345,10 @@ func startToolSpan(
 	)
 }
 
-// finishSpan records err on span if non-nil and ends the span.
+// finishSpan records err on span if non-nil and not a context cancellation,
+// ending the span.
 func finishSpan(span trace.Span, err error) {
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

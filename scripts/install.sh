@@ -7,9 +7,8 @@
 # Environment variables:
 #   CHORUS_VERSION   Release tag to install (default: latest release)
 #   INSTALL_DIR      Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
-#   CHORUS_NO_SKILL  Set to 1 to skip installing the Chorus agent skill
 #   CHORUS_NO_REDIS  Set to 1 to skip checking/installing Redis
-#   CHORUS_NO_SETUP  Set to 1 to skip registering the Chorus MCP endpoint
+#   CHORUS_NO_SETUP  Set to 1 to skip registering the Chorus MCP endpoint and agent skills
 #   CHORUS_NO_START  Set to 1 to skip starting the Chorus background service
 
 set -eu
@@ -142,12 +141,6 @@ main() {
 	install -m 0755 "${tmpdir}/${BINARY}" "${dest_dir}/${BINARY}"
 
 	printf 'Installed %s %s to %s/%s\n' "$BINARY" "$version" "$dest_dir" "$BINARY"
-	if [ "${CHORUS_NO_SKILL:-0}" != "1" ] && [ -f "${tmpdir}/skills/chorus/SKILL.md" ]; then
-		skill_dir="${HOME}/.agents/skills/chorus"
-		mkdir -p "$skill_dir"
-		install -m 0644 "${tmpdir}/skills/chorus/SKILL.md" "${skill_dir}/SKILL.md"
-		printf 'Installed Chorus skill to %s/SKILL.md\n' "$skill_dir"
-	fi
 	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
 		ensure_redis
 	fi

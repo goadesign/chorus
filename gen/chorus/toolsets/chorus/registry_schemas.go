@@ -35,7 +35,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
 	}
 } // schema1 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
-	registryText1 := "Subscribe to (or create) #channels and read their topic and recent tail."
+	registryText1 := "Subscribe to (or create) #channels, advertise your role, and return the channel topic and recent message tail. Call this first when joining a swarm."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.join",
 		Description:            &registryText1,
@@ -46,16 +46,16 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 			Kind:  "service",
 			Title: "Join",
 			Search: &genregistry.ToolSearchDocument{
-				Length: 15,
-				Terms:  map[string]int{"and": 2, "channels": 1, "chorus": 1, "create": 1, "join": 2, "or": 1, "read": 1, "recent": 1, "subscribe": 1, "tail": 1, "their": 1, "to": 1, "topic": 1},
+				Length: 27,
+				Terms:  map[string]int{"a": 1, "advertise": 1, "and": 2, "call": 1, "channel": 1, "channels": 1, "chorus": 1, "create": 1, "first": 1, "join": 2, "joining": 1, "message": 1, "or": 1, "recent": 1, "return": 1, "role": 1, "subscribe": 1, "swarm": 1, "tail": 1, "the": 1, "this": 1, "to": 1, "topic": 1, "when": 1, "your": 1},
 			},
 			RequiresUI: false,
 			TextOnly: &genregistry.TextOnlyToolContract{
 				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"example\":[\"#arch\"],\"items\":{\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"example\":5,\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"example\":\"Schema and API contract decisions\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"type\":\"object\"}"),
-				Description:     "Subscribe to (or create) #channels and read their topic and recent tail.",
+				Description:     "Subscribe to (or create) #channels, advertise your role, and return the channel topic and recent message tail. Call this first when joining a swarm.",
 				Search: &genregistry.ToolSearchDocument{
-					Length: 15,
-					Terms:  map[string]int{"and": 2, "channels": 1, "chorus": 1, "create": 1, "join": 2, "or": 1, "read": 1, "recent": 1, "subscribe": 1, "tail": 1, "their": 1, "to": 1, "topic": 1},
+					Length: 27,
+					Terms:  map[string]int{"a": 1, "advertise": 1, "and": 2, "call": 1, "channel": 1, "channels": 1, "chorus": 1, "create": 1, "first": 1, "join": 2, "joining": 1, "message": 1, "or": 1, "recent": 1, "return": 1, "role": 1, "subscribe": 1, "swarm": 1, "tail": 1, "the": 1, "this": 1, "to": 1, "topic": 1, "when": 1, "your": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"channels\":{\"description\":\"Channels to create or subscribe to (each prefixed with '#').\",\"example\":[\"#arch\"],\"items\":{\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"maxItems\":20,\"minItems\":1,\"type\":\"array\"},\"role\":{\"description\":\"Optional role description to advertise for the calling agent.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"tail\":{\"default\":5,\"description\":\"Maximum recent messages to return per joined channel.\",\"example\":5,\"format\":\"int64\",\"maximum\":50,\"minimum\":0,\"type\":\"integer\"},\"topic\":{\"description\":\"Optional channel topic to set on the joined channel(s).\",\"example\":\"Schema and API contract decisions\",\"maxLength\":160,\"type\":\"string\"}},\"required\":[\"agent\",\"channels\"],\"type\":\"object\"}"),
 				Payload:       declarations.metadata11(),
@@ -491,7 +491,7 @@ func (registryDeclarations) field32() *genregistry.ToolFieldMetadata {
 
 // schema33 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema33() *genregistry.ToolSchema {
-	registryText1 := "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies)."
+	registryText1 := "Read unread messages across subscribed #channels and @direct messages. Set wait_sec (e.g. 60) when blocked waiting on a peer; or run 'chorus watch -agent <handle> -mentions' in a background shell to listen at 0 token cost while doing local work."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.read",
 		Description:            &registryText1,
@@ -502,16 +502,16 @@ func (declarations registryDeclarations) schema33() *genregistry.ToolSchema {
 			Kind:  "service",
 			Title: "Read",
 			Search: &genregistry.ToolSearchDocument{
-				Length: 28,
-				Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 2, "for": 1, "from": 1, "mentions": 2, "messages": 1, "omit": 1, "on": 1, "only": 2, "or": 1, "read": 3, "replies": 1, "sec": 1, "set": 2, "subscriptions": 1, "to": 2, "unread": 1, "wait": 1, "wake": 1},
+				Length: 45,
+				Terms:  map[string]int{"0": 1, "60": 1, "a": 2, "across": 1, "agent": 1, "and": 1, "at": 1, "background": 1, "blocked": 1, "channels": 1, "chorus": 2, "cost": 1, "direct": 1, "doing": 1, "e": 1, "g": 1, "handle": 1, "in": 1, "listen": 1, "local": 1, "mentions": 1, "messages": 2, "on": 1, "or": 1, "peer": 1, "read": 3, "run": 1, "sec": 1, "set": 1, "shell": 1, "subscribed": 1, "to": 1, "token": 1, "unread": 1, "wait": 1, "waiting": 1, "watch": 1, "when": 1, "while": 1, "work": 1},
 			},
 			RequiresUI: false,
 			TextOnly: &genregistry.TextOnlyToolContract{
 				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-				Description:     "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies).",
+				Description:     "Read unread messages across subscribed #channels and @direct messages. Set wait_sec (e.g. 60) when blocked waiting on a peer; or run 'chorus watch -agent <handle> -mentions' in a background shell to listen at 0 token cost while doing local work.",
 				Search: &genregistry.ToolSearchDocument{
-					Length: 28,
-					Terms:  map[string]int{"all": 1, "block": 1, "chorus": 1, "dms": 2, "for": 1, "from": 1, "mentions": 2, "messages": 1, "omit": 1, "on": 1, "only": 2, "or": 1, "read": 3, "replies": 1, "sec": 1, "set": 2, "subscriptions": 1, "to": 2, "unread": 1, "wait": 1, "wake": 1},
+					Length: 45,
+					Terms:  map[string]int{"0": 1, "60": 1, "a": 2, "across": 1, "agent": 1, "and": 1, "at": 1, "background": 1, "blocked": 1, "channels": 1, "chorus": 2, "cost": 1, "direct": 1, "doing": 1, "e": 1, "g": 1, "handle": 1, "in": 1, "listen": 1, "local": 1, "mentions": 1, "messages": 2, "on": 1, "or": 1, "peer": 1, "read": 3, "run": 1, "sec": 1, "set": 1, "shell": 1, "subscribed": 1, "to": 1, "token": 1, "unread": 1, "wait": 1, "waiting": 1, "watch": 1, "when": 1, "while": 1, "work": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"from\":{\"description\":\"Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.\",\"example\":\"#arch\",\"pattern\":\"^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"limit\":{\"default\":20,\"description\":\"Maximum unread messages to return per target.\",\"example\":20,\"format\":\"int64\",\"maximum\":50,\"minimum\":1,\"type\":\"integer\"},\"mentions_only\":{\"default\":false,\"description\":\"When true, only wake and drain when a direct message, @agent/@all mention, or reply to your message is unread.\",\"example\":true,\"type\":\"boolean\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"wait_sec\":{\"default\":0,\"description\":\"Seconds to block waiting if no unread messages are immediately available.\",\"example\":20,\"format\":\"int64\",\"maximum\":600,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 				Payload:       declarations.metadata42(),
@@ -731,7 +731,7 @@ func (registryDeclarations) field49() *genregistry.ToolFieldMetadata {
 
 // schema50 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema50() *genregistry.ToolSchema {
-	registryText1 := "Send a message to @agent or #channel; also drains and returns your unread messages."
+	registryText1 := "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.send",
 		Description:            &registryText1,
@@ -742,16 +742,16 @@ func (declarations registryDeclarations) schema50() *genregistry.ToolSchema {
 			Kind:  "service",
 			Title: "Send",
 			Search: &genregistry.ToolSearchDocument{
-				Length: 17,
-				Terms:  map[string]int{"a": 1, "agent": 1, "also": 1, "and": 1, "channel": 1, "chorus": 1, "drains": 1, "message": 1, "messages": 1, "or": 1, "returns": 1, "send": 3, "to": 1, "unread": 1, "your": 1},
+				Length: 28,
+				Terms:  map[string]int{"a": 1, "agent": 1, "all": 1, "and": 1, "any": 1, "atomically": 1, "channel": 1, "chorus": 1, "handle": 1, "mention": 1, "message": 1, "messages": 1, "or": 2, "peers": 1, "return": 1, "send": 3, "their": 1, "to": 2, "under": 1, "unread": 2, "wake": 1, "watchers": 1, "with": 1},
 			},
 			RequiresUI: false,
 			TextOnly: &genregistry.TextOnlyToolContract{
 				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
-				Description:     "Send a message to @agent or #channel; also drains and returns your unread messages.",
+				Description:     "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers.",
 				Search: &genregistry.ToolSearchDocument{
-					Length: 17,
-					Terms:  map[string]int{"a": 1, "agent": 1, "also": 1, "and": 1, "channel": 1, "chorus": 1, "drains": 1, "message": 1, "messages": 1, "or": 1, "returns": 1, "send": 3, "to": 1, "unread": 1, "your": 1},
+					Length: 28,
+					Terms:  map[string]int{"a": 1, "agent": 1, "all": 1, "and": 1, "any": 1, "atomically": 1, "channel": 1, "chorus": 1, "handle": 1, "mention": 1, "message": 1, "messages": 1, "or": 2, "peers": 1, "return": 1, "send": 3, "their": 1, "to": 2, "under": 1, "unread": 2, "wake": 1, "watchers": 1, "with": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"reply_to\":{\"description\":\"Optional sequence number in the target conversation being replied to.\",\"example\":14,\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"},\"text\":{\"description\":\"Message text to send.\",\"example\":\"migration 004 applied cleanly\",\"maxLength\":4000,\"minLength\":1,\"type\":\"string\"},\"to\":{\"description\":\"Target '@agent' for direct messages or '#channel' for channel messages.\",\"example\":\"#arch\",\"pattern\":\"^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"}},\"required\":[\"agent\",\"to\",\"text\"],\"type\":\"object\"}"),
 				Payload:       declarations.metadata58(),
@@ -943,7 +943,7 @@ func (registryDeclarations) field64() *genregistry.ToolFieldMetadata {
 
 // schema65 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema65() *genregistry.ToolSchema {
-	registryText1 := "List active participants (@agent), channels (#channel), and your unread message counts."
+	registryText1 := "List active participants (@agent), channels (#channel), and unread counts in the swarm (call join first when you already know which #channel to enter)."
 	return &genregistry.ToolSchema{
 		Name:                   "chorus.who",
 		Description:            &registryText1,
@@ -954,16 +954,16 @@ func (declarations registryDeclarations) schema65() *genregistry.ToolSchema {
 			Kind:  "service",
 			Title: "Who",
 			Search: &genregistry.ToolSearchDocument{
-				Length: 14,
-				Terms:  map[string]int{"active": 1, "agent": 1, "and": 1, "channel": 1, "channels": 1, "chorus": 1, "counts": 1, "list": 1, "message": 1, "participants": 1, "unread": 1, "who": 2, "your": 1},
+				Length: 26,
+				Terms:  map[string]int{"active": 1, "agent": 1, "already": 1, "and": 1, "call": 1, "channel": 2, "channels": 1, "chorus": 1, "counts": 1, "enter": 1, "first": 1, "in": 1, "join": 1, "know": 1, "list": 1, "participants": 1, "swarm": 1, "the": 1, "to": 1, "unread": 1, "when": 1, "which": 1, "who": 2, "you": 1},
 			},
 			RequiresUI: false,
 			TextOnly: &genregistry.TextOnlyToolContract{
 				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
-				Description:     "List active participants (@agent), channels (#channel), and your unread message counts.",
+				Description:     "List active participants (@agent), channels (#channel), and unread counts in the swarm (call join first when you already know which #channel to enter).",
 				Search: &genregistry.ToolSearchDocument{
-					Length: 14,
-					Terms:  map[string]int{"active": 1, "agent": 1, "and": 1, "channel": 1, "channels": 1, "chorus": 1, "counts": 1, "list": 1, "message": 1, "participants": 1, "unread": 1, "who": 2, "your": 1},
+					Length: 26,
+					Terms:  map[string]int{"active": 1, "agent": 1, "already": 1, "and": 1, "call": 1, "channel": 2, "channels": 1, "chorus": 1, "counts": 1, "enter": 1, "first": 1, "in": 1, "join": 1, "know": 1, "list": 1, "participants": 1, "swarm": 1, "the": 1, "to": 1, "unread": 1, "when": 1, "which": 1, "who": 2, "you": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"agent\":{\"description\":\"Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.\",\"example\":\"api\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$\",\"type\":\"string\"},\"role\":{\"description\":\"Optional role description to advertise to peers in this swarm.\",\"example\":\"API Engineer\",\"maxLength\":80,\"type\":\"string\"},\"swarm\":{\"default\":\"default\",\"description\":\"Swarm namespace (defaults to 'default').\",\"example\":\"default\",\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\",\"type\":\"string\"}},\"required\":[\"agent\"],\"type\":\"object\"}"),
 				Payload:       declarations.metadata71(),
