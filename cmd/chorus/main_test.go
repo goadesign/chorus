@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/goadesign/chorus/chorus"
 	genchorus "github.com/goadesign/chorus/gen/chorus"
+	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -45,8 +48,8 @@ func TestLoopbackPort(t *testing.T) {
 }
 
 // TestConnectOrStartRedis verifies that connectOrStartRedis automatically boots
-// a local Redis instance when targeting an unused loopback port and cleans it
-// up when the returned stop function is called.
+// a detached, persistent local Redis instance backed by dataDir when targeting
+// an unused loopback port, and preserves persisted state across restarts.
 func TestConnectOrStartRedis(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -58,21 +61,54 @@ func TestConnectOrStartRedis(t *testing.T) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	defer func() {
+		stopTestRedis(t, rdb, port)
 		_ = rdb.Close()
 	}()
 
-	stopFn, err := connectOrStartRedis(context.Background(), rdb, addr)
-	if err != nil {
+	dataDir := t.TempDir()
+	if err := connectOrStartRedis(context.Background(), rdb, addr, dataDir); err != nil {
 		t.Fatalf("connectOrStartRedis(%q) failed: %v", addr, err)
 	}
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		stopFn()
 		t.Fatalf("expected auto-started Redis at %s to respond to PING: %v", addr, err)
 	}
 
-	stopFn()
+	// Verify durability: write a key, stop Redis, and restart against the same dataDir.
+	if err := rdb.Set(context.Background(), "test-durability-key", "preserved-value", 0).Err(); err != nil {
+		t.Fatalf("set test key: %v", err)
+	}
+	stopTestRedis(t, rdb, port)
+
 	if err := pingRedis(context.Background(), rdb, initialPingTimeout); err == nil {
-		t.Fatalf("expected auto-started Redis at %s to stop after stopFn()", addr)
+		t.Fatalf("expected Redis at %s to be stopped", addr)
+	}
+
+	// Re-connect/restart against same dataDir.
+	if err := connectOrStartRedis(context.Background(), rdb, addr, dataDir); err != nil {
+		t.Fatalf("restart connectOrStartRedis(%q) failed: %v", addr, err)
+	}
+	got, err := rdb.Get(context.Background(), "test-durability-key").Result()
+	if err != nil {
+		t.Fatalf("get preserved key after restart: %v", err)
+	}
+	if got != "preserved-value" {
+		t.Fatalf("got key value %q, want %q", got, "preserved-value")
+	}
+}
+
+// stopTestRedis shuts down the Redis server instance listening on port.
+func stopTestRedis(t *testing.T, rdb *redis.Client, port int) {
+	t.Helper()
+	_ = rdb.ShutdownNoSave(context.Background()).Err()
+	if dockerBin, err := exec.LookPath("docker"); err == nil {
+		_ = exec.Command(dockerBin, "rm", "-f", fmt.Sprintf("%s-%d", dockerContainerName, port)).Run()
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if pingRedis(context.Background(), rdb, 100*time.Millisecond) != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -131,22 +167,40 @@ func TestSetupMCPConfigs(t *testing.T) {
 		t.Fatalf("write codex config.toml: %v", err)
 	}
 
-	// 1. Project-local setup (.mcp.json).
+	// 1. Project-local setup (.mcp.json and .agents/skills/chorus/SKILL.md).
 	projPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", false)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(project) failed: %v", err)
 	}
-	if len(projPaths) != 1 || projPaths[0] != filepath.Join(cwd, ".mcp.json") {
+	projSkill := filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md")
+	if len(projPaths) != 2 || projPaths[0] != filepath.Join(cwd, ".mcp.json") || projPaths[1] != projSkill {
 		t.Fatalf("unexpected project paths: %v", projPaths)
 	}
+	if skillRaw, err := os.ReadFile(projSkill); err != nil || !bytes.Equal(skillRaw, skills.ChorusSkillMD) {
+		t.Fatalf("expected project SKILL.md to match embedded ChorusSkillMD, err=%v", err)
+	}
 
-	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json, ~/.gemini/config/mcp_config.json, and ~/.codex/config.toml).
+	// 2. Global setup (preserves existing keys and servers in ~/.cursor/mcp.json, ~/.gemini/config/mcp_config.json, and ~/.codex/config.toml, and installs SKILL.md into all detected skill directories).
 	globalPaths, err := setupMCPConfigs(cwd, home, "http://localhost:9440/mcp", true)
 	if err != nil {
 		t.Fatalf("setupMCPConfigs(global) failed: %v", err)
 	}
-	if len(globalPaths) != 3 || globalPaths[0] != cursorConfig || globalPaths[1] != agyConfig || globalPaths[2] != codexConfig {
-		t.Fatalf("unexpected global paths: %v", globalPaths)
+	wantGlobal := []string{
+		cursorConfig,
+		agyConfig,
+		codexConfig,
+		filepath.Join(home, ".agents", "skills", "chorus", "SKILL.md"),
+		filepath.Join(home, ".cursor", "skills", "chorus", "SKILL.md"),
+		filepath.Join(home, ".gemini", "config", "skills", "chorus", "SKILL.md"),
+		filepath.Join(home, ".codex", "skills", "chorus", "SKILL.md"),
+	}
+	if len(globalPaths) != len(wantGlobal) {
+		t.Fatalf("globalPaths = %v, want %v", globalPaths, wantGlobal)
+	}
+	for i, wantPath := range wantGlobal {
+		if globalPaths[i] != wantPath {
+			t.Fatalf("globalPaths[%d] = %q, want %q", i, globalPaths[i], wantPath)
+		}
 	}
 
 	agyRaw, err := os.ReadFile(agyConfig)
@@ -278,13 +332,12 @@ func TestRunWatch(t *testing.T) {
 	redisAddr := fmt.Sprintf("127.0.0.1:%d", port)
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer func() {
+		stopTestRedis(t, rdb, port)
 		_ = rdb.Close()
 	}()
-	stopRedis, err := connectOrStartRedis(context.Background(), rdb, redisAddr)
-	if err != nil {
+	if err := connectOrStartRedis(context.Background(), rdb, redisAddr, t.TempDir()); err != nil {
 		t.Fatalf("connectOrStartRedis: %v", err)
 	}
-	defer stopRedis()
 
 	svc, err := chorus.New(rdb)
 	if err != nil {
@@ -368,5 +421,253 @@ func TestRunWatch(t *testing.T) {
 	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n"
 	if got != want {
 		t.Fatalf("runWatch output = %q, want %q", got, want)
+	}
+}
+
+// TestRedisHandover verifies the fixed handover behavior:
+//  1. Server A auto-starts persistent Redis and serves an open long-poll read.
+//  2. Server A begins graceful shutdown with BaseContext tied to shutdown context,
+//     canceling the in-flight long-poll read immediately instead of hanging.
+//  3. Server A exits without killing Redis.
+//  4. Server B starts, connects to the existing Redis, and successfully serves tool calls.
+//  5. When Redis is subsequently stopped, Server B's /healthz truthfully reports unhealthy (503).
+func TestRedisHandover(t *testing.T) {
+	lnRedis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate redis port: %v", err)
+	}
+	redisPort := lnRedis.Addr().(*net.TCPAddr).Port
+	_ = lnRedis.Close()
+	redisAddr := fmt.Sprintf("127.0.0.1:%d", redisPort)
+
+	rdbA := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer func() {
+		stopTestRedis(t, rdbA, redisPort)
+		_ = rdbA.Close()
+	}()
+
+	dataDir := t.TempDir()
+
+	// 1. Server A auto-starts Redis.
+	if err := connectOrStartRedis(context.Background(), rdbA, redisAddr, dataDir); err != nil {
+		t.Fatalf("Server A connectOrStartRedis: %v", err)
+	}
+
+	svcA, err := chorus.New(rdbA)
+	if err != nil {
+		t.Fatalf("Server A chorus.New: %v", err)
+	}
+	defer func() { _ = svcA.Close() }()
+
+	sigCtxA, stopSignalsA := context.WithCancel(context.Background())
+	defer stopSignalsA()
+
+	lnA, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Server A listen: %v", err)
+	}
+	httpServerA := &http.Server{
+		Handler: chorus.NewHTTPHandler(svcA),
+		BaseContext: func(net.Listener) context.Context {
+			return sigCtxA
+		},
+	}
+	go func() { _ = httpServerA.Serve(lnA) }()
+	baseA, _ := url.Parse("http://" + lnA.Addr().String())
+
+	// Populate initial channel state on Server A.
+	if _, err := svcA.Join(context.Background(), &genchorus.JoinPayload{
+		Agent:    "lead",
+		Swarm:    "default",
+		Channels: []string{"#foundry"},
+		Tail:     5,
+	}); err != nil {
+		t.Fatalf("Server A Join(#foundry): %v", err)
+	}
+
+	// 2. Server A serves an in-flight long-poll request.
+	longPollStarted := make(chan struct{})
+	longPollDone := make(chan error, 1)
+	go func() {
+		close(longPollStarted)
+		_, readErr := callWatchRead(context.Background(), baseA, "lead", "default", "", 10, 10, false)
+		longPollDone <- readErr
+	}()
+	<-longPollStarted
+	time.Sleep(100 * time.Millisecond)
+
+	// 3. Server A begins shutdown: canceling sigCtxA cancels in-flight requests immediately.
+	shutStart := time.Now()
+	stopSignalsA() // trigger BaseContext cancellation
+
+	shutCtx, cancelShut := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShut()
+	if err := httpServerA.Shutdown(shutCtx); err != nil {
+		t.Fatalf("httpServerA.Shutdown: %v", err)
+	}
+	shutDuration := time.Since(shutStart)
+	if shutDuration > 2*time.Second {
+		t.Fatalf("expected graceful shutdown to complete promptly via BaseContext cancellation, took %v", shutDuration)
+	}
+
+	// Verify long-poll request returned without hanging for 10s.
+	select {
+	case <-longPollDone:
+	case <-time.After(time.Second):
+		t.Fatal("long-poll request did not return after server shutdown")
+	}
+
+	// 4. Server B starts against the same Redis and dataDir.
+	rdbB := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer func() { _ = rdbB.Close() }()
+	if err := connectOrStartRedis(context.Background(), rdbB, redisAddr, dataDir); err != nil {
+		t.Fatalf("Server B connectOrStartRedis: %v", err)
+	}
+
+	svcB, err := chorus.New(rdbB)
+	if err != nil {
+		t.Fatalf("Server B chorus.New: %v", err)
+	}
+	defer func() { _ = svcB.Close() }()
+
+	lnB, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Server B listen: %v", err)
+	}
+	httpServerB := &http.Server{Handler: chorus.NewHTTPHandler(svcB)}
+	go func() { _ = httpServerB.Serve(lnB) }()
+	defer func() { _ = httpServerB.Close() }()
+	baseB, _ := url.Parse("http://" + lnB.Addr().String())
+
+	// 5. Server B tool calls succeed and access pre-existing swarm state.
+	whoRes, err := svcB.Who(context.Background(), &genchorus.WhoPayload{
+		Agent: "lead",
+		Swarm: "default",
+	})
+	if err != nil {
+		t.Fatalf("Server B Who tool call failed: %v", err)
+	}
+	if len(whoRes.Content) == 0 {
+		t.Fatalf("Server B Who returned empty content")
+	}
+	whoBranch, ok := whoRes.Content[0].Content.AsText()
+	if !ok || whoBranch == nil {
+		t.Fatalf("expected text content branch in who response")
+	}
+	if !strings.Contains(whoBranch.Text, "#foundry") {
+		t.Fatalf("expected Server B directory to contain #foundry, got: %q", whoBranch.Text)
+	}
+	if !strings.Contains(whoBranch.Text, "@lead") {
+		t.Fatalf("expected Server B directory to contain @lead, got: %q", whoBranch.Text)
+	}
+
+	if _, err := callWatchRead(context.Background(), baseB, "lead", "default", "", 0, 10, false); err != nil {
+		t.Fatalf("Server B read tool call failed: %v", err)
+	}
+
+	// 6. /healthz on Server B reports healthy and returns X-Chorus-Version.
+	if healthy, ver := probeServer("http://" + lnB.Addr().String()); !healthy || ver != genchorus.APIVersion {
+		t.Fatalf("expected Server B to be healthy with version %q, got (%v, %q)", genchorus.APIVersion, healthy, ver)
+	}
+
+	// 7. When Redis is stopped, /healthz truthfully reports unhealthy.
+	stopTestRedis(t, rdbB, redisPort)
+	if healthy, _ := probeServer("http://" + lnB.Addr().String()); healthy {
+		t.Fatal("expected Server B to report unhealthy after Redis stopped")
+	}
+}
+
+// TestStatusAndVersion verifies that runStatus reports the live server version
+// from GET /healthz when reachable (and fails when unreachable or Redis is down),
+// that dispatch handles version flags and the version subcommand, and that
+// invoking an MCP tool name on the CLI returns a self-correcting error.
+func TestStatusAndVersion(t *testing.T) {
+	lnRedis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate redis port: %v", err)
+	}
+	redisPort := lnRedis.Addr().(*net.TCPAddr).Port
+	_ = lnRedis.Close()
+	redisAddr := fmt.Sprintf("127.0.0.1:%d", redisPort)
+
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer func() {
+		stopTestRedis(t, rdb, redisPort)
+		_ = rdb.Close()
+	}()
+	if err := connectOrStartRedis(context.Background(), rdb, redisAddr, t.TempDir()); err != nil {
+		t.Fatalf("connectOrStartRedis: %v", err)
+	}
+	svc, err := chorus.New(rdb)
+	if err != nil {
+		t.Fatalf("chorus.New: %v", err)
+	}
+	defer func() {
+		_ = svc.Close()
+	}()
+
+	srv := httptest.NewServer(chorus.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	parsedURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+
+	var statusOut bytes.Buffer
+	if err := runStatus([]string{"-addr", parsedURL.Host}, &statusOut); err != nil {
+		t.Fatalf("runStatus(running) failed: %v", err)
+	}
+	wantStatus := fmt.Sprintf("running v%s (http://localhost:%s/mcp)\n", genchorus.APIVersion, parsedURL.Port())
+	if statusOut.String() != wantStatus {
+		t.Fatalf("runStatus(running) = %q, want %q", statusOut.String(), wantStatus)
+	}
+
+	legacySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	}))
+	defer legacySrv.Close()
+	legacyURL, err := url.Parse(legacySrv.URL)
+	if err != nil {
+		t.Fatalf("parse legacy server URL: %v", err)
+	}
+	var legacyOut bytes.Buffer
+	if err := runStatus([]string{"-addr", legacyURL.Host}, &legacyOut); err != nil {
+		t.Fatalf("runStatus(legacy) failed: %v", err)
+	}
+	wantLegacy := fmt.Sprintf("running (http://localhost:%s/mcp)\n", legacyURL.Port())
+	if legacyOut.String() != wantLegacy {
+		t.Fatalf("runStatus(legacy) = %q, want %q", legacyOut.String(), wantLegacy)
+	}
+
+	if err := runStatus([]string{"-addr", "127.0.0.1:1"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected runStatus(stopped) to return an error")
+	}
+
+	wantVer := fmt.Sprintf("chorus v%s\n", genchorus.APIVersion)
+	for _, arg := range []string{"version", "-version", "--version", "-v"} {
+		var verOut bytes.Buffer
+		if err := dispatch([]string{arg}, &verOut); err != nil {
+			t.Fatalf("dispatch(%q) failed: %v", arg, err)
+		}
+		if verOut.String() != wantVer {
+			t.Fatalf("dispatch(%q) = %q, want %q", arg, verOut.String(), wantVer)
+		}
+	}
+
+	for _, toolName := range []string{"who", "join", "leave", "send", "read"} {
+		err := dispatch([]string{toolName}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "is a Chorus MCP tool, not a CLI subcommand") {
+			t.Fatalf("expected MCP guidance error from dispatch(%q), got %v", toolName, err)
+		}
+	}
+
+	repoSkill, err := os.ReadFile(filepath.Join("..", "..", ".agents", "skills", "chorus", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read .agents/skills/chorus/SKILL.md: %v", err)
+	}
+	if !bytes.Equal(repoSkill, skills.ChorusSkillMD) {
+		t.Fatal(".agents/skills/chorus/SKILL.md and skills/chorus/SKILL.md are out of sync")
 	}
 }

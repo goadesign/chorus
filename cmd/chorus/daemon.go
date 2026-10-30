@@ -25,8 +25,10 @@ import (
 	"syscall"
 	"time"
 
+	genchorus "github.com/goadesign/chorus/gen/chorus"
 	genmcpchorusclient "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/client"
 	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
+	"github.com/goadesign/chorus/skills"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -47,23 +49,39 @@ const (
 
 // runUp starts Chorus in the background (installing a user service when
 // supported or spawning a detached background daemon) and waits until
-// GET /healthz responds with 200 OK.
+// GET /healthz responds with 200 OK for the current version.
 func runUp(args []string) error {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
 		return err
 	}
 
-	baseURL := localBaseURL(cfg.addr)
-	if isHealthy(baseURL) {
-		fmt.Printf("Chorus is running at %s/mcp\n", baseURL)
-		return nil
-	}
-
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
+
+	baseURL := localBaseURL(cfg.addr)
+	if ok, srvVer := probeServer(baseURL); ok {
+		if srvVer == genchorus.APIVersion {
+			fmt.Printf("Chorus v%s is running at %s/mcp\n", srvVer, baseURL)
+			return nil
+		}
+		stopBackgroundService(homeDir)
+		stopped := false
+		stopDeadline := time.Now().Add(daemonReadyTimeout)
+		for time.Now().Before(stopDeadline) {
+			if up, _ := probeServer(baseURL); !up {
+				stopped = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !stopped {
+			return fmt.Errorf("existing chorus server at %s could not be stopped; stop it before running 'chorus up'", baseURL)
+		}
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve chorus executable path: %w", err)
@@ -75,8 +93,8 @@ func runUp(args []string) error {
 
 	deadline := time.Now().Add(daemonReadyTimeout)
 	for time.Now().Before(deadline) {
-		if isHealthy(baseURL) {
-			fmt.Printf("Chorus is running at %s/mcp\n", baseURL)
+		if ok, srvVer := probeServer(baseURL); ok && srvVer == genchorus.APIVersion {
+			fmt.Printf("Chorus v%s is running at %s/mcp\n", genchorus.APIVersion, baseURL)
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -99,22 +117,29 @@ func runDown(args []string) error {
 	return nil
 }
 
-// runStatus checks whether Chorus is reachable at GET /healthz.
-func runStatus(args []string) error {
-	cfg, err := parseServerFlags(args)
-	if err != nil {
+// runStatus checks whether Chorus is reachable at GET /healthz and writes the
+// running server's version to out.
+func runStatus(args []string, out io.Writer) error {
+	var addr string
+	fs := flag.NewFlagSet("chorus status", flag.ContinueOnError)
+	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	baseURL := localBaseURL(cfg.addr)
-	if isHealthy(baseURL) {
-		fmt.Printf("running (%s/mcp)\n", baseURL)
+	baseURL := localBaseURL(addr)
+	if ok, srvVer := probeServer(baseURL); ok {
+		if srvVer != "" {
+			fmt.Fprintf(out, "running v%s (%s/mcp)\n", srvVer, baseURL)
+		} else {
+			fmt.Fprintf(out, "running (%s/mcp)\n", baseURL)
+		}
 		return nil
 	}
 	return fmt.Errorf("chorus is not running at %s", baseURL)
 }
 
 // runSetup registers the Chorus MCP server URL in project and/or global MCP
-// configuration files.
+// configuration files and installs the Chorus Agent Skill (SKILL.md).
 func runSetup(args []string) error {
 	var (
 		addr   string
@@ -142,7 +167,11 @@ func runSetup(args []string) error {
 		return err
 	}
 	for _, p := range updated {
-		fmt.Printf("Registered Chorus MCP (%s) in %s\n", mcpURL, p)
+		if strings.HasSuffix(p, ".md") {
+			fmt.Printf("Installed Chorus skill in %s\n", p)
+		} else {
+			fmt.Printf("Registered Chorus MCP (%s) in %s\n", mcpURL, p)
+		}
 	}
 	return nil
 }
@@ -226,48 +255,63 @@ func runWatch(args []string, out io.Writer) error {
 }
 
 // setupMCPConfigs merges the Chorus MCP server entry into the project's
-// .mcp.json (and .codex/config.toml if .codex exists) when global is false, or
-// into detected global agent MCP config files under homeDir (Cursor,
-// Antigravity, Claude Code, and OpenAI Codex) when global is true.
+// .mcp.json (and .codex/config.toml if .codex exists) and installs
+// .agents/skills/chorus/SKILL.md when global is false, or updates detected
+// global agent MCP config files and skill directories under homeDir (Universal
+// .agents, Cursor, Antigravity, Claude Code, and OpenAI Codex) when global is
+// true.
 func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error) {
 	var (
-		jsonTargets []string
-		tomlTargets []string
+		jsonTargets  []string
+		tomlTargets  []string
+		skillTargets []string
 	)
 	if !global {
 		jsonTargets = append(jsonTargets, filepath.Join(cwd, ".mcp.json"))
 		if info, err := os.Stat(filepath.Join(cwd, ".codex")); err == nil && info.IsDir() {
 			tomlTargets = append(tomlTargets, filepath.Join(cwd, ".codex", "config.toml"))
 		}
+		skillTargets = append(skillTargets, filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md"))
 	} else {
+		skillTargets = append(skillTargets, filepath.Join(homeDir, ".agents", "skills", "chorus", "SKILL.md"))
 		candidates := []struct {
 			parentDir string
 			config    string
+			skill     string
 		}{
 			{
 				parentDir: filepath.Join(homeDir, ".cursor"),
 				config:    filepath.Join(homeDir, ".cursor", "mcp.json"),
+				skill:     filepath.Join(homeDir, ".cursor", "skills", "chorus", "SKILL.md"),
 			},
 			{
 				parentDir: filepath.Join(homeDir, ".gemini", "config"),
 				config:    filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"),
+				skill:     filepath.Join(homeDir, ".gemini", "config", "skills", "chorus", "SKILL.md"),
 			},
 		}
 		for _, c := range candidates {
 			if info, err := os.Stat(c.parentDir); err == nil && info.IsDir() {
 				jsonTargets = append(jsonTargets, c.config)
+				skillTargets = append(skillTargets, c.skill)
 			}
 		}
 		claudeConfig := filepath.Join(homeDir, ".claude.json")
 		if _, err := os.Stat(claudeConfig); err == nil {
 			jsonTargets = append(jsonTargets, claudeConfig)
 		}
+		claudeDir := filepath.Join(homeDir, ".claude")
+		if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
+			skillTargets = append(skillTargets, filepath.Join(claudeDir, "skills", "chorus", "SKILL.md"))
+		}
 		codexDir := filepath.Join(homeDir, ".codex")
 		if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
 			tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
+			skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
 		} else if realHome, homeErr := os.UserHomeDir(); homeErr == nil && realHome == homeDir {
 			if _, lookErr := exec.LookPath("codex"); lookErr == nil {
 				tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
+				skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
 			}
 		}
 		if len(jsonTargets) == 0 && len(tomlTargets) == 0 {
@@ -275,7 +319,7 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 		}
 	}
 
-	updated := make([]string, 0, len(jsonTargets)+len(tomlTargets))
+	updated := make([]string, 0, len(jsonTargets)+len(tomlTargets)+len(skillTargets))
 	for _, target := range jsonTargets {
 		if err := mergeMCPConfigFile(target, mcpURL); err != nil {
 			return nil, err
@@ -288,7 +332,25 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 		}
 		updated = append(updated, target)
 	}
+	for _, target := range skillTargets {
+		if err := writeSkillFile(target); err != nil {
+			return nil, err
+		}
+		updated = append(updated, target)
+	}
 	return updated, nil
+}
+
+// writeSkillFile writes the embedded Chorus SKILL.md to path, creating parent
+// directories as needed.
+func writeSkillFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create skill directory for %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, skills.ChorusSkillMD, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // mergeMCPConfigFile idempotently inserts or updates "mcpServers.chorus" in a
@@ -442,37 +504,94 @@ func startBackgroundService(homeDir, exePath string, cfg serverConfig) error {
 			}
 		}
 	}
-	return startDetachedProcess(stateDir, exePath, cfg)
+	return startDetachedProcess(homeDir, stateDir, exePath, cfg)
 }
 
 // stopBackgroundService stops any active launchd unit, systemd user unit, or
-// PID-tracked detached Chorus process.
+// PID-tracked detached Chorus process, waiting for the process to terminate.
 func stopBackgroundService(homeDir string) {
+	var targetPid int
+	pidFile := filepath.Join(homeDir, ".chorus", "chorus.pid")
+	if raw, err := os.ReadFile(pidFile); err == nil {
+		if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil && pid > 0 && pid != os.Getpid() {
+			targetPid = pid
+		}
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
+		if targetPid == 0 {
+			targetPid = parseLaunchdPID()
+		}
 		plistPath := filepath.Join(homeDir, "Library", "LaunchAgents", launchdLabel+".plist")
 		if _, err := os.Stat(plistPath); err == nil {
 			_ = exec.Command("launchctl", "unload", plistPath).Run()
 			_ = os.Remove(plistPath)
 		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if err := exec.Command("launchctl", "list", launchdLabel).Run(); err != nil {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	case "linux":
 		unitPath := filepath.Join(homeDir, ".config", "systemd", "user", systemdUnitName)
 		if _, err := os.Stat(unitPath); err == nil {
-			_ = exec.Command("systemctl", "--user", "disable", "--now", systemdUnitName).Run()
+			_ = exec.Command("systemctl", "--user", "stop", systemdUnitName).Run()
+			_ = exec.Command("systemctl", "--user", "disable", systemdUnitName).Run()
 			_ = os.Remove(unitPath)
 		}
 	}
 
-	pidFile := filepath.Join(homeDir, ".chorus", "chorus.pid")
-	raw, err := os.ReadFile(pidFile)
-	if err == nil {
-		if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil && pid > 0 {
-			if proc, findErr := os.FindProcess(pid); findErr == nil {
-				_ = proc.Signal(syscall.SIGTERM)
-			}
+	if targetPid > 0 {
+		if proc, err := os.FindProcess(targetPid); err == nil {
+			_ = proc.Signal(syscall.SIGTERM)
+			waitForProcessExit(proc, 5*time.Second)
 		}
 		_ = os.Remove(pidFile)
 	}
+}
+
+// waitForProcessExit waits for proc to exit within timeout, falling back to
+// SIGKILL if the process fails to terminate gracefully.
+func waitForProcessExit(proc *os.Process, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = proc.Signal(syscall.SIGKILL)
+	killDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(killDeadline) {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// parseLaunchdPID queries launchd for the PID of the active Chorus service.
+func parseLaunchdPID() int {
+	out, err := exec.Command("launchctl", "list", launchdLabel).Output()
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `"PID"`) {
+			parts := strings.Split(trimmed, "=")
+			if len(parts) == 2 {
+				val := strings.Trim(strings.TrimSpace(parts[1]), ` ;"`)
+				if pid, err := strconv.Atoi(val); err == nil && pid > 0 {
+					return pid
+				}
+			}
+		}
+	}
+	return 0
 }
 
 // buildServeArgs constructs the CLI argument list for "chorus serve" from cfg,
@@ -519,6 +638,7 @@ func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) er
 	if _, err := exec.LookPath("launchctl"); err != nil {
 		return err
 	}
+	stopBackgroundService(homeDir)
 	agentsDir := filepath.Join(homeDir, "Library", "LaunchAgents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		return err
@@ -561,7 +681,6 @@ func startLaunchdService(homeDir, stateDir, exePath string, cfg serverConfig) er
 	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return err
 	}
-	_ = exec.Command("launchctl", "unload", plistPath).Run()
 	if out, err := exec.Command("launchctl", "load", "-w", plistPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl load: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -573,6 +692,7 @@ func startSystemdService(homeDir, exePath string, cfg serverConfig) error {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return err
 	}
+	stopBackgroundService(homeDir)
 	unitDir := filepath.Join(homeDir, ".config", "systemd", "user")
 	if err := os.MkdirAll(unitDir, 0o755); err != nil {
 		return err
@@ -613,7 +733,8 @@ WantedBy=default.target
 
 // startDetachedProcess spawns "chorus serve" in a new process group in the
 // background and records its PID in ~/.chorus/chorus.pid.
-func startDetachedProcess(stateDir, exePath string, cfg serverConfig) error {
+func startDetachedProcess(homeDir, stateDir, exePath string, cfg serverConfig) error {
+	stopBackgroundService(homeDir)
 	logPath := filepath.Join(stateDir, "chorus.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -724,13 +845,17 @@ func localBaseURL(addr string) string {
 	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
-// isHealthy returns true if GET <baseURL>/healthz responds with HTTP 200 OK.
-func isHealthy(baseURL string) bool {
+// probeServer queries GET <baseURL>/healthz and returns whether the server
+// responded with HTTP 200 OK along with its reported X-Chorus-Version header.
+func probeServer(baseURL string) (bool, string) {
 	client := &http.Client{Timeout: healthProbeTimeout}
 	resp, err := client.Get(baseURL + "/healthz")
 	if err != nil {
-		return false
+		return false, ""
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false, ""
+	}
+	return true, strings.TrimSpace(resp.Header.Get("X-Chorus-Version"))
 }

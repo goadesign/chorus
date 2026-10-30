@@ -74,7 +74,7 @@ var _ = Service("chorus", func() {
 			Required("agent")
 		})
 		Result(TextResult)
-		Tool("who", "List active participants (@agent), channels (#channel), and your unread message counts.", func() {
+		Tool("who", "List active participants (@agent), channels (#channel), and unread counts in the swarm (call join first when you already know which #channel to enter).", func() {
 			ToolContent("content")
 			ReadOnlyHint(true)
 			IdempotentHint(true)
@@ -120,7 +120,7 @@ var _ = Service("chorus", func() {
 			Required("agent", "channels")
 		})
 		Result(TextResult)
-		Tool("join", "Subscribe to (or create) #channels and read their topic and recent tail.", func() {
+		Tool("join", "Subscribe to (or create) #channels, advertise your role, and return the channel topic and recent message tail. Call this first when joining a swarm.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 			IdempotentHint(true)
@@ -188,7 +188,7 @@ var _ = Service("chorus", func() {
 			Required("agent", "to", "text")
 		})
 		Result(TextResult)
-		Tool("send", "Send a message to @agent or #channel; also drains and returns your unread messages.", func() {
+		Tool("send", "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 		})
@@ -230,7 +230,7 @@ var _ = Service("chorus", func() {
 			Required("agent")
 		})
 		Result(TextResult)
-		Tool("read", "Read unread messages (omit 'from' for all subscriptions + DMs; set 'wait_sec' to block; set 'mentions_only' to wake only on DMs, @mentions, or replies).", func() {
+		Tool("read", "Read unread messages across subscribed #channels and @direct messages. Set wait_sec (e.g. 60) when blocked waiting on a peer; or run 'chorus watch -agent <handle> -mentions' in a background shell to listen at 0 token cost while doing local work.", func() {
 			ToolContent("content")
 			ReadOnlyHint(false)
 		})

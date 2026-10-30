@@ -339,6 +339,14 @@ func (s *swarmHandle) publish(
 		return "", err
 	}
 
+	// Drain any pre-existing unread messages across sender's current
+	// subscriptions before acquiring the target semaphore so sender's cursor on
+	// an already-subscribed target is caught up to head prior to publication.
+	unread, err := s.drainUnread(ctx, sender, "", defaultReadLimit, false)
+	if err != nil {
+		return "", err
+	}
+
 	autoSubscribed := false
 	if strings.HasPrefix(target, "#") {
 		if _, ok := s.state.Get(channelMapKey(target)); !ok {
@@ -360,18 +368,23 @@ func (s *swarmHandle) publish(
 		return "", err
 	}
 
-	unread, err := s.drainUnread(ctx, sender, "", defaultReadLimit, false, target, seq)
-	if err != nil {
-		return "", err
+	if remaining := defaultReadLimit - len(unread); remaining > 0 {
+		moreUnread, err := s.drainUnread(ctx, sender, "", remaining, false)
+		if err != nil {
+			return "", err
+		}
+		unread = append(unread, moreUnread...)
 	}
 	return formatSendOutput(target, seq, unread), nil
 }
 
 // appendUnderSemaphore acquires the 1-slot publication semaphore for target,
 // increments the target sequence number, appends the message event to the
-// target's Pulse stream, records any channel @mentions or reply targets in
-// rmap, and commits the updated head sequence to rmap via SetAndWait before
-// releasing the semaphore.
+// target's Pulse stream, advances sender's own cursor when caught up or
+// auto-subscribing so concurrent watchers for sender never wake on self-sent
+// messages, records any channel @mentions or reply targets in rmap, and commits
+// the updated head sequence to rmap via SetAndWait before releasing the
+// semaphore.
 func (s *swarmHandle) appendUnderSemaphore(
 	ctx context.Context,
 	sender string,
@@ -401,15 +414,6 @@ func (s *swarmHandle) appendUnderSemaphore(
 	seq, err := s.state.Inc(ctx, seqMapKey(target), 1)
 	if err != nil {
 		return 0, fmt.Errorf("increment sequence for %s: %w", target, err)
-	}
-
-	// When a sender auto-subscribes by posting to a channel without a prior join,
-	// initialize its cursor to seq-1 so drainUnread advances to seq without
-	// dumping pre-subscription channel history.
-	if autoSubscribed && seq > 1 {
-		if _, err := s.state.Set(ctx, cursorMapKey(sender, target), strconv.Itoa(seq-1)); err != nil {
-			return 0, fmt.Errorf("initialize auto-subscribe cursor for %s: %w", target, err)
-		}
 	}
 
 	var mentions []string
@@ -445,6 +449,17 @@ func (s *swarmHandle) appendUnderSemaphore(
 	}
 	if _, err := stream.Add(ctx, eventTypeMessage, payload); err != nil {
 		return 0, fmt.Errorf("append message to %s stream: %w", target, err)
+	}
+
+	// Advance sender's watermark to seq before publishing mention keys or head
+	// when sender is auto-subscribing or already caught up through seq-1. This
+	// ensures concurrent read/watch calls for sender observe headSeq <= curSeq
+	// when SetAndWait(head) fires and never wake on self-sent messages.
+	if (strings.HasPrefix(target, "#") || strings.EqualFold(target, "@"+sender)) &&
+		(autoSubscribed || parseSeq(s.state.Map()[cursorMapKey(sender, target)]) == seq-1) {
+		if _, err := s.state.Set(ctx, cursorMapKey(sender, target), strconv.Itoa(seq)); err != nil {
+			return 0, fmt.Errorf("advance sender cursor for %s: %w", target, err)
+		}
 	}
 
 	senderLower := strings.ToLower(sender)
@@ -509,7 +524,7 @@ func (s *swarmHandle) readUnread(
 		limit = defaultReadLimit
 	}
 
-	lines, err := s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
+	lines, err := s.drainUnread(ctx, agent, from, limit, mentionsOnly)
 	if err != nil {
 		return "", err
 	}
@@ -525,7 +540,7 @@ func (s *swarmHandle) readUnread(
 
 	// Re-check immediately after subscribing so a publication that committed
 	// between the first check and Subscribe cannot be missed.
-	lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
+	lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly)
 	if err != nil {
 		return "", err
 	}
@@ -554,7 +569,7 @@ func (s *swarmHandle) readUnread(
 			if !ok {
 				return "none", nil
 			}
-			lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly, "", 0)
+			lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly)
 			if err != nil {
 				return "", err
 			}
@@ -569,17 +584,13 @@ func (s *swarmHandle) readUnread(
 // in-memory replicated map and reads only targets where headSeq > curSeq. When
 // mentionsOnly is true, channel targets where neither mention:<agent>:<ch> nor
 // mention:all:<ch> exceeds curSeq are skipped in local memory without reading
-// Redis or advancing watermarks. When called from publish, excludeTarget and
-// excludeSeq identify the message just sent by agent so it is not echoed back
-// as unread while still advancing agent's watermark on excludeTarget.
+// Redis or advancing watermarks.
 func (s *swarmHandle) drainUnread(
 	ctx context.Context,
 	agent string,
 	from string,
 	limit int,
 	mentionsOnly bool,
-	excludeTarget string,
-	excludeSeq int,
 ) ([]string, error) {
 	snap := s.state.Map()
 	targets := s.readTargets(agent, from)
@@ -607,18 +618,7 @@ func (s *swarmHandle) drainUnread(
 			}
 		}
 
-		// Fast path when draining right after publishing to target: if no other
-		// message intervened between curSeq and excludeSeq, advance the cursor
-		// without reading the stream from Redis.
-		if target == excludeTarget && headSeq == excludeSeq && curSeq == excludeSeq-1 {
-			updates = append(updates, cursorUpdate{
-				key: cursorMapKey(agent, target),
-				val: strconv.Itoa(excludeSeq),
-			})
-			continue
-		}
-
-		targetLines, newSeq, err := s.readTargetDelta(ctx, target, curSeq, limit, excludeTarget, excludeSeq)
+		targetLines, newSeq, err := s.readTargetDelta(ctx, agent, target, curSeq, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -662,15 +662,15 @@ func (s *swarmHandle) readTargets(agent, from string) []string {
 }
 
 // readTargetDelta reads messages with Seq > afterSeq from target's stream up to
-// maxMessages, returning the formatted wire lines and the highest sequence number
-// reached.
+// maxMessages (skipping messages authored by agent while still advancing the
+// sequence watermark), returning the formatted wire lines and the highest
+// sequence number reached.
 func (s *swarmHandle) readTargetDelta(
 	ctx context.Context,
+	agent string,
 	target string,
 	afterSeq int,
 	maxMessages int,
-	excludeTarget string,
-	excludeSeq int,
 ) ([]string, int, error) {
 	events, err := s.snapshotTarget(ctx, target)
 	if err != nil {
@@ -687,7 +687,7 @@ func (s *swarmHandle) readTargetDelta(
 		if msg.Seq <= afterSeq {
 			continue
 		}
-		if target == excludeTarget && msg.Seq == excludeSeq {
+		if strings.EqualFold(msg.Sender, agent) {
 			lastSeq = msg.Seq
 			continue
 		}

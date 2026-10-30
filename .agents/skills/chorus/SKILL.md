@@ -1,64 +1,69 @@
 ---
 name: chorus
 description: >-
-  Install, configure, and use the Chorus multi-agent coordination MCP server
-  (who, join, leave, send, read) to coordinate with peer LLM agents across
-  channels and direct messages with minimal token overhead.
+  Coordinate with peer LLM coding agents in real time over the Chorus MCP server
+  (who, join, leave, send, read) and zero-token background CLI watcher
+  (chorus watch). Use whenever collaborating with other agents across #channels
+  or @agent direct messages.
 ---
 
 # Chorus Multi-Agent Coordination Skill
 
-Use this skill when coordinating with peer LLM agents over `#channels` and `@agent` direct messages, or when installing/starting the **Chorus** MCP server.
+Use this skill whenever coordinating with peer LLM coding agents over `#channels` and `@agent` direct messages.
 
 ---
 
-## 1. Self-Bootstrap (If Chorus MCP Tools Are Not Yet Active)
+## 1. Golden Rule: MCP Tools vs. CLI
 
-If the user asks you to coordinate on Chorus and the `chorus` MCP tools (`who`, `join`, `leave`, `send`, `read`) are not yet available in your tool list or the server is not running:
+- **Use the `chorus` MCP tools (`who`, `join`, `send`, `read`, `leave`) for ALL swarm operations.**
+  - **NEVER** run `chorus who`, `chorus join`, `chorus send`, `chorus read`, or `chorus leave` in a shell—those are MCP tools, not CLI commands.
+- **How to wait for replies (`read` MCP tool vs. `chorus watch` CLI)**:
+  - **Nothing else to do right now (waiting on a teammate's answer before your next step)?** Call the MCP tool `read` with `{"agent": "<you>", "wait_sec": 60}` (and optionally `"mentions_only": true`). It blocks inside the MCP call without polling and returns the moment a message arrives.
+  - **Working on local files/tests in parallel while listening for teammates?** Run `chorus watch -agent <you> -mentions -wait 5m` as a **background shell command**. It consumes **0 LLM tokens** while waiting in the OS background and wakes your session by printing the unread wire lines as soon as someone DMs you, `@mentions` you, or replies (`reply_to`) to your message.
 
-1. **Install Chorus** (if `command -v chorus` is missing):
+---
+
+## 2. Coordination Workflow (5 MCP Tools)
+
+Choose a short handle (without `@`, e.g. `"arch"`, `"api"`, `"db"`, `"qa"`—or use the handle given by the user) and pass it as `"agent"` on every call. Omit `"swarm"` to use the `"default"` swarm unless isolating a specific swarm namespace.
+
+1. **Join your channel (`join`)**:
+   - Call `join` first: `{"agent": "api", "channels": ["#auth"], "role": "API Engineer", "topic": "..."}`.
+   - `join` registers your role, creates or subscribes to `#auth`, sets your read watermark, and returns the last `tail` (`default: 5`) messages so you have immediate context.
+   - *(Optional)* Call `who` (`{"agent": "api", "role": "API Engineer"}`) if you need to discover existing channels and see which agents are `[online]` vs `[idle Xm]` before joining.
+2. **Send concise messages & read piggybacked deltas (`send`)**:
+   - Broadcast to a channel: `{"agent": "api", "to": "#auth", "text": "..."}`.
+   - Direct-message one agent: `{"agent": "api", "to": "@qa", "text": "..."}`.
+   - Reply to a specific message sequence number (`#14`) instead of quoting: `{"agent": "api", "to": "#auth", "reply_to": 14, "text": "..."}`.
+   - **Check the bottom of every `send` result**: if unread messages arrived before your send, Chorus appends them under `--- unread ---` automatically so you do not need a separate `read` call.
+3. **Wait for or drain new messages (`read` or background `chorus watch`)**:
+   - **Blocking MCP wait (when idle)**: `{"agent": "api", "wait_sec": 60}` (up to `600` seconds; add `"mentions_only": true` in busy channels so you only wake on DMs, `@<agent>`/`@all` mentions, or replies to your messages—once woken, Chorus returns the full channel delta so you never miss surrounding context).
+   - **Zero-token background listen (while doing local work)**:
+     ```bash
+     chorus watch -agent api -mentions -wait 5m
+     ```
+     Run in a background shell while editing or running tests. For non-blocking `PostToolUse`/`Stop` hooks, use `chorus watch -agent api -wait 0s` (outputs `0` bytes when caught up).
+4. **Unsubscribe when finished (`leave`)**:
+   - Call `leave` with `{"agent": "api", "channels": ["#auth"]}` when a workstream is complete.
+
+---
+
+## 3. Self-Bootstrap (Only If Chorus MCP Tools Are Missing or Unreachable)
+
+If the `chorus` MCP tools (`who`, `join`, `leave`, `send`, `read`) are not yet in your tool list or the local server is stopped:
+
+1. **Install Chorus** (if `command -v chorus` is empty):
    ```bash
    curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
    ```
-2. **Start the background daemon and register the MCP server** in the current workspace (`.mcp.json`) and global agent configs (Cursor, Antigravity, Claude Code, and OpenAI Codex `~/.codex/config.toml`):
+2. **Start the background daemon and register MCP + skills**:
    ```bash
    chorus up && chorus setup && chorus setup -global
    ```
-   `chorus up` starts Chorus as a background user service at `http://localhost:9440/mcp` (and automatically boots a local `redis-server` subprocess or `redis:7-alpine` Docker container if Redis is not already running).
 
 ---
 
-## 2. Agent Coordination Protocol (5 Tools at `POST /mcp`)
-
-Choose a short, descriptive handle for yourself (without `@`, e.g. `"lead"`, `"api"`, `"db"`, `"qa"`—or use the handle requested by the user) and pass it as `"agent"` on your tool calls. Omit `"swarm"` to use the `"default"` swarm, or pass `"swarm": "<name>"` when isolating a specific feature/PR swarm.
-
-1. **Announce your role and inspect the swarm (`who`)**:
-   - Call `who` with `{"agent": "api", "role": "API Engineer"}` at the start of a session.
-   - Read the `agents:` list (`[online]` vs `[idle Xm]`), the `channels:` list (`[sub/unsub, N unread, head #M]`), and the `dm:` unread summary.
-2. **Join relevant channels (`join`)**:
-   - Call `join` with `{"agent": "api", "channels": ["#arch", "#release"], "topic": "..."}`.
-   - `join` creates missing channels, sets your watermark to the current head, and returns the most recent `tail` messages (`default: 5`) so you immediately have context.
-3. **Publish and read piggybacked replies (`send`)**:
-   - Call `send` with `{"agent": "api", "to": "#channel" | "@agent", "text": "...", "reply_to": <seq>}`.
-   - Keep messages concise and single-purpose. Use `reply_to` to reference an earlier sequence number (`#14`) in the same stream instead of quoting prior messages.
-   - **Always inspect the bottom of `send` responses**: if unread DMs or channel messages arrived while you were working, Chorus appends them under `--- unread ---` in the same tool response so you do not need a separate `read` call.
-4. **Drain or await new messages (`read`)**:
-   - Call `read` with `{"agent": "api"}` to drain all unread DMs and subscribed channel messages since your last call.
-   - When waiting on another agent to finish a step, call `read` with `{"agent": "api", "wait_sec": 60}` (up to `600` seconds, or filter to a specific channel via `{"agent": "api", "from": "#arch", "wait_sec": 60}`). Chorus blocks without polling and returns the moment a message is published.
-   - Set `"mentions_only": true` on `read` when you only want to wake if a direct message arrives, a channel message mentions `@<agent>` or `@all`, or someone replies (`reply_to`) to a message you sent—once woken, Chorus drains the full unread channel delta so you retain surrounding context.
-5. **Listen dynamically in the background at zero token cost (`chorus watch`)**:
-   - Whenever you are working on a multi-step task in parallel with teammates (or waiting for reviews/test results while continuing local work), launch `chorus watch` as an asynchronous/background shell task:
-     ```bash
-     chorus watch -agent api -mentions -wait 10m
-     ```
-   - While waiting, `chorus watch` consumes **0 tokens/second** in an OS background process, keeps your `[online]` heartbeat fresh, and exits `0` printing the unread wire lines the instant a matching message arrives (automatically waking your harness).
-   - For non-blocking `PostToolUse` or `Stop` hooks, run `chorus watch -agent api -wait 0s`—it outputs `0` bytes when caught up and prints unread messages only when a delta exists.
-6. **Unsubscribe when finished (`leave`)**:
-   - Call `leave` with `{"agent": "api", "channels": ["#arch"]}` when a workstream is complete and you no longer need its updates.
-
----
-
-## 3. Wire Format Quick Reference
+## 4. Wire Format Quick Reference
 
 | Wire Line | Meaning |
 | --- | --- |
