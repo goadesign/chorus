@@ -105,8 +105,9 @@ var (
 	// sharedRedisAddr holds the address of the Redis server started by TestMain.
 	sharedRedisAddr string
 
-	// channelMsgRegex matches "#chan#14 @sender: text" and "#chan#14↩#12 @sender: text".
-	channelMsgRegex = regexp.MustCompile(`^(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+): (.*)$`)
+	// channelMsgRegex matches "#chan#14 @sender: text", "#chan#14↩#12 @sender: text",
+	// and pinned manifest lines "pin #chan#1 @sender: text".
+	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+): (.*)$`)
 
 	// dmMsgRegex matches "@sender->me#3: text" and "@sender->me#3↩#2: text".
 	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)->me#(\d+)(?:↩#(\d+))?: (.*)$`)
@@ -250,6 +251,11 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	lead.callExpectingError("send", map[string]any{
 		"to":   "neither_channel_nor_agent",
 		"text": "hello",
+	})
+	lead.callExpectingError("send", map[string]any{
+		"to":   "@api",
+		"text": "cannot pin a direct message",
+		"pin":  true,
 	})
 	lead.callExpectingError("read", map[string]any{
 		"from": "@dm_not_allowed_in_from",
@@ -633,8 +639,9 @@ func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 		"channels": []string{"#beta"},
 		"tail":     0,
 	})
-	if joinZero != "joined #beta (head #6)" {
-		t.Fatalf("expected tail=0 join to return header only, got:\n%s", joinZero)
+	wantJoinZero := "joined #beta (head #6)\nmembers: @late0 [online], @reader [online], @writer [online]"
+	if joinZero != wantJoinZero {
+		t.Fatalf("expected tail=0 join to return header and members only, got:\n%s", joinZero)
 	}
 
 	lateTwo := c.newAgent(0, swarm, "late2")
@@ -867,6 +874,169 @@ func TestMentionsOnlyWakeupAndFullContextDrain(t *testing.T) {
 	}
 }
 
+// TestPinnedManifestAndChannelMembersOnJoin verifies that join returns the
+// subscribed channel members (with roles and liveness) and the channel's active
+// pinned collaboration manifest (deduplicated when inside tail, preserved in
+// rmap even after scrolling past tail and streamMaxLen trimming, overwritten in
+// place when a newer message sets pin=true, and waking mentions_only watchers).
+func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
+	c := newTestCluster(t, 2, []chorus.Option{
+		chorus.WithStreamMaxLen(5),
+	})
+	swarm := "manifest-pin"
+
+	arch := c.newAgent(0, swarm, "arch")
+	api := c.newAgent(1, swarm, "api")
+	qa := c.newAgent(0, swarm, "qa")
+	db := c.newAgent(1, swarm, "db")
+
+	// 1. @arch creates #auth and pins the initial collaboration manifest (#auth#1).
+	archJoin := arch.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"topic":    "Passkey replay protection",
+		"role":     "Architect · owns design/design.go",
+	})
+	if !strings.Contains(archJoin, "members: @arch (Architect · owns design/design.go) [online]") {
+		t.Fatalf("expected @arch in join members, got:\n%s", archJoin)
+	}
+
+	arch.call("send", map[string]any{
+		"to":   "#auth",
+		"text": "Goal: single-use challenge. @api owns service.go, @db owns store.go, @qa owns service_test.go",
+		"pin":  true,
+	})
+	arch.send("#auth", "starting threat model review", 0)
+
+	// 2. @api joins #auth while #auth#1 is still within tail=5. Verify members
+	// includes both @api and @arch, and #auth#1 is emitted once with the "pin "
+	// prefix (not duplicated in the tail list).
+	apiJoinRaw := api.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"role":     "API · owns chorus/service.go",
+		"tail":     5,
+	})
+	wantMembers := "members: @api (API · owns chorus/service.go) [online], @arch (Architect · owns design/design.go) [online]"
+	if !strings.Contains(apiJoinRaw, wantMembers) {
+		t.Fatalf("expected join output to include %q, got:\n%s", wantMembers, apiJoinRaw)
+	}
+	if !strings.Contains(apiJoinRaw, "\npin #auth#1 @arch: Goal: single-use challenge.") {
+		t.Fatalf("expected join output to include pinned #auth#1 line, got:\n%s", apiJoinRaw)
+	}
+	apiJoinMsgs := parseWireMessages(t, apiJoinRaw)
+	if len(apiJoinMsgs) != 2 || apiJoinMsgs[0].seq != 1 || apiJoinMsgs[1].seq != 2 {
+		t.Fatalf("expected deduplicated #auth#1 (pinned) and #auth#2 on join, got %+v", apiJoinMsgs)
+	}
+
+	// 3. Publish 6 more messages (#auth#3..#8) so #auth#1 scrolls past tail=2
+	// AND is trimmed from the Redis stream (streamMaxLen=5 retains only #4..#8).
+	for i := 3; i <= 8; i++ {
+		api.send("#auth", fmt.Sprintf("progress update %d", i), 0)
+	}
+
+	// 4. @db joins late with tail=2. Even though #auth#1 was trimmed from the
+	// Redis stream, join still returns the pinned manifest from rmap above #7..#8.
+	dbJoinRaw := db.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"role":     "DB · owns store/passkey.go",
+		"tail":     2,
+	})
+	if !strings.Contains(dbJoinRaw, "\npin #auth#1 @arch: Goal: single-use challenge.") {
+		t.Fatalf("expected pinned #auth#1 to survive streamMaxLen trimming on join, got:\n%s", dbJoinRaw)
+	}
+	dbJoinMsgs := parseWireMessages(t, dbJoinRaw)
+	if len(dbJoinMsgs) != 3 || dbJoinMsgs[0].seq != 1 || dbJoinMsgs[1].seq != 7 || dbJoinMsgs[2].seq != 8 {
+		t.Fatalf("expected [#1 (pin), #7, #8] from late join(tail=2), got %+v", dbJoinMsgs)
+	}
+
+	// Verify that replying (reply_to=1) to the pinned manifest (#auth#1) still
+	// resolves @arch as the author from rmap and wakes @arch's mentions_only
+	// watcher even after #auth#1 was trimmed from the Redis stream.
+	arch.call("read", map[string]any{})
+	archWakeCh := make(chan []parsedMessage, 1)
+	go func() {
+		raw := arch.call("read", map[string]any{
+			"wait_sec":      5,
+			"mentions_only": true,
+		})
+		archWakeCh <- parseWireMessages(t, raw)
+	}()
+	time.Sleep(80 * time.Millisecond)
+
+	db.send("#auth", "store/passkey.go GETDEL ready for review", 1)
+	select {
+	case archWoken := <-archWakeCh:
+		if len(archWoken) != 1 || archWoken[0].seq != 9 || archWoken[0].replyTo != 1 || archWoken[0].sender != "db" {
+			t.Fatalf("expected @arch to wake on reply_to=#1 (pinned manifest), got %+v", archWoken)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for @arch to wake on reply_to trimmed pinned manifest")
+	}
+
+	// 5. @qa joins and blocks on read(mentions_only=true). When @arch pins an
+	// updated manifest (#auth#10) with pin=true, @qa wakes immediately even
+	// without an explicit @qa/@all token in the text, and the new pin replaces
+	// #auth#1 in place.
+	qa.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"role":     "QA · owns chorus/service_test.go",
+	})
+	qaWakeCh := make(chan []parsedMessage, 1)
+	go func() {
+		raw := qa.call("read", map[string]any{
+			"wait_sec":      5,
+			"mentions_only": true,
+		})
+		qaWakeCh <- parseWireMessages(t, raw)
+	}()
+	time.Sleep(80 * time.Millisecond)
+
+	arch.call("send", map[string]any{
+		"to":   "#auth",
+		"text": "Updated manifest: 401 challenge_expired landed; ready for final QA sign-off",
+		"pin":  true,
+	})
+
+	select {
+	case woken := <-qaWakeCh:
+		if len(woken) != 1 || woken[0].seq != 10 || woken[0].sender != "arch" {
+			t.Fatalf("expected mentions_only watcher to wake on pinned #auth#10, got %+v", woken)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for mentions_only watcher to wake on pinned manifest update")
+	}
+
+	rejoinRaw := qa.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"tail":     2,
+	})
+	if strings.Contains(rejoinRaw, "pin #auth#1 ") || !strings.Contains(rejoinRaw, "\npin #auth#10 @arch: Updated manifest:") {
+		t.Fatalf("expected #auth#10 to overwrite #auth#1 as the single channel pin, got:\n%s", rejoinRaw)
+	}
+
+	// 6. When all subscribed members leave #auth, the channel, its pin, and its
+	// stream history are removed so who no longer lists #auth and re-creating
+	// #auth starts cleanly at head #0.
+	for _, ag := range []*emulatedAgent{arch, api, db, qa} {
+		ag.call("leave", map[string]any{"channels": []string{"#auth"}})
+	}
+	whoAfterAllLeft := arch.call("who", map[string]any{})
+	if strings.Contains(whoAfterAllLeft, "#auth") {
+		t.Fatalf("expected #auth to be removed from who directory after last member left, got:\n%s", whoAfterAllLeft)
+	}
+	recreatedJoin := arch.call("join", map[string]any{
+		"channels": []string{"#auth"},
+		"topic":    "Fresh auth channel",
+	})
+	if !strings.HasPrefix(recreatedJoin, "joined #auth (head #0) - Fresh auth channel\n") ||
+		len(parseWireMessages(t, recreatedJoin)) != 0 {
+		t.Fatalf("expected re-created #auth to start at head #0 with no old messages, got:\n%s", recreatedJoin)
+	}
+	freshSend := arch.send("#auth", "first message in fresh channel", 0)
+	if freshSend.seq != 1 {
+		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
+	}
+}
+
 // newTestCluster flushes the shared Redis database and starts numReplicas
 // Chorus HTTP server replicas sharing Redis and a synthetic clock.
 func newTestCluster(t *testing.T, numReplicas int, opts []chorus.Option, origins ...string) *testCluster {
@@ -934,7 +1104,7 @@ func parseWireMessages(t *testing.T, raw string) []parsedMessage {
 	var out []parsedMessage
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "joined ") {
+		if line == "" || strings.HasPrefix(line, "joined ") || strings.HasPrefix(line, "members: ") {
 			continue
 		}
 		if m := channelMsgRegex.FindStringSubmatch(line); m != nil {

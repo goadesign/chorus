@@ -258,6 +258,11 @@ var sendPayloadFields = []tools.FieldMetadata{
 		JSONType:    "integer",
 		Description: "Optional sequence number in the target conversation being replied to.",
 	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("pin")},
+		JSONType:    "boolean",
+		Description: "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.",
+	},
 }
 var whoPayloadFields = []tools.FieldMetadata{
 	{
@@ -757,6 +762,7 @@ func MarshalSendPayload(v *SendPayload) ([]byte, error) {
 		To:      &in.To,
 		Text:    &in.Text,
 		ReplyTo: in.ReplyTo,
+		Pin:     &in.Pin,
 	}
 	return json.Marshal(out)
 }
@@ -790,8 +796,14 @@ func UnmarshalSendPayload(data []byte) (*SendPayload, error) {
 	if in.Swarm != nil {
 		out.Swarm = *in.Swarm
 	}
+	if in.Pin != nil {
+		out.Pin = *in.Pin
+	}
 	if in.Swarm == nil {
 		out.Swarm = "default"
+	}
+	if in.Pin == nil {
+		out.Pin = false
 	}
 	return out, nil
 }
@@ -1283,6 +1295,13 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "pin":
+			if err := validateBooleanJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.",
+			); err != nil {
+				return err
+			}
 		case "reply_to":
 			if err := validateIntJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1314,12 +1333,29 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"agent",
+				"pin",
 				"reply_to",
 				"swarm",
 				"text",
 				"to",
 			})
 		}
+	}
+	return nil
+}
+
+// validateBooleanJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateBooleanJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -1396,22 +1432,6 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 				"wait_sec",
 			})
 		}
-	}
-	return nil
-}
-
-// validateBooleanJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateBooleanJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }

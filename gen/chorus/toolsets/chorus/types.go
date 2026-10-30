@@ -61,6 +61,10 @@ type (
 		Text string
 		// Optional sequence number in the target conversation being replied to.
 		ReplyTo *int
+		// When true on a #channel message, pins this message as the channel's active
+		// collaboration manifest (replacing any previous pin) so joining agents always
+		// see it.
+		Pin bool
 	}
 	// WhoPayload defines the JSON payload for the chorus.who tool.
 	WhoPayload = struct {

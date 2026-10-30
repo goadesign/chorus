@@ -53,6 +53,17 @@ type (
 		// val is the encoded integer sequence watermark.
 		val string
 	}
+
+	// joinedChannel buffers per-channel tail state during a multi-channel join
+	// before the caller's subscription and presence updates are committed to rmap.
+	joinedChannel struct {
+		// name is the channel name ("#channel").
+		name string
+		// headSeq is the latest sequence number observed in the channel stream.
+		headSeq int
+		// lines holds the active pinned manifest line (if any) and recent tail messages.
+		lines []string
+	}
 )
 
 const (
@@ -60,6 +71,8 @@ const (
 	prefixAgent = "agent:"
 	// prefixChannel prefixes channel topic records in the swarm rmap.
 	prefixChannel = "chan:"
+	// prefixPin prefixes active pinned channel message records in the swarm rmap.
+	prefixPin = "pin:"
 	// prefixSub prefixes per-agent channel subscription lists in the swarm rmap.
 	prefixSub = "sub:"
 	// prefixSeq prefixes monotonic per-target sequence counters in the swarm rmap.
@@ -128,6 +141,12 @@ func channelMapKey(channel string) string {
 	return prefixChannel + channel
 }
 
+// pinMapKey returns the rmap key storing the active pinned messageEvent JSON
+// for channel ("#name").
+func pinMapKey(channel string) string {
+	return prefixPin + channel
+}
+
 // subMapKey returns the rmap key storing the JSON array of subscribed channels
 // for agent.
 func subMapKey(agent string) string {
@@ -194,6 +213,17 @@ func deduplicateStrings(items []string) []string {
 	return out
 }
 
+// hasChannelSubscribers reports whether any agent in subsByAgent is subscribed
+// to channel.
+func hasChannelSubscribers(channel string, subsByAgent map[string][]string) bool {
+	for _, subs := range subsByAgent {
+		if slices.Contains(subs, channel) {
+			return true
+		}
+	}
+	return false
+}
+
 // close stops the swarm's replicated map subscription.
 func (s *swarmHandle) close() {
 	s.state.Close()
@@ -248,8 +278,8 @@ func (s *swarmHandle) directory(ctx context.Context, caller, role string) (strin
 
 // joinChannels subscribes agent to one or more channels, creating any that do
 // not yet exist, setting their read watermarks to the current stream heads, and
-// returning the formatted join summary along with up to tail recent messages per
-// channel.
+// returning the formatted join summary (channel topic, subscribed members,
+// active pinned manifest, and up to tail recent messages) per channel.
 func (s *swarmHandle) joinChannels(
 	ctx context.Context,
 	agent string,
@@ -259,7 +289,7 @@ func (s *swarmHandle) joinChannels(
 	tail int,
 ) (string, error) {
 	unique := deduplicateStrings(channels)
-	var sections []string
+	joined := make([]joinedChannel, 0, len(unique))
 
 	for _, ch := range unique {
 		chKey := channelMapKey(ch)
@@ -282,32 +312,64 @@ func (s *swarmHandle) joinChannels(
 				return "", fmt.Errorf("set cursor for %s: %w", ch, err)
 			}
 		}
-
-		effectiveTopic := topic
-		if effectiveTopic == "" {
-			effectiveTopic, _ = s.state.Get(chKey)
-		}
-		header := fmt.Sprintf("joined %s (head #%d)", ch, headSeq)
-		if effectiveTopic != "" {
-			header += " - " + effectiveTopic
-		}
-		if len(lines) > 0 {
-			header += "\n" + strings.Join(lines, "\n")
-		}
-		sections = append(sections, header)
+		joined = append(joined, joinedChannel{
+			name:    ch,
+			headSeq: headSeq,
+			lines:   lines,
+		})
 	}
 
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, role, s.clock(), true); err != nil {
+	now := s.clock()
+	if err := s.touchAgent(ctx, agent, role, now, true); err != nil {
 		return "", err
+	}
+
+	snap := s.state.Map()
+	subsByAgent := s.channelSubscriptions(snap)
+	sections := make([]string, 0, len(joined))
+
+	for _, ch := range joined {
+		effectiveTopic := topic
+		if effectiveTopic == "" {
+			effectiveTopic = snap[channelMapKey(ch.name)]
+		}
+		header := fmt.Sprintf("joined %s (head #%d)", ch.name, ch.headSeq)
+		if effectiveTopic != "" {
+			header += " - " + effectiveTopic
+		}
+		header += "\n" + formatChannelMembers(ch.name, now, s.onlineWindow, snap, subsByAgent)
+		if len(ch.lines) > 0 {
+			header += "\n" + strings.Join(ch.lines, "\n")
+		}
+		sections = append(sections, header)
 	}
 	return strings.Join(sections, "\n"), nil
 }
 
-// leaveChannels unsubscribes agent from one or more channels and removes their
-// read watermarks from the swarm's replicated map.
+// channelSubscriptions extracts the subscribed channel list for every agent key
+// ("sub:<agent>") present in snap.
+func (s *swarmHandle) channelSubscriptions(snap map[string]string) map[string][]string {
+	subsByAgent := make(map[string][]string)
+	for k := range snap {
+		if !strings.HasPrefix(k, prefixSub) {
+			continue
+		}
+		handle := strings.TrimPrefix(k, prefixSub)
+		subs, _ := s.state.GetValues(k)
+		if len(subs) > 0 {
+			subsByAgent[handle] = subs
+		}
+	}
+	return subsByAgent
+}
+
+// leaveChannels unsubscribes agent from one or more channels, removes their
+// read watermarks from the swarm's replicated map, and—when no subscribed
+// members remain in a channel—destroys the channel stream and removes its
+// topic, pinned manifest, sequence counters, and mention watermarks.
 func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels []string) (string, error) {
 	unique := deduplicateStrings(channels)
 	for _, ch := range unique {
@@ -321,19 +383,69 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	if err := s.touchAgent(ctx, agent, "", s.clock(), true); err != nil {
 		return "", err
 	}
+
+	snap := s.state.Map()
+	subsByAgent := s.channelSubscriptions(snap)
+	delete(subsByAgent, agent)
+
+	removedAny := false
+	for _, ch := range unique {
+		if !hasChannelSubscribers(ch, subsByAgent) {
+			if err := s.purgeChannel(ctx, ch, snap); err != nil {
+				return "", err
+			}
+			removedAny = true
+		}
+	}
+	if removedAny {
+		if err := s.touchAgent(ctx, agent, "", s.clock(), true); err != nil {
+			return "", err
+		}
+	}
 	return "left " + strings.Join(unique, ", "), nil
 }
 
+// purgeChannel destroys a channel's Pulse stream and deletes its metadata,
+// pinned manifest, sequence counters, and mention watermarks from rmap once
+// its last subscriber has left.
+func (s *swarmHandle) purgeChannel(ctx context.Context, channel string, snap map[string]string) error {
+	if stream, err := s.openStream(channel); err == nil {
+		if err := stream.Destroy(ctx); err != nil && !errors.Is(err, streaming.ErrStreamNotFound) {
+			return fmt.Errorf("destroy stream for %s: %w", channel, err)
+		}
+	}
+	keys := []string{
+		pinMapKey(channel),
+		channelMapKey(channel),
+		headMapKey(channel),
+		seqMapKey(channel),
+	}
+	mentionSuffix := ":" + channel
+	for k := range snap {
+		if strings.HasPrefix(k, prefixMention) && strings.HasSuffix(k, mentionSuffix) {
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		if _, err := s.state.Delete(ctx, k); err != nil {
+			return fmt.Errorf("delete %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
 // publish appends a message from sender to target ("#channel" or "@agent") under
-// a per-target leased semaphore, commits the new head sequence to rmap via
-// SetAndWait, releases the semaphore, and drains any unread messages waiting for
-// sender across all subscribed channels and direct messages.
+// a per-target leased semaphore, optionally pins it as the channel's active
+// collaboration manifest, commits the new head sequence to rmap via SetAndWait,
+// releases the semaphore, and drains any unread messages waiting for sender
+// across all subscribed channels and direct messages.
 func (s *swarmHandle) publish(
 	ctx context.Context,
 	sender string,
 	target string,
 	text string,
 	replyTo int,
+	pin bool,
 ) (string, error) {
 	if err := s.touchAgent(ctx, sender, "", s.clock(), false); err != nil {
 		return "", err
@@ -363,7 +475,7 @@ func (s *swarmHandle) publish(
 		}
 	}
 
-	seq, err := s.appendUnderSemaphore(ctx, sender, target, text, replyTo, autoSubscribed)
+	seq, err := s.appendUnderSemaphore(ctx, sender, target, text, replyTo, pin, autoSubscribed)
 	if err != nil {
 		return "", err
 	}
@@ -382,15 +494,16 @@ func (s *swarmHandle) publish(
 // increments the target sequence number, appends the message event to the
 // target's Pulse stream, advances sender's own cursor when caught up or
 // auto-subscribing so concurrent watchers for sender never wake on self-sent
-// messages, records any channel @mentions or reply targets in rmap, and commits
-// the updated head sequence to rmap via SetAndWait before releasing the
-// semaphore.
+// messages, records any channel @mentions, reply targets, or pinned manifest in
+// rmap, and commits the updated head sequence to rmap via SetAndWait before
+// releasing the semaphore.
 func (s *swarmHandle) appendUnderSemaphore(
 	ctx context.Context,
 	sender string,
 	target string,
 	text string,
 	replyTo int,
+	pin bool,
 	autoSubscribed bool,
 ) (int, error) {
 	sem, err := semaphore.New(
@@ -419,6 +532,9 @@ func (s *swarmHandle) appendUnderSemaphore(
 	var mentions []string
 	if strings.HasPrefix(target, "#") {
 		mentions = extractMentionedHandles(text)
+		if pin && !slices.Contains(mentions, "all") {
+			mentions = append(mentions, "all")
+		}
 		if replyTo > 0 {
 			replyAuthor, authorErr := s.findMessageSender(ctx, target, replyTo)
 			if authorErr != nil {
@@ -451,6 +567,12 @@ func (s *swarmHandle) appendUnderSemaphore(
 		return 0, fmt.Errorf("append message to %s stream: %w", target, err)
 	}
 
+	if pin && strings.HasPrefix(target, "#") {
+		if _, err := s.state.Set(ctx, pinMapKey(target), string(payload)); err != nil {
+			return 0, fmt.Errorf("pin message in %s: %w", target, err)
+		}
+	}
+
 	// Advance sender's watermark to seq before publishing mention keys or head
 	// when sender is auto-subscribing or already caught up through seq-1. This
 	// ensures concurrent read/watch calls for sender observe headSeq <= curSeq
@@ -464,7 +586,7 @@ func (s *swarmHandle) appendUnderSemaphore(
 
 	senderLower := strings.ToLower(sender)
 	for _, h := range mentions {
-		if h == senderLower {
+		if h == senderLower && h != "all" {
 			continue
 		}
 		if _, err := s.state.Set(ctx, mentionMapKey(h, target), strconv.Itoa(seq)); err != nil {
@@ -479,8 +601,15 @@ func (s *swarmHandle) appendUnderSemaphore(
 }
 
 // findMessageSender returns the sender handle of the message with sequence
-// number seq in target, or "" if not found in the retained stream history.
+// number seq in target (checking the in-memory pinned manifest first, then the
+// retained stream history), or "" if not found.
 func (s *swarmHandle) findMessageSender(ctx context.Context, target string, seq int) (string, error) {
+	if rawPin, ok := s.state.Get(pinMapKey(target)); ok && rawPin != "" {
+		var pinMsg messageEvent
+		if err := json.Unmarshal([]byte(rawPin), &pinMsg); err == nil && pinMsg.Seq == seq {
+			return pinMsg.Sender, nil
+		}
+	}
 	events, err := s.snapshotTarget(ctx, target)
 	if err != nil {
 		return "", err
@@ -700,16 +829,28 @@ func (s *swarmHandle) readTargetDelta(
 	return lines, lastSeq, nil
 }
 
-// tailTarget returns up to tail most recent formatted messages from target along
-// with the current head sequence number of the stream.
+// tailTarget returns the active pinned manifest line (if any) and up to tail
+// most recent formatted messages from target (deduplicating the pinned message
+// when it falls within the tail window) along with the current head sequence
+// number of the stream.
 func (s *swarmHandle) tailTarget(ctx context.Context, target string, tail int) ([]string, int, error) {
-	headSeq := parseSeq(s.state.Map()[headMapKey(target)])
+	snap := s.state.Map()
+	headSeq := parseSeq(snap[headMapKey(target)])
+
+	var pinMsg messageEvent
+	hasPin := false
+	if rawPin := snap[pinMapKey(target)]; rawPin != "" {
+		if err := json.Unmarshal([]byte(rawPin), &pinMsg); err == nil && pinMsg.Seq > 0 {
+			hasPin = true
+			if pinMsg.Seq > headSeq {
+				headSeq = pinMsg.Seq
+			}
+		}
+	}
+
 	events, err := s.snapshotTarget(ctx, target)
 	if err != nil {
 		return nil, 0, err
-	}
-	if len(events) == 0 {
-		return nil, headSeq, nil
 	}
 
 	decoded := make([]messageEvent, 0, len(events))
@@ -724,21 +865,28 @@ func (s *swarmHandle) tailTarget(ctx context.Context, target string, tail int) (
 		}
 	}
 
-	if tail <= 0 {
-		return nil, headSeq, nil
+	var lines []string
+	if hasPin {
+		lines = append(lines, "pin "+formatMessageLine(target, pinMsg))
+	}
+	if tail <= 0 || len(decoded) == 0 {
+		return lines, headSeq, nil
 	}
 	if len(decoded) > tail {
 		decoded = decoded[len(decoded)-tail:]
 	}
-	lines := make([]string, 0, len(decoded))
 	for _, msg := range decoded {
+		if hasPin && msg.Seq == pinMsg.Seq {
+			continue
+		}
 		lines = append(lines, formatMessageLine(target, msg))
 	}
 	return lines, headSeq, nil
 }
 
 // snapshotTarget reads the bounded event history of target using Pulse's
-// generation-fenced Stream.Snapshot. If the stream has not been created yet,
+// generation-fenced Stream.Snapshot. If the stream has not been created yet or
+// its previous generation was destroyed when a channel was removed,
 // snapshotTarget returns an empty slice and nil error.
 func (s *swarmHandle) snapshotTarget(ctx context.Context, target string) ([]streaming.SnapshotEvent, error) {
 	stream, err := s.openStream(target)
@@ -746,7 +894,7 @@ func (s *swarmHandle) snapshotTarget(ctx context.Context, target string) ([]stre
 		return nil, err
 	}
 	events, err := stream.Snapshot(ctx)
-	if errors.Is(err, streaming.ErrStreamNotFound) {
+	if errors.Is(err, streaming.ErrStreamNotFound) || errors.Is(err, streaming.ErrStreamDestroyed) {
 		return nil, nil
 	}
 	if err != nil {
