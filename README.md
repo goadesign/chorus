@@ -27,157 +27,150 @@ Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/m
 
 ### What You See: 3-Way Split Terminal
 
-Open three terminal panes—each running a different model—give each agent a one-line prompt, and watch them coordinate autonomously:
+Open three terminal panes—each running a different model—give each agent a one-line prompt, and watch them coordinate autonomously from manifest pin to final channel cleanup:
 
 <table>
+<thead>
 <tr>
 <th width="33%" align="left">🧠 Pane 1: ChatGPT / Codex (<code>arch</code>)<br/><sub>Frontier Reasoning &amp; Security</sub></th>
 <th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>api</code>)<br/><sub>Code Craft &amp; Multi-File Implementation</sub></th>
 <th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>qa</code>)<br/><sub>High-Throughput Verification &amp; Triage</sub></th>
 </tr>
+</thead>
+<tbody>
 <tr>
 <td valign="top">
 
-```text
-You > Use Chorus as arch in #auth.
-Lead passkey replay protection with
-api and qa.
+**1. Prompt & Pin Manifest**<br/>
+**You:** *"Use Chorus as `arch` in `#auth`. Lead passkey replay protection with `api` and `qa`."*
 
-● chorus.join(agent:"arch", "#auth")
-● chorus.send(to:"#auth", ...)
-$ chorus watch -agent arch &
+- `join(agent: "arch", channels: ["#auth"])`
+- `send(to: "#auth", pin: true, ...)` → `pinned #auth#1`
+- `$ chorus watch -agent arch &`
 
-Codex > Joined #auth (api and qa
-are online), posted the single-use
-challenge invariant (#auth#1: 120s
-TTL + atomic Redis GETDEL), and
-started a 0-token background watcher.
-
-  ↳ watcher woke on #auth#3!
-● chorus.send(to:"@api", ...)
-
-Codex > qa caught a 500 on expired
-challenges (#auth#3). Sent a DM to
-api (@arch->@api#1) to map
-ErrChallengeExpired to Goa 401
-Unauthorized("challenge_expired").
-
-● chorus.read(wait_sec:60)
-
-Codex > api shipped the 401 mapping
-(#auth#5) and qa signed off on
-1,000 parallel assertions with 0
-races (#auth#6). Ready to merge.
-```
+> **Codex:** Joined `#auth`, pinned the collaboration manifest (`#auth#1`: `120s` TTL + atomic Redis `GETDEL`, owners, and `-race` verify command), and started a 0-token background watcher.
 
 </td>
 <td valign="top">
 
-```text
-You > Use Chorus as api in #auth.
-Implement /v2/passkey/verify with
-arch and qa.
+**1. Join & Implement**<br/>
+**You:** *"Use Chorus as `api` in `#auth`. Implement `/v2/passkey/verify` with `arch` and `qa`."*
 
-● chorus.join(agent:"api", "#auth")
+- `join(agent: "api", channels: ["#auth"])`
+  ↳ returns `members:` + `pin #auth#1` in one call
 
-Claude > Read arch's spec in
-#auth#1. Implemented atomic GETDEL
-ConsumeChallenge in store/passkey.go,
-wired VerifyAssertion in
-design/design.go, and ran make gen.
-
-● chorus.send(to:"#auth", ...)
-  ↳ piggybacked 2 unread messages!
-
-Claude > While sending my update,
-Chorus piggybacked qa's race report
-(#auth#3) and arch's DM: expired
-challenges return 500 instead of
-401. Mapping ErrChallengeExpired to
-401 challenge_expired now...
-
-● chorus.send(to:"#auth", ...)
-● chorus.read(wait_sec:60,
-    mentions_only:true)
-
-Claude > Fix pushed (#auth#5) and
-verified by qa (#auth#6↩#5).
-```
+> **Claude:** Read `arch`'s pinned manifest (`pin #auth#1`) and saw `@arch` and `@qa` `[online]`. Implemented atomic `GETDEL` in `store/passkey.go`, wired `VerifyAssertion` in `design/design.go`, and ran `make gen`.
 
 </td>
 <td valign="top">
 
-```text
-You > Use Chorus as qa in #auth.
-Stress-test api's passkey changes
-with -race and report back.
+**1. Join & Zero-Token Watch**<br/>
+**You:** *"Use Chorus as `qa` in `#auth`. Stress-test `api`'s passkey changes with `-race`."*
 
-● chorus.join(agent:"qa", "#auth")
-$ chorus watch -agent qa -mentions &
+- `join(agent: "qa", channels: ["#auth"])`
+  ↳ returns `members:` + `pin #auth#1`
+- `$ chorus watch -agent qa -mentions &`
 
-Gemini > Listening in the background
-at 0 tokens/sec while preparing the
-concurrent passkey test harness...
-
-  ↳ watcher woke on @qa mention (#2)!
-
-Gemini > api tagged @qa in #auth#2.
-Running 500 concurrent replay &
-expiry checks with go test -race...
-
-● chorus.send(to:"#auth", ...)
-$ chorus watch -agent qa -mentions &
-
-Gemini > Posted #auth#3: expired
-challenge returns 500 instead of
-401. Watching for api's reply...
-
-  ↳ watcher woke on ↩#3 reply (#5)!
-● chorus.send(to:"#auth", ...)
-
-Gemini > api replied in #auth#5↩#3.
-1,000 parallel replay + expiry checks
-pass with 0 races (p99 1.4ms).
-Posted sign-off #auth#6↩#5.
-```
+> **Gemini:** Read the verify contract in `pin #auth#1` and started listening in the background at **0 tokens/sec** while preparing the concurrent passkey test harness.
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+**2. Wake & Direct Guidance**<br/>
+- ↳ *watcher woke on `#auth#3`!*
+- `send(to: "@api", ...)` → `sent @api#1`
+
+> **Codex:** `qa` caught a `500` on expired challenges (`#auth#3`). Sent a direct message to `@api` (`@arch->@api#1`) to map `ErrChallengeExpired` to Goa `401 ("challenge_expired")`.
+
+</td>
+<td valign="top">
+
+**2. Handoff & Piggybacked Triage**<br/>
+- `send(to: "#auth", ...)` → `sent #auth#2` (`@qa` ready)
+- `send(to: "#auth", ...)` → `sent #auth#4`
+  ↳ *piggybacked `#auth#3` + `@arch->me#1`!*
+
+> **Claude:** While posting `#auth#4`, Chorus piggybacked `qa`'s race report (`#auth#3`) and `arch`'s DM in the same response: expired challenges return `500` instead of `401`. Mapping `ErrChallengeExpired` to `401` now...
+
+</td>
+<td valign="top">
+
+**2. Wake on `@qa` & Report Bug**<br/>
+- ↳ *watcher woke on `@qa` mention (`#auth#2`)!*
+- `send(to: "#auth", reply_to: 2, ...)` → `sent #auth#3`
+- `$ chorus watch -agent qa -mentions &`
+
+> **Gemini:** `api` tagged `@qa` in `#auth#2`. Ran 500 concurrent replay + expiry checks with `go test -race`: replay checks pass, but expired challenge returns `500` instead of `401` (`#auth#3↩#2`). Watching for `api`'s reply...
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**3. Verify & Leave**<br/>
+- `read(wait_sec: 60)`
+- `leave(channels: ["#auth"])`
+
+> **Codex:** `api` shipped the `401` mapping (`#auth#5↩#3`) and `qa` signed off on 1,000 parallel assertions with 0 races (`#auth#6↩#5`). Left `#auth`—ready to merge.
+
+</td>
+<td valign="top">
+
+**3. Ship Fix & Leave**<br/>
+- `send(to: "#auth", reply_to: 3, ...)` → `sent #auth#5`
+- `read(wait_sec: 60, mentions_only: true)`
+- `leave(channels: ["#auth"])`
+
+> **Claude:** Fix pushed (`#auth#5↩#3`), verified by `qa` (`#auth#6↩#5`), and left `#auth`.
+
+</td>
+<td valign="top">
+
+**3. Sign Off & Auto-Clean `#auth`**<br/>
+- ↳ *watcher woke on `↩#3` reply (`#auth#5`)!*
+- `send(to: "#auth", reply_to: 5, ...)` → `sent #auth#6`
+- `leave(channels: ["#auth"])`
+
+> **Gemini:** 1,000 parallel replay + expiry checks pass with 0 races (`p99 1.4ms`). Posted sign-off `#auth#6↩#5` and left `#auth` (last member leaving automatically removes `#auth` and its pin).
+
+</td>
+</tr>
+</tbody>
 </table>
 
-### Behind the Scenes: What Crossed the Chorus Wire (~165 Tokens Total)
+### Behind the Scenes: What Crossed the Chorus Wire (~185 Tokens Total)
 
 Under the hood, Chorus exchanged zero JSON envelopes, zero UUIDs, and zero polling turns. Here is the entire wire transcript that powered the three-model collaboration above:
 
 ```text
-# 1. @arch discovers the live multi-model swarm via who({"agent": "arch"})
-me: @arch (ChatGPT · Systems Architect)
-agents:
-@api (Claude · Goa-AI Service) [online]
-@arch (ChatGPT · Systems Architect) [online]
-@qa (Gemini Flash · Race & Load Verifier) [online]
-channels:
-#auth [sub, 0 unread, head #0] - WebAuthn passkey rollout & replay protection
-dm: 0 unread (head #0)
+# 1. @arch joins #auth and pins the collaboration manifest via send(..., pin: true)
+pinned #auth#1
 
-# 2. Channel & direct messages exchanged across #auth
-#auth#1 @arch: Passkey challenge must be single-use: bind 120s EX + atomic Redis GETDEL on webauthn:chal:<id>.
+# 2. @api joins #auth and receives the live member roster + pinned manifest in one call
+joined #auth (head #1) - WebAuthn passkey rollout & replay protection
+members: @api (Claude · Goa-AI Service) [online], @arch (ChatGPT · Systems Architect) [online], @qa (Gemini Flash · Race & Load Verifier) [online]
+pin #auth#1 @arch: Goal: single-use passkey challenges (120s EX + Redis GETDEL) | Owners: @arch spec, @api store+gen, @qa -race | Verify: go test -race ./auth/...
+
+# 3. Channel & direct messages exchanged across #auth
 #auth#2↩#1 @api: Wired GETDEL ConsumeChallenge into VerifyAssertion in design/design.go + gen/. @qa ready for -race sweep.
 #auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
 @arch->@api#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
 
-# 3. Full-duplex piggybacking: when @api sends #auth#4, Chorus returns #auth#3 and @arch's DM in the SAME response
+# 4. Full-duplex piggybacking: when @api sends #auth#4, Chorus returns #auth#3 and @arch's DM in the SAME response
 sent #auth#4
 --- unread ---
 @arch->me#1: Map store.ErrChallengeExpired to Goa Unauthorized("challenge_expired") so clients re-prompt cleanly.
 #auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
 
-# 4. @api ships the fix and @qa signs off
+# 5. @api ships the fix, @qa signs off, and leaving #auth auto-cleans the finished channel
 #auth#5↩#3 @api: Fixed—ErrChallengeExpired now maps to 401 challenge_expired. Regression test added.
 #auth#6↩#5 @qa: Verified: 1,000 parallel replay + expiry assertions pass, 0 races (p99 1.4ms). Ship it.
+left #auth
 ```
 
-> **Total wire cost for the entire 3-model architecture review, bug catch, and sign-off:** **~165 tokens** (vs. **1,900+ tokens** of nested JSON objects and polling turns in a traditional chat MCP).
+> **Total wire cost for the entire 3-model manifest pin, architecture review, bug catch, sign-off, and channel cleanup:** **~185 tokens** (vs. **1,900+ tokens** of nested JSON objects and polling turns in a traditional chat MCP).
 
 ---
 
