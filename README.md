@@ -27,113 +27,46 @@ Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/m
 
 ### What You See: 3-Way Split Terminal
 
-Open three terminal panes—each running a different model—give each agent a one-line prompt, and watch them coordinate autonomously from manifest pin to final channel cleanup:
+Open three terminal panes—each running a different model—give each agent a one-line prompt, and let them divide and conquer:
 
 <table>
 <thead>
 <tr>
 <th width="33%" align="left">🧠 Pane 1: ChatGPT / Codex (<code>arch</code>)<br/><sub>Frontier Reasoning &amp; Security</sub></th>
-<th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>api</code>)<br/><sub>Code Craft &amp; Multi-File Implementation</sub></th>
-<th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>qa</code>)<br/><sub>High-Throughput Verification &amp; Triage</sub></th>
+<th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>api</code>)<br/><sub>Code Craft &amp; Implementation</sub></th>
+<th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>qa</code>)<br/><sub>Verification &amp; Stress Testing</sub></th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td valign="top">
 
-**1. Prompt & Pin Manifest**<br/>
-**You:** *"Use Chorus as `arch` in `#auth`. Lead passkey replay protection with `api` and `qa`."*
+**You:** *"Use Chorus as `arch` in `#auth` and lead the passkey rollout with `api` and `qa`."*
 
-- `join(agent: "arch", channels: ["#auth"])`
-- `send(to: "#auth", pin: true, ...)` → `pinned #auth#1`
-- `$ chorus watch -agent arch &`
-
-> **Codex:** Joined `#auth`, pinned the collaboration manifest (`#auth#1`: `120s` TTL + atomic Redis `GETDEL`, owners, and `-race` verify command), and started a 0-token background watcher.
+1. **Pins the plan:** Joins `#auth` and pins a short manifest (goal, file ownership, and test command).
+2. **Waits for free:** Runs `chorus watch` in the background at **0 tokens/sec** while `api` builds.
+3. **Guides via DM:** Wakes when `qa` flags an expired-challenge bug and DMs `@api` to return `401` instead of `500`.
+4. **Closes out:** Sees `qa`'s final sign-off and leaves `#auth`.
 
 </td>
 <td valign="top">
 
-**1. Join & Implement**<br/>
-**You:** *"Use Chorus as `api` in `#auth`. Implement `/v2/passkey/verify` with `arch` and `qa`."*
+**You:** *"Use Chorus as `api` in `#auth` and implement `/v2/passkey/verify` with `arch` and `qa`."*
 
-- `join(agent: "api", channels: ["#auth"])`
-  ↳ returns `members:` + `pin #auth#1` in one call
-
-> **Claude:** Read `arch`'s pinned manifest (`pin #auth#1`) and saw `@arch` and `@qa` `[online]`. Implemented atomic `GETDEL` in `store/passkey.go`, wired `VerifyAssertion` in `design/design.go`, and ran `make gen`.
-
-</td>
-<td valign="top">
-
-**1. Join & Zero-Token Watch**<br/>
-**You:** *"Use Chorus as `qa` in `#auth`. Stress-test `api`'s passkey changes with `-race`."*
-
-- `join(agent: "qa", channels: ["#auth"])`
-  ↳ returns `members:` + `pin #auth#1`
-- `$ chorus watch -agent qa -mentions &`
-
-> **Gemini:** Read the verify contract in `pin #auth#1` and started listening in the background at **0 tokens/sec** while preparing the concurrent passkey test harness.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**2. Wake & Direct Guidance**<br/>
-- ↳ *watcher woke on `#auth#3`!*
-- `send(to: "@api", ...)` → `sent @api#1`
-
-> **Codex:** `qa` caught a `500` on expired challenges (`#auth#3`). Sent a direct message to `@api` (`@arch->@api#1`) to map `ErrChallengeExpired` to Goa `401 ("challenge_expired")`.
+1. **Joins with context:** Joins `#auth` and immediately gets the online member list and `arch`'s pinned plan in one call.
+2. **Builds & hands off:** Implements the endpoint and posts `"@qa ready for -race tests"` in `#auth`.
+3. **Gets piggybacked replies:** Receives `qa`'s bug report and `arch`'s DM automatically in its next `send` response—no polling turn.
+4. **Ships & leaves:** Pushes the `401` fix and leaves `#auth`.
 
 </td>
 <td valign="top">
 
-**2. Handoff & Piggybacked Triage**<br/>
-- `send(to: "#auth", ...)` → `sent #auth#2` (`@qa` ready)
-- `send(to: "#auth", ...)` → `sent #auth#4`
-  ↳ *piggybacked `#auth#3` + `@arch->me#1`!*
+**You:** *"Use Chorus as `qa` in `#auth` and stress-test `api`'s passkey changes with `-race`."*
 
-> **Claude:** While posting `#auth#4`, Chorus piggybacked `qa`'s race report (`#auth#3`) and `arch`'s DM in the same response: expired challenges return `500` instead of `401`. Mapping `ErrChallengeExpired` to `401` now...
-
-</td>
-<td valign="top">
-
-**2. Wake on `@qa` & Report Bug**<br/>
-- ↳ *watcher woke on `@qa` mention (`#auth#2`)!*
-- `send(to: "#auth", reply_to: 2, ...)` → `sent #auth#3`
-- `$ chorus watch -agent qa -mentions &`
-
-> **Gemini:** `api` tagged `@qa` in `#auth#2`. Ran 500 concurrent replay + expiry checks with `go test -race`: replay checks pass, but expired challenge returns `500` instead of `401` (`#auth#3↩#2`). Watching for `api`'s reply...
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**3. Verify & Leave**<br/>
-- `read(wait_sec: 60)`
-- `leave(channels: ["#auth"])`
-
-> **Codex:** `api` shipped the `401` mapping (`#auth#5↩#3`) and `qa` signed off on 1,000 parallel assertions with 0 races (`#auth#6↩#5`). Left `#auth`—ready to merge.
-
-</td>
-<td valign="top">
-
-**3. Ship Fix & Leave**<br/>
-- `send(to: "#auth", reply_to: 3, ...)` → `sent #auth#5`
-- `read(wait_sec: 60, mentions_only: true)`
-- `leave(channels: ["#auth"])`
-
-> **Claude:** Fix pushed (`#auth#5↩#3`), verified by `qa` (`#auth#6↩#5`), and left `#auth`.
-
-</td>
-<td valign="top">
-
-**3. Sign Off & Auto-Clean `#auth`**<br/>
-- ↳ *watcher woke on `↩#3` reply (`#auth#5`)!*
-- `send(to: "#auth", reply_to: 5, ...)` → `sent #auth#6`
-- `leave(channels: ["#auth"])`
-
-> **Gemini:** 1,000 parallel replay + expiry checks pass with 0 races (`p99 1.4ms`). Posted sign-off `#auth#6↩#5` and left `#auth` (last member leaving automatically removes `#auth` and its pin).
+1. **Watches at 0 tokens:** Joins `#auth`, reads the pinned test command, and runs `chorus watch -mentions` in the background.
+2. **Wakes on `@qa`:** Wakes the instant `api` mentions `@qa`, runs `go test -race`, and reports the `500` on expired challenges.
+3. **Wakes on reply:** Wakes when `api` replies with the `401` fix and re-runs the race suite.
+4. **Signs off & cleans up:** Posts `"All pass, ship it"` and leaves `#auth`—automatically removing the finished channel.
 
 </td>
 </tr>
