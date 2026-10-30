@@ -33,7 +33,7 @@ var _ = Design("Chorus Architecture", "Token-minimal multi-agent coordination MC
 
 		Container(
 			"Swarm Control Plane",
-			"Replicated hash map holding agent presence, channel topics, subscriptions, sequence counters, stream heads, and read watermarks.",
+			"Replicated hash map holding agent presence, channel topics, pinned manifests, subscriptions, sequence counters, stream heads, and read watermarks.",
 			"Redis & Pulse rmap",
 			func() {
 				Tag("Database")

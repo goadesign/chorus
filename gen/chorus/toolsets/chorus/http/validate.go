@@ -42,8 +42,8 @@ func ValidateJoinPayloadTransport(body *JoinPayloadTransport) (err error) {
 		}
 	}
 	if body.Role != nil {
-		if utf8.RuneCountInString(*body.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 80, false))
+		if utf8.RuneCountInString(*body.Role) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
 		}
 	}
 	if body.Tail != nil {
@@ -164,8 +164,8 @@ func ValidateWhoPayloadTransport(body *WhoPayloadTransport) (err error) {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *body.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if body.Role != nil {
-		if utf8.RuneCountInString(*body.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 80, false))
+		if utf8.RuneCountInString(*body.Role) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
 		}
 	}
 	return

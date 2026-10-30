@@ -73,6 +73,10 @@ type (
 		Text *string `json:"text"`
 		// Optional sequence number in the target conversation being replied to.
 		ReplyTo *int `json:"reply_to,omitempty"`
+		// When true on a #channel message, pins this message as the channel's active
+		// collaboration manifest (replacing any previous pin) so joining agents always
+		// see it.
+		Pin *bool `json:"pin,omitempty"`
 	}
 	// WhoPayloadTransport is the internal JSON transport type for WhoPayload.
 	// It lives in the toolset-local http package and is used only for JSON

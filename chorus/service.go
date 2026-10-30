@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,6 +66,10 @@ const (
 	// instrumentationName is the OpenTelemetry tracer name for Chorus.
 	instrumentationName = "goa.design/chorus"
 )
+
+// errPinRequiresChannel is returned when a caller sets pin=true on a direct
+// message target ("@agent") instead of a channel ("#channel").
+var errPinRequiresChannel = errors.New("invalid arguments: pin is only valid for #channel targets")
 
 // New constructs a Chorus Service backed by rdb. Callers should invoke Close
 // when shutting down to release active Pulse replicated map subscriptions.
@@ -272,14 +277,19 @@ func (s *Service) Leave(ctx context.Context, p *genchorus.LeavePayload) (res *ge
 }
 
 // Send publishes a message to a channel ("#channel") or direct recipient
-// ("@agent") and piggybacks any unread messages waiting for the caller in the
-// same response.
+// ("@agent"), optionally pinning it as the channel's collaboration manifest,
+// and piggybacks any unread messages waiting for the caller in the same
+// response.
 func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genchorus.TextResult, err error) {
 	ctx, span := startToolSpan(ctx, s.tracer, "send", p.Swarm, p.Agent)
 	span.SetAttributes(attribute.String("chorus.to", p.To))
 	defer func() {
 		finishSpan(span, err)
 	}()
+
+	if p.Pin && !strings.HasPrefix(p.To, "#") {
+		return nil, errPinRequiresChannel
+	}
 
 	sw, err := s.swarm(ctx, p.Swarm)
 	if err != nil {
@@ -289,7 +299,7 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 	if p.ReplyTo != nil {
 		replyTo = *p.ReplyTo
 	}
-	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo)
+	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo, p.Pin)
 	if err != nil {
 		return nil, err
 	}
@@ -345,10 +355,10 @@ func startToolSpan(
 	)
 }
 
-// finishSpan records err on span if non-nil and not a context cancellation,
-// ending the span.
+// finishSpan records err on span if non-nil and not a context cancellation or
+// caller input validation error, ending the span.
 func finishSpan(span trace.Span, err error) {
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errPinRequiresChannel) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

@@ -87,8 +87,8 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 		}
 	}
 	if value.Role != nil {
-		if utf8.RuneCountInString(*value.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 80, false))
+		if utf8.RuneCountInString(*value.Role) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 120, false))
 		}
 	}
 	if value.Tail != nil {
@@ -490,6 +490,10 @@ type SendPayloadTransport struct {
 	Text *string `json:"text"`
 	// Optional sequence number in the target conversation being replied to.
 	ReplyTo *SendPayloadIntTransport `json:"reply_to,omitempty"`
+	// When true on a #channel message, pins this message as the channel's active
+	// collaboration manifest (replacing any previous pin) so joining agents always
+	// see it.
+	Pin *bool `json:"pin,omitempty"`
 }
 
 // ValidateSendPayloadTransport checks decoded JSON before it becomes a service value.
@@ -637,8 +641,8 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if value.Role != nil {
-		if utf8.RuneCountInString(*value.Role) > 80 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 80, false))
+		if utf8.RuneCountInString(*value.Role) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 120, false))
 		}
 	}
 	return err
@@ -1221,8 +1225,14 @@ func DecodeSendPayload(data []byte) (out *chorus.SendPayload, err error) {
 			replyTo := int(*body.ReplyTo)
 			out.ReplyTo = &replyTo
 		}
+		if body.Pin != nil {
+			out.Pin = *body.Pin
+		}
 		if body.Swarm == nil {
 			out.Swarm = "default"
+		}
+		if body.Pin == nil {
+			out.Pin = false
 		}
 	}
 	return out, nil

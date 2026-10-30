@@ -68,8 +68,8 @@ var _ = Service("chorus", func() {
 				Example("default")
 			})
 			Attribute("role", String, "Optional role description to advertise to peers in this swarm.", func() {
-				MaxLength(80)
-				Example("API Engineer")
+				MaxLength(120)
+				Example("API Engineer · owns chorus/service.go")
 			})
 			Required("agent")
 		})
@@ -83,7 +83,7 @@ var _ = Service("chorus", func() {
 	})
 
 	Method("join", func() {
-		Description("Create or subscribe to one or more channels and return their topic and recent messages.")
+		Description("Create or subscribe to one or more channels and return their topic, members, pinned manifest, and recent messages.")
 		Payload(func() {
 			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -108,8 +108,8 @@ var _ = Service("chorus", func() {
 				Example("Schema and API contract decisions")
 			})
 			Attribute("role", String, "Optional role description to advertise for the calling agent.", func() {
-				MaxLength(80)
-				Example("API Engineer")
+				MaxLength(120)
+				Example("API Engineer · owns chorus/service.go")
 			})
 			Attribute("tail", Int, "Maximum recent messages to return per joined channel.", func() {
 				Default(5)
@@ -120,7 +120,7 @@ var _ = Service("chorus", func() {
 			Required("agent", "channels")
 		})
 		Result(TextResult)
-		Tool("join", "Subscribe to (or create) #channels, advertise your role, and return the channel topic and recent message tail. Call this first when joining a swarm.", func() {
+		Tool("join", "Subscribe to (or create) #channels, advertise your role, and return the channel topic, subscribed members, pinned manifest, and recent message tail. Call this first when joining a swarm.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 			IdempotentHint(true)
@@ -129,7 +129,7 @@ var _ = Service("chorus", func() {
 	})
 
 	Method("leave", func() {
-		Description("Unsubscribe from one or more channels.")
+		Description("Unsubscribe from one or more channels (removing a channel from the swarm directory when its last member leaves).")
 		Payload(func() {
 			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -152,7 +152,7 @@ var _ = Service("chorus", func() {
 			Required("agent", "channels")
 		})
 		Result(TextResult)
-		Tool("leave", "Unsubscribe from #channels.", func() {
+		Tool("leave", "Unsubscribe from #channels. When the last subscribed member leaves a #channel, the channel is removed from the swarm directory.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 			IdempotentHint(true)
@@ -185,10 +185,14 @@ var _ = Service("chorus", func() {
 				Minimum(1)
 				Example(14)
 			})
+			Attribute("pin", Boolean, "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.", func() {
+				Default(false)
+				Example(true)
+			})
 			Required("agent", "to", "text")
 		})
 		Result(TextResult)
-		Tool("send", "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers.", func() {
+		Tool("send", "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers; set pin=true on a #channel message to pin or update the channel's collaboration manifest.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 		})

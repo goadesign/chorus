@@ -142,6 +142,49 @@ func formatDirectory(
 	return b.String()
 }
 
+// formatChannelMembers renders the compact "members: @a (Role) [online], ..."
+// line for a joined channel from the in-memory replicated map snapshot and
+// per-agent subscription sets.
+func formatChannelMembers(
+	channel string,
+	now time.Time,
+	onlineWindow time.Duration,
+	snap map[string]string,
+	subsByAgent map[string][]string,
+) string {
+	var members []string
+	for agent, subs := range subsByAgent {
+		if slices.Contains(subs, channel) {
+			members = append(members, agent)
+		}
+	}
+	slices.Sort(members)
+
+	var b strings.Builder
+	b.WriteString("members: ")
+	if len(members) == 0 {
+		b.WriteString("(none)")
+		return b.String()
+	}
+	for i, handle := range members {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		rec, _ := parseAgentRecord(snap[agentMapKey(handle)])
+		b.WriteByte('@')
+		b.WriteString(handle)
+		if rec.Role != "" {
+			b.WriteString(" (")
+			b.WriteString(rec.Role)
+			b.WriteString(")")
+		}
+		b.WriteString(" [")
+		b.WriteString(formatLiveness(now, onlineWindow, rec.LastSeenUnix))
+		b.WriteByte(']')
+	}
+	return b.String()
+}
+
 // formatMessageLine renders a single channel or direct message into its compact
 // wire representation:
 //   - Channel message: "#arch#14 @db: migration 004 applied"

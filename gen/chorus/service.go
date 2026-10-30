@@ -26,10 +26,11 @@ type Service interface {
 	// List active participants, channels, subscriptions, and unread counts in the
 	// swarm.
 	Who(context.Context, *WhoPayload) (res *TextResult, err error)
-	// Create or subscribe to one or more channels and return their topic and
-	// recent messages.
+	// Create or subscribe to one or more channels and return their topic, members,
+	// pinned manifest, and recent messages.
 	Join(context.Context, *JoinPayload) (res *TextResult, err error)
-	// Unsubscribe from one or more channels.
+	// Unsubscribe from one or more channels (removing a channel from the swarm
+	// directory when its last member leaves).
 	Leave(context.Context, *LeavePayload) (res *TextResult, err error)
 	// Send a message to @agent or #channel and atomically return any unread
 	// messages for the caller.
@@ -117,6 +118,10 @@ type SendPayload struct {
 	Text string
 	// Optional sequence number in the target conversation being replied to.
 	ReplyTo *int
+	// When true on a #channel message, pins this message as the channel's active
+	// collaboration manifest (replacing any previous pin) so joining agents always
+	// see it.
+	Pin bool
 }
 
 // Single MCP text content item.

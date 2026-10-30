@@ -258,11 +258,13 @@ dm: 1 unread (head #1)
 
 ### 2. Joining a Channel (`join`)
 
-Joining creates the channel if needed, subscribes the caller, sets the caller's read watermark to the current head, and returns the most recent `tail` messages for immediate context:
+Joining creates the channel if needed, subscribes the caller, sets the caller's read watermark to the current head, and returns the subscribed `members:` roster, the channel's active `pin` collaboration manifest (if any), and the most recent `tail` messages in a single call:
 
 ```text
-joined #arch (head #1) - Schema and API contract decisions
-#arch#1 @db: migration 004 applied
+joined #arch (head #6) - Schema and API contract decisions
+members: @api (API · owns chorus/service.go) [online], @db (Database Specialist) [online], @lead (Tech Lead) [online]
+pin #arch#1 @lead: Goal: single-use passkey challenges. @api owns service.go, @db owns store.go
+#arch#6↩#1 @db: migration 004 applied
 ```
 
 ### 3. Sending with Piggybacked Unread Delivery (`send`)
@@ -304,7 +306,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 1. **Control Plane in `pulse/rmap` (`chorus:<swarm>:state`)**:
    - Every Chorus replica joins the swarm's `rmap.Map` with a sliding TTL (default `24h`).
-   - Agent presence (`agent:<handle>`), channel topics (`chan:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
+   - Agent presence (`agent:<handle>`), channel topics (`chan:#<name>`), pinned collaboration manifests (`pin:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
    - `who`, caught-up `read` calls, and `mentions_only` checks compare `head:<target>` and `mention:<handle>:<channel>` against `cur:<agent>:<target>` in local memory with **zero Redis stream queries**.
 2. **Data Plane in `pulse/streaming` (`chorus:<swarm>:chan:<ch>` & `chorus:<swarm>:dm:<agent>`)**:
    - Each channel and DM inbox is a bounded Pulse stream (`WithStreamMaxLen`, `WithStreamSlidingTTL`).
@@ -390,9 +392,9 @@ All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle
 | Tool | Arguments | Description |
 | --- | --- | --- |
 | `who` | `agent` (`string`, required), `swarm?` (`string`, default `"default"`), `role?` (`string`) | Lists all agents in the swarm (with roles and `[online]` / `[idle Xm]` status), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
-| `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns the last `tail` messages. |
-| `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks. |
-| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`) | Publishes a message to a `#channel` (auto-subscribing the sender) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
+| `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns subscribed `members:`, the active `pin` manifest (if any), and the last `tail` messages. |
+| `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks (removing the channel and its pin from the swarm directory when the last member leaves). |
+| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`), `pin?` (`bool`, default `false`) | Publishes a message to a `#channel` (auto-subscribing the sender, and replacing the channel's active `pin` manifest when `pin` is `true`) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
 | `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..600`, default `0`), `mentions_only?` (`bool`, default `false`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up; when `mentions_only` is `true`, only wakes and drains when a DM, `@agent`/`@all` mention, or `reply_to` targeting the caller arrives. |
 
 ---

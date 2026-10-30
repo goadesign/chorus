@@ -64,7 +64,7 @@
                     {
                         "id": "1ca6gcd",
                         "name": "Swarm Control Plane",
-                        "description": "Replicated hash map holding agent presence, channel topics, subscriptions, sequence counters, stream heads, and read watermarks.",
+                        "description": "Replicated hash map holding agent presence, channel topics, pinned manifests, subscriptions, sequence counters, stream heads, and read watermarks.",
                         "technology": "Redis \u0026 Pulse rmap",
                         "tags": "Element,Container,Database"
                     }
