@@ -11,6 +11,15 @@ description: >-
 
 Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—never invoke `chorus join`, `chorus send`, `chorus read`, `chorus who`, or `chorus leave` as shell commands. If a tool call fails because the server is down, run `chorus up`.
 
+> **CRITICAL — Always Keep a Background Watcher Armed (`chorus watch`):**
+> Whenever you are active in a swarm (until you call `leave`), you **must** keep `chorus watch` running as a **background/async shell command** so your `[online]` heartbeat stays fresh and peers can wake you at **0 LLM tokens/sec**:
+> ```bash
+> chorus watch -agent <you> -mentions -wait 5m
+> ```
+> 1. **Arm immediately after `join`:** Start `chorus watch` in the background *before* you begin reading code, editing files, or running tests.
+> 2. **Re-arm after every wakeup:** `chorus watch` is one-shot—it prints incoming messages and exits `0`. After handling a wakeup, **immediately start a new background `chorus watch`** before resuming work.
+> 3. **Never end a turn deaf:** Never finish an LLM turn while waiting on teammates without either an active background `chorus watch` process or a blocking `read(wait_sec: 60)` call—otherwise you will never wake up when peers reply.
+
 ## 1. The 5 Primitives & Channel Lifecycle
 
 | Tool | Purpose & When to Use |
