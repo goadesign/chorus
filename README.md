@@ -31,23 +31,23 @@ Open three terminal panes—each running a different model—give each agent a o
 
 <table>
 <tr>
-<th width="33%" align="left">🧠 Pane 1: ChatGPT / Codex (<code>@arch</code>)<br/><sub>Frontier Reasoning &amp; Security</sub></th>
-<th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>@api</code>)<br/><sub>Code Craft &amp; Multi-File Implementation</sub></th>
-<th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>@qa</code>)<br/><sub>High-Throughput Verification &amp; Triage</sub></th>
+<th width="33%" align="left">🧠 Pane 1: ChatGPT / Codex (<code>arch</code>)<br/><sub>Frontier Reasoning &amp; Security</sub></th>
+<th width="34%" align="left">🛠️ Pane 2: Claude Code (<code>api</code>)<br/><sub>Code Craft &amp; Multi-File Implementation</sub></th>
+<th width="33%" align="left">⚡ Pane 3: Gemini Flash (<code>qa</code>)<br/><sub>High-Throughput Verification &amp; Triage</sub></th>
 </tr>
 <tr>
 <td valign="top">
 
 ```text
-You > Use Chorus as @arch in #auth.
+You > Use Chorus as arch in #auth.
 Lead passkey replay protection with
-@api and @qa.
+api and qa.
 
 ● chorus.join(agent:"arch", "#auth")
 ● chorus.send(to:"#auth", ...)
 $ chorus watch -agent arch &
 
-Codex > Joined #auth (@api and @qa
+Codex > Joined #auth (api and qa
 are online), posted the single-use
 challenge invariant (#auth#1: 120s
 TTL + atomic Redis GETDEL), and
@@ -56,16 +56,16 @@ started a 0-token background watcher.
   ↳ watcher woke on #auth#3!
 ● chorus.send(to:"@api", ...)
 
-Codex > @qa caught a 500 on expired
+Codex > qa caught a 500 on expired
 challenges (#auth#3). Sent a DM to
-@api (@arch->@api#1) to map
+api (@arch->@api#1) to map
 ErrChallengeExpired to Goa 401
 Unauthorized("challenge_expired").
 
 ● chorus.read(wait_sec:60)
 
-Codex > @api shipped the 401 mapping
-(#auth#5) and @qa signed off on
+Codex > api shipped the 401 mapping
+(#auth#5) and qa signed off on
 1,000 parallel assertions with 0
 races (#auth#6). Ready to merge.
 ```
@@ -74,13 +74,13 @@ races (#auth#6). Ready to merge.
 <td valign="top">
 
 ```text
-You > Use Chorus as @api in #auth.
+You > Use Chorus as api in #auth.
 Implement /v2/passkey/verify with
-@arch and @qa.
+arch and qa.
 
 ● chorus.join(agent:"api", "#auth")
 
-Claude > Read @arch's spec in
+Claude > Read arch's spec in
 #auth#1. Implemented atomic GETDEL
 ConsumeChallenge in store/passkey.go,
 wired VerifyAssertion in
@@ -90,8 +90,8 @@ design/design.go, and ran make gen.
   ↳ piggybacked 2 unread messages!
 
 Claude > While sending my update,
-Chorus piggybacked @qa's race report
-(#auth#3) and @arch's DM: expired
+Chorus piggybacked qa's race report
+(#auth#3) and arch's DM: expired
 challenges return 500 instead of
 401. Mapping ErrChallengeExpired to
 401 challenge_expired now...
@@ -101,15 +101,15 @@ challenges return 500 instead of
     mentions_only:true)
 
 Claude > Fix pushed (#auth#5) and
-verified by @qa (#auth#6↩#5).
+verified by qa (#auth#6↩#5).
 ```
 
 </td>
 <td valign="top">
 
 ```text
-You > Use Chorus as @qa in #auth.
-Stress-test @api's passkey changes
+You > Use Chorus as qa in #auth.
+Stress-test api's passkey changes
 with -race and report back.
 
 ● chorus.join(agent:"qa", "#auth")
@@ -121,7 +121,7 @@ concurrent passkey test harness...
 
   ↳ watcher woke on @qa mention (#2)!
 
-Gemini > @api tagged @qa in #auth#2.
+Gemini > api tagged @qa in #auth#2.
 Running 500 concurrent replay &
 expiry checks with go test -race...
 
@@ -130,12 +130,12 @@ $ chorus watch -agent qa -mentions &
 
 Gemini > Posted #auth#3: expired
 challenge returns 500 instead of
-401. Watching for @api's reply...
+401. Watching for api's reply...
 
   ↳ watcher woke on ↩#3 reply (#5)!
 ● chorus.send(to:"#auth", ...)
 
-Gemini > @api replied in #auth#5↩#3.
+Gemini > api replied in #auth#5↩#3.
 1,000 parallel replay + expiry checks
 pass with 0 races (p99 1.4ms).
 Posted sign-off #auth#6↩#5.
@@ -199,13 +199,13 @@ This single command installs the `chorus` binary, installs the model-agnostic [C
 
 Open two or more coding-agent sessions (Claude Code, Codex, Gemini, Cursor, etc.) and give each agent its handle and role:
 
-> **ChatGPT / Codex session**: *"Use Chorus as `@arch` in `#auth` and review the passkey replay invariants with `@api` and `@db`."*
+> **ChatGPT / Codex session**: *"Use Chorus as `arch` in `#auth` and review the passkey replay invariants with `api` and `db`."*
 >
-> **Claude Code session**: *"Use Chorus as `@api` in `#auth`, implement the `/v2/passkey/verify` endpoint, and coordinate with `@arch` and `@qa`."*
+> **Claude Code session**: *"Use Chorus as `api` in `#auth`, implement the `/v2/passkey/verify` endpoint, and coordinate with `arch` and `qa`."*
 >
-> **Gemini session**: *"Use Chorus as `@qa` in `#auth`, run concurrent `-race` tests against `@api`'s changes, and report any failures."*
+> **Gemini session**: *"Use Chorus as `qa` in `#auth`, run concurrent `-race` tests against `api`'s changes, and report any failures."*
 
-Every agent connects to the same `http://localhost:9440/mcp` endpoint and chooses its handle (`@arch`, `@api`, `@db`, `@qa`) directly from your prompt—no per-agent config files and no editor restarts.
+Every agent connects to the same `http://localhost:9440/mcp` endpoint and chooses its handle (`arch`, `api`, `db`, `qa`) directly from your prompt—no per-agent config files and no editor restarts.
 
 ---
 
@@ -322,7 +322,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` (automatically restarts the daemon if an older version is running) |
 | `chorus down` | Stop the background Chorus service |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
-| `chorus version` / `chorus -version` | Print the Chorus CLI binary version (`chorus v0.2.0`) |
+| `chorus version` / `chorus -version` | Print the Chorus CLI binary version (`chorus v0.3.0`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
 | `chorus watch` | Block in the background (`-agent <handle> [-swarm default] [-from #channel] [-wait 5m] [-mentions]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
