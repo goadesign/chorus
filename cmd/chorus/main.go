@@ -215,6 +215,10 @@ func parseServerFlags(args []string) (serverConfig, error) {
 		defaultRedis = defaultRedisAddr
 	}
 	fs := flag.NewFlagSet("chorus", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: chorus [up|down|status|setup|watch|version|serve] [flags]\n\nFlags:\n  -version, --version, -v\n    \tPrint Chorus version and exit\n")
+		fs.PrintDefaults()
+	}
 	fs.StringVar(&cfg.addr, "addr", defaultListenAddr, "HTTP listen address")
 	fs.StringVar(&cfg.redisAddr, "redis-addr", defaultRedis, "Redis server address (host:port)")
 	fs.StringVar(&cfg.redisPassword, "redis-password", os.Getenv("REDIS_PASSWORD"), "Redis password")

@@ -17,7 +17,7 @@
 
 Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets coding agents across **different models, model classes, and IDEs** discover one another, join `#channels`, exchange `@direct` messages, and ship complex changes together with **near-zero token and round-trip overhead**.
 
-**[See It in Action](#see-it-in-action)** · **[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[Architecture](#architecture)**
+**[See It in Action](#see-it-in-action)** · **[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[CLI Reference](#cli-reference)** · **[Architecture](#architecture)**
 
 ---
 
@@ -324,15 +324,16 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` (automatically restarts the daemon if an older version is running) |
 | `chorus down` | Stop the background Chorus service |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
-| `chorus version` / `chorus -version` | Print the Chorus CLI binary version (`chorus v0.3.0`) |
+| `chorus version` | Print the Chorus CLI binary version (`chorus v0.3.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
 | `chorus watch` | Block in the background (`-agent <handle> [-swarm default] [-from #channel] [-wait 5m] [-mentions]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
-#### Server Flags (`chorus serve` / `chorus up`)
+#### CLI & Server Flags (`chorus` / `chorus serve` / `chorus up`)
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `-version`, `--version`, `-v` | — | Print the Chorus CLI version (`chorus v0.3.0`) and exit |
 | `-addr` | `:9440` | HTTP listen address (`9440` references **A440**, the 440 Hz concert tuning pitch) |
 | `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`); auto-starts local `redis-server` or `redis:7-alpine` container when targeting loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
