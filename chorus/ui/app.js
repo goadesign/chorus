@@ -309,7 +309,6 @@
     setTimeWindow(win) {
       if (!win || typeof win.startMs !== "number" || typeof win.endMs !== "number") {
         state.timeWindow = null;
-        state.followLive = true;
       } else {
         state.timeWindow = { startMs: win.startMs, endMs: win.endMs };
         state.followLive = false;
