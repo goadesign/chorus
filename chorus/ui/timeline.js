@@ -45,9 +45,6 @@
   // agent keeps its color across renders of the same swarm.
   const PALETTE = ["#F59E0B", "#14B8A6", "#3B82F6", "#F43F5E", "#8B5CF6", "#22C55E", "#EC4899", "#64748B"];
 
-  // Per-root state that is about interaction only (focus, drag), never data.
-  const ui = new WeakMap();
-
   /**
    * render draws the timeline into rootEl.
    * state fields read: view, selectedTarget, selectedMessage, timeWindow,
@@ -61,6 +58,9 @@
    */
   function render(rootEl, state, actions) {
     const view = state && state.view;
+    // Re-rendering replaces the SVG; keep keyboard focus on the timeline if
+    // it had it, so arrow-key navigation survives new messages arriving.
+    const hadFocus = rootEl.contains(document.activeElement);
     clear(rootEl);
     if (!view) {
       rootEl.appendChild(note("Loading swarm…"));
@@ -78,7 +78,10 @@
     const axis = buildAxis(events);
     const win = currentWindow(state, axis);
     const plotW = width - LABEL_W - PAD * 2;
-    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
+    // While reviewing earlier messages, one extra row under the lanes holds
+    // the notice, so it never overlaps the axis labels.
+    const noticeH = state.followLive ? 0 : 18;
+    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3 + noticeH;
 
     const svg = el("svg", {
       class: "tl",
@@ -146,17 +149,14 @@
     }
 
     if (!state.followLive) {
-      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(top + 12), "text-anchor": "end" });
+      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(height - PAD), "text-anchor": "end" });
       back.textContent = "Reviewing earlier messages · press F to follow live";
       svg.appendChild(back);
     }
 
     svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, state));
     rootEl.appendChild(svg);
-    const mem = ui.get(rootEl);
-    if (mem && mem.focused) svg.focus();
-    svg.addEventListener("focus", () => ui.set(rootEl, { focused: true }));
-    svg.addEventListener("blur", () => ui.set(rootEl, { focused: false }));
+    if (hadFocus) svg.focus();
   }
 
   // collectEvents flattens every retained channel message and DM into one
@@ -416,9 +416,15 @@
       const m = bySeq.get(p.read_seq);
       const t = m ? m.sent_at_ms : win.startMs;
       const x = mx(Math.min(win.endMs, Math.max(win.startMs, t)));
-      const mark = el("path", {
+      // A short bar centered on the member's own lane line, so it cannot be
+      // read as belonging to the lane above or below.
+      const mark = el("rect", {
         class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
-        d: `M${x.toFixed(1)},${y - 9} l5,-6 l-10,0 z`,
+        x: (x - 1.5).toFixed(1),
+        y: String(y - LANE_H / 2 + 3),
+        width: "3",
+        height: String(LANE_H - 6),
+        rx: "1.5",
       });
       const title = el("title", {});
       title.textContent = p.behind > 0
