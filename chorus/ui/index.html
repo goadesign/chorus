@@ -1411,8 +1411,6 @@
         allThreadsCollapsed: false,
         replyToSeq: 0,
         pollAbort: null,
-        joinedByHandle: new Set(),
-        registeredHandles: new Set(),
       };
 
       // Deterministic accessible color palette for agent handles.
@@ -2713,7 +2711,7 @@
         } else if (target?.kind === "dm") {
           const pair = pairedDMs.find((p) => p.pairKey === target.pairKey);
           posScope.textContent = pair ? `@${pair.a} ↔ @${pair.b}` : "DM";
-          const inboxes = [pair?.inboxA, pair?.inboxB].filter(Boolean);
+          const inboxes = Array.from(new Set([pair?.inboxA, pair?.inboxB].filter(Boolean)));
           posList.replaceChildren(
             ...inboxes.map((ib) =>
               el(
@@ -2940,7 +2938,12 @@
               state.connectionState = "live";
               retryDelayMs = 1000;
               renderLiveStatus();
-              fetchSwarms().catch(() => {});
+              const prevSwarms = state.swarms.join(",");
+              fetchSwarms()
+                .then((next) => {
+                  if (next.join(",") !== prevSwarms) renderAll();
+                })
+                .catch(() => {});
               continue;
             }
 
@@ -3055,15 +3058,10 @@
         }
 
         const agentLower = agent.toLowerCase();
-        const regKey = `${swarm}:${agentLower}`;
         const existingAgent = (state.view?.agents || []).find(
           (a) => a.handle.toLowerCase() === agentLower
         );
-        if (
-          existingAgent &&
-          existingAgent.role !== "human" &&
-          !state.registeredHandles.has(regKey)
-        ) {
+        if (existingAgent && existingAgent.role !== "human") {
           showToast(
             `@${existingAgent.handle} is an agent in this swarm; pick your own handle`,
             true
@@ -3077,9 +3075,10 @@
           if (to.startsWith("#")) {
             const ch = (state.view?.channels || []).find((c) => c.name === to);
             const alreadyMember =
-              ch && (ch.positions || []).some((p) => p.handle.toLowerCase() === agentLower);
-            const joinKey = `${swarm}:${agentLower}:${to.toLowerCase()}`;
-            if (!alreadyMember && !state.joinedByHandle.has(joinKey)) {
+              Boolean(existingAgent) &&
+              Boolean(ch) &&
+              (ch.positions || []).some((p) => p.handle.toLowerCase() === agentLower);
+            if (!alreadyMember) {
               await callMCPTool("join", {
                 swarm,
                 agent,
@@ -3087,13 +3086,10 @@
                 channels: [to],
                 tail: 1,
               });
-              state.joinedByHandle.add(joinKey);
-              state.registeredHandles.add(regKey);
             }
           } else {
-            if (!existingAgent && !state.registeredHandles.has(regKey)) {
+            if (!existingAgent) {
               await callMCPTool("who", { swarm, agent, role: "human" });
-              state.registeredHandles.add(regKey);
             }
           }
 
