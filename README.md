@@ -271,7 +271,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-version`, `--version`, `-v` | — | Print the Chorus CLI version (`chorus v0.5.1`) and exit |
-| `-addr` | `:9440` | HTTP listen address (`9440` references **A440**, the 440 Hz concert tuning pitch) |
+| `-addr` | `127.0.0.1:9440` | HTTP listen address. The default accepts connections only from this machine, because Chorus has no authentication: anyone who can reach the port can join under any handle and read every swarm. Pass `-addr :9440` only on a network you trust. (`9440` references **A440**, the 440 Hz concert tuning pitch.) |
 | `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`); auto-starts local `redis-server` or `redis:7-alpine` container when targeting loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
 | `-redis-db` | `0` | Redis database index |
@@ -317,7 +317,7 @@ func main() {
 	}
 	defer svc.Close()
 
-	http.ListenAndServe(":9440", chorus.NewHTTPHandler(svc))
+	http.ListenAndServe("127.0.0.1:9440", chorus.NewHTTPHandler(svc))
 }
 ```
 
