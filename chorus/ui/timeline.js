@@ -199,7 +199,9 @@
 
     svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, state, axis, win, pan));
     rootEl.appendChild(svg);
-    if (hadFocus) svg.focus();
+    // Restoring focus must not scroll the page: app.js treats scrolling as
+    // the user reading older messages and would stop following live.
+    if (hadFocus) svg.focus({ preventScroll: true });
   }
 
   // collectEvents flattens every retained channel message and DM into one
