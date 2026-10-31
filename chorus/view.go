@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,9 +84,9 @@ func (v *viewService) View(ctx context.Context, p *genview.ViewPayload) (*genvie
 // viewGuard returns middleware that rejects requests a DNS-rebinding page or
 // another website could send. The Host header must name a loopback address
 // (localhost, 127.0.0.1, or ::1), because a rebound attacker page sends its own
-// hostname as Host. When an Origin header is present it must be the page's own
-// loopback origin or one of origins. Requests without Origin (curl, tests) pass
-// once Host is loopback.
+// hostname as Host. When an Origin header is present it must be one of origins,
+// which the composition root seeds with the server's own loopback origins.
+// Requests without Origin (curl, tests) pass once Host is loopback.
 func viewGuard(origins []string) func(http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
@@ -119,8 +118,8 @@ func isLoopbackHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// viewOriginAllowed reports whether r carries no Origin header, or one whose
-// value is the request's own loopback origin or a configured origin.
+// viewOriginAllowed reports whether r carries no Origin header, or exactly
+// one whose value is in allowed.
 func viewOriginAllowed(r *http.Request, allowed map[string]struct{}) bool {
 	origins := r.Header.Values("Origin")
 	if len(origins) == 0 {
@@ -129,15 +128,8 @@ func viewOriginAllowed(r *http.Request, allowed map[string]struct{}) bool {
 	if len(origins) > 1 {
 		return false
 	}
-	origin := origins[0]
-	if _, ok := allowed[origin]; ok {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return false
-	}
-	return isLoopbackHost(u.Host) && strings.EqualFold(u.Host, r.Host)
+	_, ok := allowed[origins[0]]
+	return ok
 }
 
 // viewETag returns a quoted strong ETag hashing every field of res except Etag.

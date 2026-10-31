@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/goadesign/chorus/chorus"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -186,10 +189,20 @@ func TestSwarmListAndUnknownSwarm(t *testing.T) {
 // TestSwarmViewRejectsForeignHostAndOrigin verifies the DNS-rebinding and
 // cross-site defenses on the dashboard routes.
 func TestSwarmViewRejectsForeignHostAndOrigin(t *testing.T) {
-	cluster := newTestCluster(t, 1, nil, "http://allowed.example")
-	base := cluster.replicas[0].httpServer.URL
-	u, err := url.Parse(base)
+	rdb := redis.NewClient(&redis.Options{Addr: sharedRedisAddr})
+	t.Cleanup(func() { _ = rdb.Close() })
+	svc, err := chorus.New(rdb)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	// Start the listener first so the page's own origin can be allowed the way
+	// cmd/chorus seeds it from the listen port.
+	srv := httptest.NewUnstartedServer(nil)
+	u, err := url.Parse("http://" + srv.Listener.Addr().String())
+	require.NoError(t, err)
+	srv.Config.Handler = chorus.NewHTTPHandler(svc, "http://"+u.Host, "http://allowed.example")
+	srv.Start()
+	t.Cleanup(srv.Close)
+	base := srv.URL
 
 	tests := []struct {
 		name   string
