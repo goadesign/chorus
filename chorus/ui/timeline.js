@@ -167,6 +167,10 @@
       drawReadPositions(svg, channel, mx, inWindow, laneY);
     }
 
+    // Handles whose current registration says role "human": their messages
+    // are drawn as landmarks (the role can change, so this is current role,
+    // not a claim about who wrote older messages).
+    const humans = new Set(lanes.filter((l) => l.human).map((l) => l.handle));
     const order = events;
     for (const e of order) {
       if (!inWindow(e.t)) continue;
@@ -175,7 +179,8 @@
       const isSel = isSelected(e);
       const dim = match && !match(e);
       const dot = el("circle", {
-        class: "tl-dot" + (isSel ? " is-selected" : "") + (dim ? " is-dim" : "") + (sel && sameTarget(sel, e) ? " is-target" : ""),
+        class: "tl-dot" + (isSel ? " is-selected" : "") + (dim ? " is-dim" : "") +
+          (sel && sameTarget(sel, e) ? " is-target" : "") + (humans.has(e.sender) ? " is-human" : ""),
         cx: mx(e.t).toFixed(1),
         cy: String(y),
         r: String(isSel ? DOT_R_SELECTED : DOT_R),
