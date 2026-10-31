@@ -278,11 +278,12 @@
             : true);
 
       state.selectedTarget = targetObj;
-      if (!sameAsCurrent) {
-        state.selectedMessage = null;
-        state.replyToSeq = 0;
-        renderReplyChip();
+      if (sameAsCurrent) {
+        return;
       }
+      state.selectedMessage = null;
+      state.replyToSeq = 0;
+      renderReplyChip();
       const sendTarget = document.getElementById("send-target");
       const pinCheck = document.getElementById("send-pin");
       if (targetObj.kind === "channel" && sendTarget) {
