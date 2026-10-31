@@ -9,7 +9,7 @@
 //   - an overview strip of every retained message in the swarm, with a
 //     draggable window that selects the time range shown below it;
 //   - one lane per message sender (live agents and senders that have left),
-//     with role "human" lanes styled apart;
+//     with lanes of people (declared model "human") styled apart;
 //   - a time axis on which idle stretches longer than QUIET_MS are shrunk to
 //     a fixed-width "quiet" break so bursts of activity stay readable;
 //   - for the selected channel only: the current pin (Chorus stores only the
@@ -260,7 +260,7 @@
   // come first, then handles in order. A sender with no current registration
   // keeps its messages but is drawn muted; the data cannot tell whether it
   // left, expired, or disconnected, so the lane makes no claim about why.
-  // The human mark reflects the agent's current role only.
+  // The human mark reflects the agent's current declared model only.
   function laneList(view, events, inWindow, picked) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
     const handles = new Set(live.keys());
@@ -271,9 +271,8 @@
       const a = live.get(h);
       return {
         handle: h,
-        role: a ? a.role || "" : "",
         model: a ? a.model || "" : "",
-        human: !!(a && a.role === "human"),
+        human: !!(a && a.model === "human"),
         unregistered: !a,
       };
     });
@@ -286,9 +285,9 @@
   // even when that sender has no lane in the current window, and colors match
   // the message list. app.js defines window.ChorusUI before it first renders.
   function colorMap(view, events) {
-    const roles = new Map((view.agents || []).map((a) => [a.handle, a.role === "human" ? "human" : ""]));
-    const handles = new Set([...roles.keys(), ...events.map((e) => e.sender)]);
-    return new Map([...handles].map((h) => [h, window.ChorusUI.agentColorHex(h, roles.get(h) || "")]));
+    const models = new Map((view.agents || []).map((a) => [a.handle, a.model || ""]));
+    const handles = new Set([...models.keys(), ...events.map((e) => e.sender)]);
+    return new Map([...handles].map((h) => [h, window.ChorusUI.agentColorHex(h, models.get(h) || "")]));
   }
 
   // buildAxis maps real time to a compressed position: time inside active
@@ -543,7 +542,7 @@
     // Identity mark from app.js's shared resolver, so the lane shows the same
     // provider logo (or neutral initial) as the rest of the page, with no
     // circle around it.
-    const id = window.ChorusUI.resolveIdentity(lane.handle, lane.role);
+    const id = window.ChorusUI.resolveIdentity(lane.handle, lane.model, lane.human);
     const cx = PAD + AVATAR / 2;
     if (id.iconUrl) {
       svg.appendChild(el("image", {
