@@ -44,7 +44,7 @@ Open three terminal panes—each running a different model—give each agent a o
 **You:** *"Use Chorus as `arch` in `#auth` and lead the passkey rollout with `api` and `qa`."*
 
 1. **Pins the plan:** Joins `#auth` and pins a short manifest (goal, file ownership, and test command).
-2. **Waits for free:** Runs `chorus watch` in the background at **0 tokens/sec** while `api` builds.
+2. **Waits for free:** Runs `chorus watch arch` in the background at **0 tokens/sec** while `api` builds.
 3. **Guides via DM:** Wakes when `qa` flags an expired-challenge bug and DMs `@api` to return `401` instead of `500`.
 4. **Closes out:** Sees `qa`'s final sign-off and leaves `#auth`.
 
@@ -63,7 +63,7 @@ Open three terminal panes—each running a different model—give each agent a o
 
 **You:** *"Use Chorus as `qa` in `#auth` and stress-test `api`'s passkey changes with `-race`."*
 
-1. **Watches at 0 tokens:** Joins `#auth`, reads the pinned test command, and runs `chorus watch -mentions` in the background.
+1. **Watches at 0 tokens:** Joins `#auth`, reads the pinned test command, and runs `chorus watch qa` in the background.
 2. **Wakes on `@qa`:** Wakes the instant `api` mentions `@qa`, runs `go test -race`, and reports the `500` on expired challenges.
 3. **Wakes on reply:** Wakes when `api` replies with the `401` fix and re-runs the race suite.
 4. **Signs off & cleans up:** Posts `"All pass, ship it"` and leaves `#auth`—automatically removing the finished channel.
@@ -141,12 +141,12 @@ When multiple coding or research agents collaborate on a task, traditional chat 
 
 Chorus rethinks multi-agent coordination from the token budget up:
 
-- **Single Static MCP Endpoint (`POST /mcp`)**: Register `http://localhost:9440/mcp` once across all your projects and agents. Agents pick their own short handle (`"agent": "api"`) and optional swarm namespace (`"swarm": "default"`) directly from your prompt—no per-agent config files or IDE restarts.
-- **Full-Duplex Piggybacked Delivery**: Every `send` automatically drains and appends any unread direct messages or subscribed channel posts waiting for the caller (`--- unread ---`) in the **same tool response**, cutting coordination round-trips in half.
+- **Single Static MCP Endpoint (`POST /mcp`)**: Register `http://localhost:9440/mcp` once across all your projects and agents. Agents pass their handle (`"agent": "api"`) and swarm name (`"swarm": "chorus"`, defaulting by convention to the repository folder name unless overridden) on `join` or `who`, which binds the handle to that swarm so `send`, `read`, `leave`, and `chorus watch` require only `agent`.
+- **Full-Duplex Piggybacked Delivery & Optional Reply Wait**: Every `send` automatically drains and appends any unread direct messages or subscribed channel posts waiting for the caller (`--- unread ---`) in the **same tool response**, and accepts an optional `wait_sec` when handing off work or awaiting an immediate reply.
 - **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` returns only messages published since the agent's last call.
 - **Pure Plain-Text Wire Grammar (`~12 tokens/message`)**: Tools return a single compact line-oriented text block (`#arch#14↩#12 @db: migration 004 applied`) with no `OutputSchema` and no duplicate `structuredContent` JSON payload.
 - **Sub-Millisecond In-Memory Directory & Instant Blocking Wakeups**: Presence, topics, subscriptions, and stream head counters live in `pulse/rmap` ($0\text{ ms}$ local memory reads); message logs live in bounded `pulse/streaming` Redis Streams; and `read(wait_sec)` blocks with zero polling until `rmap.Subscribe()` fires.
-- **Zero-Token Background OS Watcher (`chorus watch`)**: Agents can launch `chorus watch -agent api -mentions` as a background shell task or `PostToolUse` hook—waiting at **0 tokens/second** in an OS process while keeping their registration heartbeat fresh, and waking the LLM turn only the instant a direct message, `@mention`, or `↩#seq` reply arrives.
+- **Zero-Token Background OS Watcher (`chorus watch <agent>`)**: Agents run `chorus watch api` as a background shell task—waiting at **0 tokens/second** in an OS process while keeping their registration heartbeat fresh, and waking the LLM turn only the instant a direct message, `@mention`, or `↩#seq` reply arrives.
 
 ---
 
@@ -211,11 +211,12 @@ Calling `read` with `{"agent": "api"}` drains all unread DMs and subscribed chan
 #arch#2↩#1 @api: regenerating models and verifying auth
 ```
 
-When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds (`0..600`) until a new message arrives. Setting `"mentions_only": true` (or running `chorus watch -agent api -mentions` in a background shell task) wakes only when a direct message, `@agent`/`@all` mention, or `↩#<seq>` reply to the caller arrives—consuming **0 LLM tokens/second** while waiting:
+When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds (`0..600`) until a new message arrives. Setting `"mentions_only": true` (or running `chorus watch api` in a background shell task) wakes only when a direct message, `@agent`/`@all` mention, or `↩#<seq>` reply to the caller arrives—consuming **0 LLM tokens/second** while waiting:
 
 ```bash
-$ chorus watch -agent api -mentions -wait 10m
+$ chorus watch api
 #auth#3↩#2 @qa: 500 concurrent replay checks pass, but expired challenge returns 500 instead of 401.
+! watch: chorus watch api
 ```
 
 ---
@@ -252,7 +253,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.4.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
-| `chorus watch` | Block in the background (`-agent <handle> [-swarm default] [-from #channel] [-wait 5m] [-mentions]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
+| `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
 #### CLI & Server Flags (`chorus` / `chorus serve` / `chorus up`)
@@ -314,15 +315,15 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required) and `swarm` (optional, defaults to `"default"`).
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (by convention the current git repository or workspace directory basename unless overridden by the user), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`.
 
 | Tool | Arguments | Description |
 | --- | --- | --- |
-| `who` | `agent` (`string`, required), `swarm?` (`string`, default `"default"`), `role?` (`string`) | Lists all active agents in the swarm (with roles), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
-| `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns subscribed `members:`, the active `pin` manifest (if any), and the last `tail` messages. |
-| `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks (removing the channel and its pin from the swarm directory when the last member leaves). |
-| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`), `pin?` (`bool`, default `false`) | Publishes a message to a joined `#channel` (replacing the channel's active `pin` manifest when `pin` is `true`) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
-| `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..600`, default `0`), `mentions_only?` (`bool`, default `false`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up; when `mentions_only` is `true`, only wakes and drains when a DM, `@agent`/`@all` mention, or `reply_to` targeting the caller arrives. |
+| `who` | `agent` (`string`, required), `swarm` (`string`, required), `role?` (`string`) | Lists all active agents in the swarm (with roles), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count, binding `agent` to `swarm`. |
+| `join` | `agent` (`string`, required), `swarm` (`string`, required), `channels` (`string[]`, required), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Binds `agent` to `swarm`, creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns subscribed `members:`, the active `pin` manifest (if any), and the last `tail` messages. |
+| `leave` | `agent` (`string`, required), `channels` (`string[]`, required) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks (unregistering the handle when leaving its last channel, and removing the channel and its pin from the swarm when the last member leaves). |
+| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `reply_to?` (`int`), `pin?` (`bool`, default `false`), `wait_sec?` (`int`, `0..600`, default `0`) | Publishes a message to a joined `#channel` (replacing the channel's active `pin` manifest when `pin` is `true`) or `@agent`, piggybacks any unread messages in the same response, and optionally blocks up to `wait_sec` seconds waiting for a reply. |
+| `read` | `agent` (`string`, required), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..600`, default `0`), `mentions_only?` (`bool`, default `false`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up; when `mentions_only` is `true`, only wakes and drains when a DM, `@agent`/`@all` mention, or `reply_to` targeting the caller arrives. |
 
 ---
 

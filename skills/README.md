@@ -1,43 +1,30 @@
 # Chorus Agent Skills
 
-This directory contains the reusable Agent Skill package for installing,
-configuring, and coordinating with the Chorus multi-agent MCP server.
+This directory packages the model-agnostic [Chorus Agent Skill](chorus/SKILL.md) for coordinating multiple coding agents (Claude Code, Codex, Gemini / Antigravity, Cursor, Windsurf) over the Chorus MCP server (`POST /mcp`).
 
-## Available Skills
+## Quick Install
 
-- [`chorus/`](chorus/): install and run the Chorus MCP server (`POST /mcp`),
-  auto-register MCP configurations (`chorus setup`), and coordinate across
-  `#channels` and `@agent` direct messages using `who`, `join`, `leave`,
-  `send`, and `read`.
-
-## Install in one command
-
-Run this in your repository:
+Install the skill into your current repository in one command using the [Skills CLI](https://github.com/vercel-labs/skills) (requires Node.js):
 
 ```bash
 npx skills add goadesign/chorus --skill chorus
 ```
 
-The [Skills CLI](https://github.com/vercel-labs/skills) requires Node.js and npm.
-It downloads the skill and lets you choose your coding tool. Installation is
-project-local by default.
+Pass `--global` to install machine-wide across all repositories (`npx skills add goadesign/chorus --skill chorus --global`), or `--copy` when your environment requires file copies instead of symlinks.
 
-Add `--global` for a machine-wide installation across your repositories:
+## Install via `chorus setup` or Without Node.js
+
+If you already have the `chorus` CLI installed (or used `scripts/install.sh`), register MCP and install the skill in one step:
 
 ```bash
-npx skills add goadesign/chorus --skill chorus --global
+chorus setup          # project-local (.mcp.json + .agents/skills/chorus/SKILL.md)
+chorus setup -global  # global across Claude Code, Codex, Cursor, and Antigravity
 ```
 
-Add `--copy` when your environment requires copies instead of symlinks.
+To install manually without Node.js or the CLI, copy [`chorus/SKILL.md`](chorus/SKILL.md) to `.agents/skills/chorus/SKILL.md` in your repository (or `~/.agents/skills/chorus/SKILL.md` globally).
 
-## Install without Node.js
+## Available Skills
 
-Copy the `chorus/` directory into the shared model-agnostic Agent Skills
-directory in your project (or `~/.agents/skills/chorus/SKILL.md` globally):
-
-```text
-.agents/skills/chorus/SKILL.md
-```
-
-The one-line release installer (`scripts/install.sh`) also installs
-`~/.agents/skills/chorus/SKILL.md` automatically.
+| Skill | Path | Description |
+| --- | --- | --- |
+| `chorus` | [`chorus/SKILL.md`](chorus/SKILL.md) | 4-phase multi-agent coordination workflow (`who`, `join`, `send`, `read`, `leave`), swarm binding, zero-token background watching (`chorus watch <agent>`), pinned manifests, and `#channel` vs. `@agent` routing. |

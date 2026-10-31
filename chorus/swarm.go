@@ -126,46 +126,45 @@ func (s *swarmHandle) close() {
 	s.state.Close()
 }
 
-// requireRegisteredAgent verifies that agent has been registered in the swarm
-// via join or who and has not expired past onlineWindow, returning a caller
-// precondition error (errInvalidCallerState) listing the swarm's live
-// registered handles when unknown or expired.
-func (s *swarmHandle) requireRegisteredAgent(agent string) error {
-	now := s.clock()
-	if raw, ok := s.state.Get(agentMapKey(agent)); ok {
-		if _, live := parseLiveAgentRecord(now, s.onlineWindow, raw); live {
-			return nil
-		}
+// isLiveAgent reports whether agent currently has a registration record in s
+// that is either actively watching or within the online liveness window.
+func (s *swarmHandle) isLiveAgent(agent string) bool {
+	raw, ok := s.state.Get(agentMapKey(agent))
+	if !ok {
+		return false
 	}
+	if s.hasActiveWatch(agent) {
+		return true
+	}
+	_, live := parseLiveAgentRecord(s.clock(), s.onlineWindow, raw)
+	return live
+}
+
+// liveAgents returns the handles of all non-expired registered agents in s.
+func (s *swarmHandle) liveAgents() []string {
+	now := s.clock()
 	snap := s.state.Map()
-	var registered []string
+	var handles []string
 	for k, v := range snap {
 		if !strings.HasPrefix(k, prefixAgent) {
 			continue
 		}
+		handle := strings.TrimPrefix(k, prefixAgent)
+		if s.hasActiveWatch(handle) {
+			handles = append(handles, handle)
+			continue
+		}
 		if _, live := parseLiveAgentRecord(now, s.onlineWindow, v); live {
-			registered = append(registered, strings.TrimPrefix(k, prefixAgent))
+			handles = append(handles, handle)
 		}
 	}
-	if len(registered) == 0 {
-		return fmt.Errorf(
-			"%w: unknown agent %q in swarm %q (no agents registered yet); call join or who first",
-			errInvalidCallerState, agent, s.name,
-		)
-	}
-	return fmt.Errorf(
-		"%w: unknown agent %q in swarm %q (registered: %s); call join first or use your joined handle",
-		errInvalidCallerState, agent, s.name, formatHandleList(registered),
-	)
+	return handles
 }
 
-// requireChannelMember verifies that agent is registered in the swarm and has
-// joined channel, returning a caller precondition error (errInvalidCallerState)
-// listing the channel's current members when not subscribed.
+// requireChannelMember verifies that agent has joined channel, returning a
+// caller precondition error (errInvalidCallerState) listing the channel's
+// current members when not subscribed.
 func (s *swarmHandle) requireChannelMember(agent, channel string) error {
-	if err := s.requireRegisteredAgent(agent); err != nil {
-		return err
-	}
 	subs, _ := s.state.GetValues(subMapKey(agent))
 	if slices.Contains(subs, channel) {
 		return nil
@@ -311,7 +310,12 @@ func (s *swarmHandle) joinChannels(
 			}
 		}
 
-		lines, headSeq, err := s.tailTarget(ctx, ch, tail)
+		events, err := s.snapshotTarget(ctx, ch)
+		if err != nil {
+			return "", err
+		}
+		curSnap := s.state.Map()
+		lines, headSeq, err := formatTailLines(ch, tail, curSnap[headMapKey(ch)], curSnap[pinMapKey(ch)], events)
 		if err != nil {
 			return "", err
 		}
@@ -355,7 +359,7 @@ func (s *swarmHandle) joinChannels(
 	}
 	out := strings.Join(sections, "\n")
 	if !s.hasActiveWatch(agent) {
-		out += "\n" + formatWatchHint(s.name, agent)
+		out += "\n" + formatWatchHint(agent)
 	}
 	return out, nil
 }
@@ -425,6 +429,7 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 		if _, err := s.state.Delete(ctx, agentMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
 		}
+		_ = s.rdb.HDel(ctx, agentSwarmHashKey, handle).Err()
 	}
 	for _, ch := range candidateChannels {
 		if !hasChannelSubscribers(ch, subsByAgent) {
@@ -442,23 +447,9 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 // channel—destroys the channel stream and removes its topic, pinned manifest,
 // sequence counters, and mention watermarks.
 func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels []string) (string, error) {
-	if err := s.requireRegisteredAgent(agent); err != nil {
-		return "", err
-	}
 	now := s.clock()
 	prevSubs, _ := s.state.GetValues(subMapKey(agent))
 	unique := deduplicateStrings(channels)
-	for _, ch := range unique {
-		if _, err := s.state.Delete(ctx, cursorMapKey(agent, ch)); err != nil {
-			return "", fmt.Errorf("delete cursor for %s: %w", ch, err)
-		}
-	}
-	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
-		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
-	}
-	if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
-		return "", err
-	}
 
 	var remainingSubs []string
 	for _, sub := range prevSubs {
@@ -475,15 +466,17 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 		subsByAgent[agent] = remainingSubs
 	}
 
-	removedAny := false
 	for _, ch := range unique {
+		if _, err := s.state.Delete(ctx, cursorMapKey(agent, ch)); err != nil {
+			return "", fmt.Errorf("delete cursor for %s: %w", ch, err)
+		}
 		if !hasChannelSubscribers(ch, subsByAgent) {
 			if err := s.purgeChannel(ctx, ch, snap); err != nil {
 				return "", err
 			}
-			removedAny = true
 		}
 	}
+
 	if len(remainingSubs) == 0 {
 		cursorPrefix := prefixCursor + agent + ":"
 		for k := range snap {
@@ -499,10 +492,14 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 		if err := s.deleteAndWait(ctx, agentMapKey(agent)); err != nil {
 			return "", fmt.Errorf("unregister departed agent %q: %w", agent, err)
 		}
-	} else if removedAny {
-		if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
-			return "", err
-		}
+		return "left " + strings.Join(unique, ", "), nil
+	}
+
+	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
+		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
+	}
+	if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
+		return "", err
 	}
 	return "left " + strings.Join(unique, ", "), nil
 }
@@ -535,7 +532,9 @@ func (s *swarmHandle) deleteAndWait(ctx context.Context, key string) error {
 // its last subscriber has left.
 func (s *swarmHandle) purgeChannel(ctx context.Context, channel string, snap map[string]string) error {
 	if stream, err := s.openStream(channel); err == nil {
-		if err := stream.Destroy(ctx); err != nil && !errors.Is(err, streaming.ErrStreamNotFound) {
+		if err := stream.Destroy(ctx); err != nil &&
+			!errors.Is(err, streaming.ErrStreamNotFound) &&
+			!errors.Is(err, streaming.ErrStreamDestroyed) {
 			return fmt.Errorf("destroy stream for %s: %w", channel, err)
 		}
 	}
@@ -562,8 +561,10 @@ func (s *swarmHandle) purgeChannel(ctx context.Context, channel string, snap map
 // publish appends a message from sender to target ("#channel" or "@agent") under
 // a per-target leased semaphore, optionally pins it as the channel's active
 // collaboration manifest, commits the new head sequence to rmap via SetAndWait,
-// releases the semaphore, and drains any unread messages waiting for sender
-// across all subscribed channels and direct messages.
+// releases the semaphore, drains any unread messages waiting for sender across
+// all subscribed channels and direct messages, and—when no unread messages are
+// immediately present and waitSec > 0—waits up to waitSec seconds for a reply,
+// mention, or direct message.
 func (s *swarmHandle) publish(
 	ctx context.Context,
 	sender string,
@@ -571,15 +572,18 @@ func (s *swarmHandle) publish(
 	text string,
 	replyTo int,
 	pin bool,
+	waitSec int,
 ) (string, error) {
 	if strings.HasPrefix(target, "#") {
 		if err := s.requireChannelMember(sender, target); err != nil {
 			return "", err
 		}
-	} else {
-		if err := s.requireRegisteredAgent(sender); err != nil {
+	}
+	if waitSec > 0 {
+		if err := s.acquireWatch(sender); err != nil {
 			return "", err
 		}
+		defer s.releaseWatch(sender)
 	}
 	if err := s.touchAgent(ctx, sender, "", s.clock(), false); err != nil {
 		return "", err
@@ -605,9 +609,16 @@ func (s *swarmHandle) publish(
 		}
 		unread = append(unread, moreUnread...)
 	}
+	if len(unread) == 0 && waitSec > 0 {
+		waited, err := s.waitForUnread(ctx, sender, "", waitSec, defaultReadLimit, true)
+		if err != nil {
+			return "", err
+		}
+		unread = waited
+	}
 	out := formatSendOutput(target, seq, unread)
-	if !s.hasActiveWatch(sender) {
-		out += "\n" + formatWatchHint(s.name, sender)
+	if waitSec > 0 || !s.hasActiveWatch(sender) {
+		out += "\n" + formatWatchHint(sender)
 	}
 	return out, nil
 }
@@ -771,10 +782,6 @@ func (s *swarmHandle) readUnread(
 		if err := s.requireChannelMember(agent, from); err != nil {
 			return "", err
 		}
-	} else {
-		if err := s.requireRegisteredAgent(agent); err != nil {
-			return "", err
-		}
 	}
 	if waitSec > 0 {
 		if err := s.acquireWatch(agent); err != nil {
@@ -796,21 +803,38 @@ func (s *swarmHandle) readUnread(
 	if len(lines) > 0 || waitSec <= 0 {
 		return formatReadOutput(lines), nil
 	}
+	lines, err = s.waitForUnread(ctx, agent, from, waitSec, limit, mentionsOnly)
+	if err != nil {
+		return "", err
+	}
+	return formatReadOutput(lines), nil
+}
 
+// waitForUnread subscribes to the swarm's replicated map notification channel
+// and blocks for up to waitSec seconds (refreshing agent presence periodically)
+// until matching unread messages arrive for agent.
+func (s *swarmHandle) waitForUnread(
+	ctx context.Context,
+	agent string,
+	from string,
+	waitSec int,
+	limit int,
+	mentionsOnly bool,
+) ([]string, error) {
 	notifyCh := s.state.Subscribe()
 	if notifyCh == nil {
-		return "none", nil
+		return nil, nil
 	}
 	defer s.state.Unsubscribe(notifyCh)
 
 	// Re-check immediately after subscribing so a publication that committed
 	// between the first check and Subscribe cannot be missed.
-	lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly)
+	lines, err := s.drainUnread(ctx, agent, from, limit, mentionsOnly)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(lines) > 0 {
-		return formatReadOutput(lines), nil
+		return lines, nil
 	}
 
 	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
@@ -823,23 +847,26 @@ func (s *swarmHandle) readUnread(
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
-			return "none", nil
+			return nil, nil
 		case <-heartbeat.C:
+			if !s.isLiveAgent(agent) {
+				return nil, nil
+			}
 			if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
-				return "", err
+				return nil, err
 			}
 		case _, ok := <-notifyCh:
-			if !ok {
-				return "none", nil
+			if !ok || !s.isLiveAgent(agent) {
+				return nil, nil
 			}
 			lines, err = s.drainUnread(ctx, agent, from, limit, mentionsOnly)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if len(lines) > 0 {
-				return formatReadOutput(lines), nil
+				return lines, nil
 			}
 		}
 	}
@@ -883,7 +910,11 @@ func (s *swarmHandle) drainUnread(
 			}
 		}
 
-		targetLines, newSeq, err := s.readTargetDelta(ctx, agent, target, curSeq, limit)
+		events, err := s.snapshotTarget(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		targetLines, newSeq, err := formatDeltaLines(agent, target, curSeq, limit, events)
 		if err != nil {
 			return nil, err
 		}
@@ -924,37 +955,6 @@ func (s *swarmHandle) readTargets(agent, from string) []string {
 	targets = append(targets, "@"+agent)
 	targets = append(targets, sortedSubs...)
 	return targets
-}
-
-// readTargetDelta reads messages with Seq > afterSeq from target's stream up to
-// maxMessages (skipping messages authored by agent while still advancing the
-// sequence watermark), returning the formatted wire lines and the highest
-// sequence number reached.
-func (s *swarmHandle) readTargetDelta(
-	ctx context.Context,
-	agent string,
-	target string,
-	afterSeq int,
-	maxMessages int,
-) ([]string, int, error) {
-	events, err := s.snapshotTarget(ctx, target)
-	if err != nil {
-		return nil, 0, err
-	}
-	return formatDeltaLines(agent, target, afterSeq, maxMessages, events)
-}
-
-// tailTarget returns the active pinned manifest line (if any) and up to tail
-// most recent formatted messages from target (deduplicating the pinned message
-// when it falls within the tail window) along with the current head sequence
-// number of the stream.
-func (s *swarmHandle) tailTarget(ctx context.Context, target string, tail int) ([]string, int, error) {
-	snap := s.state.Map()
-	events, err := s.snapshotTarget(ctx, target)
-	if err != nil {
-		return nil, 0, err
-	}
-	return formatTailLines(target, tail, snap[headMapKey(target)], snap[pinMapKey(target)], events)
 }
 
 // snapshotTarget reads the bounded event history of target using Pulse's

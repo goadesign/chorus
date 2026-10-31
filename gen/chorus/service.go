@@ -32,8 +32,8 @@ type Service interface {
 	// Unsubscribe from one or more channels (removing a channel from the swarm
 	// directory when its last member leaves).
 	Leave(context.Context, *LeavePayload) (res *TextResult, err error)
-	// Send a message to @agent or #channel and atomically return any unread
-	// messages for the caller.
+	// Send a message to @agent or #channel, atomically return any unread messages
+	// for the caller, and optionally wait for a reply.
 	Send(context.Context, *SendPayload) (res *TextResult, err error)
 	// Drain unread messages across subscribed channels and direct messages,
 	// optionally waiting for new arrivals.
@@ -66,7 +66,8 @@ type ContentBranchText struct {
 type JoinPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm namespace (defaults to 'default').
+	// Swarm name: use the current git repository or workspace directory basename
+	// (e.g. 'chorus') unless the user specifies a swarm name.
 	Swarm string
 	// Channels to create or subscribe to (each prefixed with '#').
 	Channels []string
@@ -82,8 +83,6 @@ type JoinPayload struct {
 type LeavePayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm namespace (defaults to 'default').
-	Swarm string
 	// Channels to unsubscribe from (each prefixed with '#').
 	Channels []string
 }
@@ -92,8 +91,6 @@ type LeavePayload struct {
 type ReadPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm namespace (defaults to 'default').
-	Swarm string
 	// Optional channel filter ('#channel'); omit to read across all subscribed
 	// channels and direct messages.
 	From *string
@@ -110,8 +107,6 @@ type ReadPayload struct {
 type SendPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm namespace (defaults to 'default').
-	Swarm string
 	// Target '@agent' for direct messages or '#channel' for channel messages.
 	To string
 	// Message text to send.
@@ -122,6 +117,9 @@ type SendPayload struct {
 	// collaboration manifest (replacing any previous pin) so joining agents always
 	// see it.
 	Pin bool
+	// Optional seconds to block waiting for a reply, @mention, @all, or direct
+	// message after sending (0 returns immediately).
+	WaitSec int
 }
 
 // Single MCP text content item.
@@ -140,7 +138,8 @@ type TextResult struct {
 type WhoPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm namespace (defaults to 'default').
+	// Swarm name: use the current git repository or workspace directory basename
+	// (e.g. 'chorus') unless the user specifies a swarm name.
 	Swarm string
 	// Optional role description to advertise to peers in this swarm.
 	Role *string

@@ -2,10 +2,11 @@
 // Chorus multi-agent coordination service.
 //
 // Chorus exposes five tools (who, join, leave, send, read) at a single static
-// endpoint (POST /mcp). Each tool takes the caller's agent handle ("agent") and
-// an optional swarm namespace ("swarm", defaulting to "default"), and returns
-// TextResult via ToolContent("content") so the generated MCP server omits
-// outputSchema and structuredContent on the wire.
+// endpoint (POST /mcp). Agents specify their handle ("agent") and swarm name
+// ("swarm") when calling join or who, which binds the handle to that swarm so
+// send, read, and leave require only "agent". All tools return TextResult via
+// ToolContent("content") so the generated MCP server omits outputSchema and
+// structuredContent on the wire.
 package design
 
 import (
@@ -62,16 +63,15 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
-				Default("default")
+			Attribute("swarm", String, "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("default")
+				Example("chorus")
 			})
 			Attribute("role", String, "Optional role description to advertise to peers in this swarm.", func() {
 				MaxLength(120)
 				Example("API Engineer · owns chorus/service.go")
 			})
-			Required("agent")
+			Required("agent", "swarm")
 		})
 		Result(TextResult)
 		Tool("who", "List active participants (@agent), channels (#channel), and unread counts in the swarm (call join first when you already know which #channel to enter).", func() {
@@ -89,10 +89,9 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
-				Default("default")
+			Attribute("swarm", String, "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("default")
+				Example("chorus")
 			})
 			Attribute("channels", ArrayOf(String), "Channels to create or subscribe to (each prefixed with '#').", func() {
 				MinLength(1)
@@ -117,10 +116,10 @@ var _ = Service("chorus", func() {
 				Maximum(50)
 				Example(5)
 			})
-			Required("agent", "channels")
+			Required("agent", "swarm", "channels")
 		})
 		Result(TextResult)
-		Tool("join", "Subscribe to (or create) #channels, advertise your role, and return the channel topic, subscribed members, pinned manifest, and recent message tail. Call this first when joining a swarm.", func() {
+		Tool("join", "Subscribe to (or create) #channels in the specified swarm, advertise your role, and return the channel topic, subscribed members, pinned manifest, and recent message tail. Call this first when joining a swarm.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 			IdempotentHint(true)
@@ -134,11 +133,6 @@ var _ = Service("chorus", func() {
 			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
-			})
-			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
-				Default("default")
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("default")
 			})
 			Attribute("channels", ArrayOf(String), "Channels to unsubscribe from (each prefixed with '#').", func() {
 				MinLength(1)
@@ -161,16 +155,11 @@ var _ = Service("chorus", func() {
 	})
 
 	Method("send", func() {
-		Description("Send a message to @agent or #channel and atomically return any unread messages for the caller.")
+		Description("Send a message to @agent or #channel, atomically return any unread messages for the caller, and optionally wait for a reply.")
 		Payload(func() {
 			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
-			})
-			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
-				Default("default")
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("default")
 			})
 			Attribute("to", String, "Target '@agent' for direct messages or '#channel' for channel messages.", func() {
 				Pattern(`^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -189,10 +178,16 @@ var _ = Service("chorus", func() {
 				Default(false)
 				Example(true)
 			})
+			Attribute("wait_sec", Int, "Optional seconds to block waiting for a reply, @mention, @all, or direct message after sending (0 returns immediately).", func() {
+				Default(0)
+				Minimum(0)
+				Maximum(600)
+				Example(60)
+			})
 			Required("agent", "to", "text")
 		})
 		Result(TextResult)
-		Tool("send", "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Mention peers with @handle (or @all) to wake their watchers; set pin=true on a #channel message to pin or update the channel's collaboration manifest.", func() {
+		Tool("send", "Send a message to @agent or #channel and atomically return any unread messages under '--- unread ---'. Leave wait_sec=0 when continuing local work; set wait_sec (e.g. 60) when asking a question or handing off work and waiting for a reply. Set pin=true on a #channel message to pin or update the channel's collaboration manifest.", func() {
 			ToolContent("content")
 			DestructiveHint(false)
 		})
@@ -205,11 +200,6 @@ var _ = Service("chorus", func() {
 			Attribute("agent", String, "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
-			})
-			Attribute("swarm", String, "Swarm namespace (defaults to 'default').", func() {
-				Default("default")
-				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-				Example("default")
 			})
 			Attribute("from", String, "Optional channel filter ('#channel'); omit to read across all subscribed channels and direct messages.", func() {
 				Pattern(`^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
@@ -234,7 +224,7 @@ var _ = Service("chorus", func() {
 			Required("agent")
 		})
 		Result(TextResult)
-		Tool("read", "Read unread messages across subscribed #channels and @direct messages. Set wait_sec (e.g. 60) when blocked waiting on a peer; or run 'chorus watch -agent <handle> -mentions' in a background shell to listen at 0 token cost while doing local work.", func() {
+		Tool("read", "Read unread messages across subscribed #channels and @direct messages. Set wait_sec (e.g. 60) when blocked waiting on a peer; or run 'chorus watch <agent>' in a background shell to listen at 0 token cost while doing local work.", func() {
 			ToolContent("content")
 			ReadOnlyHint(false)
 		})

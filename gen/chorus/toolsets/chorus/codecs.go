@@ -141,7 +141,7 @@ var joinPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
 		JSONType:    "string",
-		Description: "Swarm namespace (defaults to 'default').",
+		Description: "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("channels")},
@@ -179,11 +179,6 @@ var leavePayloadFields = []tools.FieldMetadata{
 		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
 	},
 	{
-		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
-		JSONType:    "string",
-		Description: "Swarm namespace (defaults to 'default').",
-	},
-	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("channels")},
 		JSONType:    "array",
 		Description: "Channels to unsubscribe from (each prefixed with '#').",
@@ -202,11 +197,6 @@ var readPayloadFields = []tools.FieldMetadata{
 		Path:        []tools.FieldPathSegment{tools.FixedField("agent")},
 		JSONType:    "string",
 		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
-	},
-	{
-		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
-		JSONType:    "string",
-		Description: "Swarm namespace (defaults to 'default').",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("from")},
@@ -239,11 +229,6 @@ var sendPayloadFields = []tools.FieldMetadata{
 		Description: "Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.",
 	},
 	{
-		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
-		JSONType:    "string",
-		Description: "Swarm namespace (defaults to 'default').",
-	},
-	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("to")},
 		JSONType:    "string",
 		Description: "Target '@agent' for direct messages or '#channel' for channel messages.",
@@ -263,6 +248,11 @@ var sendPayloadFields = []tools.FieldMetadata{
 		JSONType:    "boolean",
 		Description: "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.",
 	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("wait_sec")},
+		JSONType:    "integer",
+		Description: "Optional seconds to block waiting for a reply, @mention, @all, or direct message after sending (0 returns immediately).",
+	},
 }
 var whoPayloadFields = []tools.FieldMetadata{
 	{
@@ -276,7 +266,7 @@ var whoPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
 		JSONType:    "string",
-		Description: "Swarm namespace (defaults to 'default').",
+		Description: "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("role")},
@@ -601,17 +591,12 @@ func UnmarshalJoinPayload(data []byte) (*JoinPayload, error) {
 	var out *JoinPayload
 	out = &JoinPayload{
 		Agent: *in.Agent,
+		Swarm: *in.Swarm,
 		Topic: in.Topic,
 		Role:  in.Role,
 	}
-	if in.Swarm != nil {
-		out.Swarm = *in.Swarm
-	}
 	if in.Tail != nil {
 		out.Tail = *in.Tail
-	}
-	if in.Swarm == nil {
-		out.Swarm = "default"
 	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
@@ -633,7 +618,6 @@ func MarshalLeavePayload(v *LeavePayload) ([]byte, error) {
 	var out *toolhttp.LeavePayloadTransport
 	out = &toolhttp.LeavePayloadTransport{
 		Agent: &in.Agent,
-		Swarm: &in.Swarm,
 	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
@@ -665,12 +649,6 @@ func UnmarshalLeavePayload(data []byte) (*LeavePayload, error) {
 	out = &LeavePayload{
 		Agent: *in.Agent,
 	}
-	if in.Swarm != nil {
-		out.Swarm = *in.Swarm
-	}
-	if in.Swarm == nil {
-		out.Swarm = "default"
-	}
 	out.Channels = make([]string, len(in.Channels))
 	for i, val := range in.Channels {
 		out.Channels[i] = val
@@ -688,7 +666,6 @@ func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
 	var out *toolhttp.ReadPayloadTransport
 	out = &toolhttp.ReadPayloadTransport{
 		Agent:        &in.Agent,
-		Swarm:        &in.Swarm,
 		From:         in.From,
 		WaitSec:      &in.WaitSec,
 		MentionsOnly: &in.MentionsOnly,
@@ -721,9 +698,6 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 		Agent: *in.Agent,
 		From:  in.From,
 	}
-	if in.Swarm != nil {
-		out.Swarm = *in.Swarm
-	}
 	if in.WaitSec != nil {
 		out.WaitSec = *in.WaitSec
 	}
@@ -732,9 +706,6 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	}
 	if in.Limit != nil {
 		out.Limit = *in.Limit
-	}
-	if in.Swarm == nil {
-		out.Swarm = "default"
 	}
 	if in.WaitSec == nil {
 		out.WaitSec = 0
@@ -758,11 +729,11 @@ func MarshalSendPayload(v *SendPayload) ([]byte, error) {
 	var out *toolhttp.SendPayloadTransport
 	out = &toolhttp.SendPayloadTransport{
 		Agent:   &in.Agent,
-		Swarm:   &in.Swarm,
 		To:      &in.To,
 		Text:    &in.Text,
 		ReplyTo: in.ReplyTo,
 		Pin:     &in.Pin,
+		WaitSec: &in.WaitSec,
 	}
 	return json.Marshal(out)
 }
@@ -793,17 +764,17 @@ func UnmarshalSendPayload(data []byte) (*SendPayload, error) {
 		Text:    *in.Text,
 		ReplyTo: in.ReplyTo,
 	}
-	if in.Swarm != nil {
-		out.Swarm = *in.Swarm
-	}
 	if in.Pin != nil {
 		out.Pin = *in.Pin
 	}
-	if in.Swarm == nil {
-		out.Swarm = "default"
+	if in.WaitSec != nil {
+		out.WaitSec = *in.WaitSec
 	}
 	if in.Pin == nil {
 		out.Pin = false
+	}
+	if in.WaitSec == nil {
+		out.WaitSec = 0
 	}
 	return out, nil
 }
@@ -846,13 +817,8 @@ func UnmarshalWhoPayload(data []byte) (*WhoPayload, error) {
 	var out *WhoPayload
 	out = &WhoPayload{
 		Agent: *in.Agent,
+		Swarm: *in.Swarm,
 		Role:  in.Role,
-	}
-	if in.Swarm != nil {
-		out.Swarm = *in.Swarm
-	}
-	if in.Swarm == nil {
-		out.Swarm = "default"
 	}
 	return out, nil
 }
@@ -1066,7 +1032,7 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 		case "swarm":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm namespace (defaults to 'default').",
+				typed[key], "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
 			); err != nil {
 				return err
 			}
@@ -1141,7 +1107,7 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 		case "swarm":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm namespace (defaults to 'default').",
+				typed[key], "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
 			); err != nil {
 				return err
 			}
@@ -1250,18 +1216,10 @@ func validateLeavePayloadJSONValue(path string, value any, description string) e
 			); err != nil {
 				return err
 			}
-		case "swarm":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm namespace (defaults to 'default').",
-			); err != nil {
-				return err
-			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"agent",
 				"channels",
-				"swarm",
 			})
 		}
 	}
@@ -1309,13 +1267,6 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
-		case "swarm":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm namespace (defaults to 'default').",
-			); err != nil {
-				return err
-			}
 		case "text":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1330,14 +1281,21 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "wait_sec":
+			if err := validateIntJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional seconds to block waiting for a reply, @mention, @all, or direct message after sending (0 returns immediately).",
+			); err != nil {
+				return err
+			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"agent",
 				"pin",
 				"reply_to",
-				"swarm",
 				"text",
 				"to",
+				"wait_sec",
 			})
 		}
 	}
@@ -1408,13 +1366,6 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
-		case "swarm":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm namespace (defaults to 'default').",
-			); err != nil {
-				return err
-			}
 		case "wait_sec":
 			if err := validateIntJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1428,7 +1379,6 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 				"from",
 				"limit",
 				"mentions_only",
-				"swarm",
 				"wait_sec",
 			})
 		}

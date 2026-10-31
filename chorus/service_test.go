@@ -171,12 +171,20 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		if _, hasAgent := props["agent"]; !hasAgent {
 			t.Fatalf("tool %q missing 'agent' property in InputSchema", name)
 		}
-		if _, hasSwarm := props["swarm"]; !hasSwarm {
-			t.Fatalf("tool %q missing 'swarm' property in InputSchema", name)
+		_, hasSwarm := props["swarm"]
+		if name == "who" || name == "join" {
+			if !hasSwarm {
+				t.Fatalf("tool %q missing 'swarm' property in InputSchema", name)
+			}
+		} else if hasSwarm {
+			t.Fatalf("tool %q must not expose 'swarm' property in InputSchema", name)
 		}
 	}
+	if _, hasWait := lead.schemas["send"]["wait_sec"]; !hasWait {
+		t.Fatal("tool 'send' missing 'wait_sec' property in InputSchema")
+	}
 
-	// Verify omitting "swarm" defaults to the "default" swarm seamlessly.
+	// Verify who registers @lead in the specified swarm.
 	defaultWho := lead.call("who", map[string]any{
 		"role": "Default Swarm Lead",
 	})
@@ -320,7 +328,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		"to":   "#auth",
 		"text": "posting while my watch is active",
 	})
-	if strings.Contains(activeSendRaw, "! no active watch") {
+	if strings.Contains(activeSendRaw, "! watch:") {
 		t.Fatalf("expected send during active watch to omit watch warning, got:\n%s", activeSendRaw)
 	}
 
@@ -337,8 +345,24 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 		"to":   "#auth",
 		"text": "posting after watch exited without re-arming",
 	})
-	if !strings.Contains(unarmedSendRaw, "! no active watch — run in background: chorus watch -agent lead -mentions -wait 5m") {
+	if !strings.Contains(unarmedSendRaw, "! watch: chorus watch lead") {
 		t.Fatalf("expected send without active watch to include re-arm hint, got:\n%s", unarmedSendRaw)
+	}
+
+	// Verify send with wait_sec > 0 blocks until a peer replies and returns the
+	// reply in the same send response.
+	sendWaitCh := make(chan string, 1)
+	go func() {
+		sendWaitCh <- lead.call("send", map[string]any{
+			"to":       "#auth",
+			"text":     "@peer ready for review?",
+			"wait_sec": 3,
+		})
+	}()
+	time.Sleep(60 * time.Millisecond)
+	peer.send("#auth", "@lead LGTM!", 0)
+	if got := <-sendWaitCh; !strings.Contains(got, "--- unread ---\n#auth#") || !strings.Contains(got, "@peer: @lead LGTM!") {
+		t.Fatalf("expected send(wait_sec=3) to return peer reply under --- unread ---, got:\n%s", got)
 	}
 }
 
@@ -425,7 +449,7 @@ func TestSelfMessageSuppressionAndWatchNoSelfWake(t *testing.T) {
 	impl.call("join", map[string]any{"channels": []string{"#foundry"}})
 
 	// 1. @arch starts a blocking mentions_only read (simulating background
-	// `chorus watch -agent arch -mentions`).
+	// `chorus watch arch`).
 	watchCh := make(chan string, 1)
 	go func() {
 		watchCh <- arch.call("read", map[string]any{
@@ -710,7 +734,7 @@ func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 		"channels": []string{"#beta"},
 		"tail":     0,
 	})
-	wantJoinZero := "joined #beta (head #6)\nmembers: @late0, @reader, @writer\n! no active watch — run in background: chorus watch -agent late0 -swarm retention -mentions -wait 5m"
+	wantJoinZero := "joined #beta (head #6)\nmembers: @late0, @reader, @writer\n! watch: chorus watch late0"
 	if joinZero != wantJoinZero {
 		t.Fatalf("expected tail=0 join to return header, members, and watch hint only, got:\n%s", joinZero)
 	}
@@ -798,8 +822,8 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		chorus.WithOnlineWindow(2 * time.Minute),
 	})
 
-	alphaLead := c.newAgent(0, "swarm-alpha", "lead")
-	betaLead := c.newAgent(0, "swarm-beta", "lead")
+	alphaLead := c.newAgent(0, "swarm-alpha", "alpha-lead")
+	betaLead := c.newAgent(0, "swarm-beta", "beta-lead")
 
 	alphaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
@@ -807,6 +831,35 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		"role":     "Alpha Lead",
 	})
 	alphaLead.send("#arch", "alpha secret message", 0)
+
+	// Attempting to join a different swarm using an already-active handle must fail.
+	collision := c.newAgent(0, "swarm-beta", "alpha-lead")
+	collision.callExpectingError("join", map[string]any{
+		"channels": []string{"#arch"},
+	})
+
+	// When @alpha-lead has an active blocking watch and leaves its last channel,
+	// the watch wakes immediately, the Redis swarm binding is released, and
+	// @alpha-lead can re-join swarm-alpha cleanly.
+	watchDone := make(chan string, 1)
+	go func() {
+		watchDone <- alphaLead.call("read", map[string]any{"wait_sec": 5})
+	}()
+	time.Sleep(80 * time.Millisecond)
+	alphaLead.call("leave", map[string]any{"channels": []string{"#arch"}})
+	select {
+	case out := <-watchDone:
+		if out != "none" {
+			t.Fatalf("expected active watch to exit cleanly with 'none' upon leaving last channel, got %q", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for active watch to terminate upon leaving last channel")
+	}
+	alphaLead.call("join", map[string]any{
+		"channels": []string{"#arch"},
+		"topic":    "Alpha Topic",
+		"role":     "Alpha Lead",
+	})
 
 	betaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
@@ -819,7 +872,7 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		t.Fatalf("swarm-beta observed state from swarm-alpha:\n%s", whoBeta)
 	}
 
-	// Advance synthetic clock past onlineWindow (2m) and verify @lead's stale
+	// Advance synthetic clock past onlineWindow (2m) and verify @alpha-lead's stale
 	// registration and abandoned #arch channel are automatically reaped both when
 	// observed by a peer (swarm-alpha) and when the expired agent itself calls
 	// who (swarm-beta).
@@ -830,8 +883,8 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	})
 	alphaObserver := c.newAgent(0, "swarm-alpha", "observer")
 	whoAlpha := alphaObserver.call("who", map[string]any{"role": "Observer"})
-	if strings.Contains(whoAlpha, "@lead") || strings.Contains(whoAlpha, "#arch") {
-		t.Fatalf("expected expired @lead and its abandoned #arch channel to be reaped, got:\n%s", whoAlpha)
+	if strings.Contains(whoAlpha, "@alpha-lead") || strings.Contains(whoAlpha, "#arch") {
+		t.Fatalf("expected expired @alpha-lead and its abandoned #arch channel to be reaped, got:\n%s", whoAlpha)
 	}
 	if !strings.Contains(whoAlpha, "@observer (Observer)\n") {
 		t.Fatalf("expected @observer in directory, got:\n%s", whoAlpha)
@@ -839,7 +892,7 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 
 	whoBetaExpiredSelf := betaLead.call("who", map[string]any{"role": "Beta Lead"})
 	if strings.Contains(whoBetaExpiredSelf, "#arch") {
-		t.Fatalf("expected expired @lead calling who to reap its own stale #arch subscription, got:\n%s", whoBetaExpiredSelf)
+		t.Fatalf("expected expired @beta-lead calling who to reap its own stale #arch subscription, got:\n%s", whoBetaExpiredSelf)
 	}
 }
 
@@ -1193,7 +1246,7 @@ func parseWireMessages(t *testing.T, raw string) []parsedMessage {
 		if line == "" ||
 			strings.HasPrefix(line, "joined ") ||
 			strings.HasPrefix(line, "members: ") ||
-			strings.HasPrefix(line, "! no active watch") {
+			strings.HasPrefix(line, "! watch:") {
 			continue
 		}
 		if m := channelMsgRegex.FindStringSubmatch(line); m != nil {
@@ -1394,9 +1447,9 @@ func (c *testCluster) advanceClock(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// withIdentity copies args and populates "agent" (and "swarm" when non-empty)
+// withIdentity copies args and populates "agent" (and "swarm" for who and join)
 // if not already set by the caller.
-func (a *emulatedAgent) withIdentity(args map[string]any) map[string]any {
+func (a *emulatedAgent) withIdentity(toolName string, args map[string]any) map[string]any {
 	merged := make(map[string]any, len(args)+2)
 	for k, v := range args {
 		merged[k] = v
@@ -1404,8 +1457,14 @@ func (a *emulatedAgent) withIdentity(args map[string]any) map[string]any {
 	if _, ok := merged["agent"]; !ok {
 		merged["agent"] = a.handle
 	}
-	if _, ok := merged["swarm"]; !ok && a.swarm != "" {
-		merged["swarm"] = a.swarm
+	if toolName == "who" || toolName == "join" {
+		if _, ok := merged["swarm"]; !ok {
+			swarm := a.swarm
+			if swarm == "" {
+				swarm = "default"
+			}
+			merged["swarm"] = swarm
+		}
 	}
 	return merged
 }
@@ -1415,7 +1474,7 @@ func (a *emulatedAgent) withIdentity(args map[string]any) map[string]any {
 // the plain-text wire output.
 func (a *emulatedAgent) call(toolName string, args map[string]any) string {
 	a.t.Helper()
-	args = a.withIdentity(args)
+	args = a.withIdentity(toolName, args)
 
 	props, ok := a.schemas[toolName]
 	if !ok {
@@ -1463,7 +1522,7 @@ func (a *emulatedAgent) call(toolName string, args map[string]any) string {
 // the MCP server rejects the call.
 func (a *emulatedAgent) callExpectingError(toolName string, args map[string]any) {
 	a.t.Helper()
-	args = a.withIdentity(args)
+	args = a.withIdentity(toolName, args)
 
 	rawArgs, err := json.Marshal(args)
 	if err != nil {

@@ -66,6 +66,9 @@ const (
 	healthPingTimeout = 500 * time.Millisecond
 	// instrumentationName is the OpenTelemetry tracer name for Chorus.
 	instrumentationName = "goa.design/chorus"
+	// agentSwarmHashKey is the Redis hash key mapping active agent handles to
+	// their bound swarm names across cluster replicas.
+	agentSwarmHashKey = "chorus:agents"
 )
 
 var (
@@ -222,7 +225,7 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.swarm(ctx, p.Swarm)
+	sw, err := s.checkAgentSwarmAvailable(ctx, p.Agent, p.Swarm)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +235,9 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 	}
 	out, err := sw.directory(ctx, p.Agent, role)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.recordAgentSwarm(ctx, p.Agent, p.Swarm); err != nil {
 		return nil, err
 	}
 	return textResult(out), nil
@@ -245,7 +251,7 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.swarm(ctx, p.Swarm)
+	sw, err := s.checkAgentSwarmAvailable(ctx, p.Agent, p.Swarm)
 	if err != nil {
 		return nil, err
 	}
@@ -261,34 +267,41 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 	if err != nil {
 		return nil, err
 	}
+	if err := s.recordAgentSwarm(ctx, p.Agent, p.Swarm); err != nil {
+		return nil, err
+	}
 	return textResult(out), nil
 }
 
 // Leave unsubscribes the calling agent from one or more channels and removes
 // their server-side read watermarks.
 func (s *Service) Leave(ctx context.Context, p *genchorus.LeavePayload) (res *genchorus.TextResult, err error) {
-	ctx, span := startToolSpan(ctx, s.tracer, "leave", p.Swarm, p.Agent)
+	ctx, span := startToolSpan(ctx, s.tracer, "leave", "", p.Agent)
 	defer func() {
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.swarm(ctx, p.Swarm)
+	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
+	span.SetAttributes(attribute.String("chorus.swarm", sw.name))
 	out, err := sw.leaveChannels(ctx, p.Agent, p.Channels)
 	if err != nil {
 		return nil, err
+	}
+	if !sw.isLiveAgent(p.Agent) {
+		_ = s.rdb.HDel(ctx, agentSwarmHashKey, p.Agent).Err()
 	}
 	return textResult(out), nil
 }
 
 // Send publishes a message to a channel ("#channel") or direct recipient
 // ("@agent"), optionally pinning it as the channel's collaboration manifest,
-// and piggybacks any unread messages waiting for the caller in the same
-// response.
+// piggybacks any unread messages waiting for the caller, and optionally blocks
+// up to WaitSec seconds waiting for a reply.
 func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genchorus.TextResult, err error) {
-	ctx, span := startToolSpan(ctx, s.tracer, "send", p.Swarm, p.Agent)
+	ctx, span := startToolSpan(ctx, s.tracer, "send", "", p.Agent)
 	span.SetAttributes(attribute.String("chorus.to", p.To))
 	defer func() {
 		finishSpan(span, err)
@@ -298,15 +311,16 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 		return nil, errPinRequiresChannel
 	}
 
-	sw, err := s.swarm(ctx, p.Swarm)
+	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
+	span.SetAttributes(attribute.String("chorus.swarm", sw.name))
 	replyTo := 0
 	if p.ReplyTo != nil {
 		replyTo = *p.ReplyTo
 	}
-	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo, p.Pin)
+	out, err := sw.publish(ctx, p.Agent, p.To, p.Text, replyTo, p.Pin, p.WaitSec)
 	if err != nil {
 		return nil, err
 	}
@@ -317,15 +331,16 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 // subscribed channels, optionally blocking up to WaitSec seconds when no
 // matching unread messages are immediately available.
 func (s *Service) Read(ctx context.Context, p *genchorus.ReadPayload) (res *genchorus.TextResult, err error) {
-	ctx, span := startToolSpan(ctx, s.tracer, "read", p.Swarm, p.Agent)
+	ctx, span := startToolSpan(ctx, s.tracer, "read", "", p.Agent)
 	defer func() {
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.swarm(ctx, p.Swarm)
+	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
+	span.SetAttributes(attribute.String("chorus.swarm", sw.name))
 	from := ""
 	if p.From != nil {
 		from = *p.From
@@ -408,4 +423,91 @@ func (s *Service) swarm(ctx context.Context, name string) (*swarmHandle, error) 
 	s.swarms[name] = created
 	s.mu.Unlock()
 	return created, nil
+}
+
+// openSwarms returns a snapshot of all currently open swarmHandles on s.
+func (s *Service) openSwarms() []*swarmHandle {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	handles := make([]*swarmHandle, 0, len(s.swarms))
+	for _, h := range s.swarms {
+		handles = append(handles, h)
+	}
+	return handles
+}
+
+// checkAgentSwarmAvailable verifies that agent is not currently active in a
+// different swarm and returns the swarmHandle for swarmName.
+func (s *Service) checkAgentSwarmAvailable(ctx context.Context, agent, swarmName string) (*swarmHandle, error) {
+	for _, other := range s.openSwarms() {
+		if other.name != swarmName && other.isLiveAgent(agent) {
+			return nil, fmt.Errorf(
+				"%w: agent %q is already registered in swarm %q; choose a distinct handle or leave %q first",
+				errInvalidCallerState, agent, other.name, other.name,
+			)
+		}
+	}
+	if boundSwarm, err := s.rdb.HGet(ctx, agentSwarmHashKey, agent).Result(); err == nil && boundSwarm != "" && boundSwarm != swarmName {
+		if other, openErr := s.swarm(ctx, boundSwarm); openErr == nil && other.isLiveAgent(agent) {
+			return nil, fmt.Errorf(
+				"%w: agent %q is already registered in swarm %q; choose a distinct handle or leave %q first",
+				errInvalidCallerState, agent, other.name, other.name,
+			)
+		}
+	}
+	return s.swarm(ctx, swarmName)
+}
+
+// recordAgentSwarm records the active agent-to-swarm binding in Redis after a
+// successful who or join operation.
+func (s *Service) recordAgentSwarm(ctx context.Context, agent, swarmName string) error {
+	pipe := s.rdb.Pipeline()
+	pipe.HSet(ctx, agentSwarmHashKey, agent, swarmName)
+	pipe.Expire(ctx, agentSwarmHashKey, s.swarmTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("bind agent %q to swarm %q: %w", agent, swarmName, err)
+	}
+	return nil
+}
+
+// resolveAgentSwarm returns the active swarmHandle in which agent is currently
+// registered, or an errInvalidCallerState error when agent is unknown or expired.
+func (s *Service) resolveAgentSwarm(ctx context.Context, agent string) (*swarmHandle, error) {
+	for _, sw := range s.openSwarms() {
+		if sw.isLiveAgent(agent) {
+			return sw, nil
+		}
+	}
+	if boundSwarm, err := s.rdb.HGet(ctx, agentSwarmHashKey, agent).Result(); err == nil && boundSwarm != "" {
+		if sw, openErr := s.swarm(ctx, boundSwarm); openErr == nil {
+			if sw.isLiveAgent(agent) {
+				return sw, nil
+			}
+			_ = s.rdb.HDel(ctx, agentSwarmHashKey, agent).Err()
+			if live := sw.liveAgents(); len(live) > 0 {
+				return nil, fmt.Errorf(
+					"%w: unknown or expired agent %q in swarm %q (registered: %s); call join first",
+					errInvalidCallerState, agent, sw.name, formatHandleList(live),
+				)
+			}
+			return nil, fmt.Errorf(
+				"%w: unknown or expired agent %q in swarm %q; call join first",
+				errInvalidCallerState, agent, sw.name,
+			)
+		}
+	}
+
+	open := s.openSwarms()
+	if len(open) == 1 {
+		if live := open[0].liveAgents(); len(live) > 0 {
+			return nil, fmt.Errorf(
+				"%w: unknown agent %q in swarm %q (registered: %s); call join first or use your joined handle",
+				errInvalidCallerState, agent, open[0].name, formatHandleList(live),
+			)
+		}
+	}
+	return nil, fmt.Errorf(
+		"%w: unknown agent %q; call join or who first",
+		errInvalidCallerState, agent,
+	)
 }
