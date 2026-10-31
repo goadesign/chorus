@@ -1412,6 +1412,7 @@
         replyToSeq: 0,
         pollAbort: null,
         joinedByHandle: new Set(),
+        registeredHandles: new Set(),
       };
 
       // Deterministic accessible color palette for agent handles.
@@ -1719,6 +1720,8 @@
       // Render Layer 0: Header & Choir Roster
       function renderHeaderAndRoster(view, pairedDMs) {
         const select = document.getElementById("swarm-select");
+        const sendBtn = document.getElementById("btn-steer-send");
+        if (sendBtn) sendBtn.disabled = !state.activeSwarm;
         const allSwarms = new Set(["default", ...state.swarms]);
         if (state.activeSwarm) allSwarms.add(state.activeSwarm);
         const sortedSwarms = Array.from(allSwarms).sort();
@@ -2965,16 +2968,33 @@
         }
       }
 
-      // Call a Chorus MCP tool over POST /mcp JSON-RPC 2.0
+      // Call a Chorus MCP 2026-07-28 tool over POST /mcp JSON-RPC 2.0
       async function callMCPTool(toolName, args) {
         const res = await fetch("/mcp", {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": toolName,
+          },
           body: JSON.stringify({
             jsonrpc: "2.0",
             id: Date.now(),
             method: "tools/call",
-            params: { name: toolName, arguments: args },
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {
+                  name: "chorus-dashboard",
+                  version: "1",
+                },
+              },
+              name: toolName,
+              arguments: args,
+            },
           }),
         });
         if (!res.ok) {
@@ -3015,8 +3035,12 @@
         const to = (targetInput.value || "").trim();
         const text = (textInput.value || "").trim();
         const pin = Boolean(pinCheck.checked && to.startsWith("#"));
-        const swarm = state.activeSwarm || "default";
+        const swarm = state.activeSwarm;
 
+        if (!swarm) {
+          showToast("Select a swarm before sending", true);
+          return;
+        }
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
           showToast("Handle must be 1–32 alphanumeric/dash/underscore chars", true);
           return;
@@ -3030,13 +3054,31 @@
           return;
         }
 
+        const agentLower = agent.toLowerCase();
+        const regKey = `${swarm}:${agentLower}`;
+        const existingAgent = (state.view?.agents || []).find(
+          (a) => a.handle.toLowerCase() === agentLower
+        );
+        if (
+          existingAgent &&
+          existingAgent.role !== "human" &&
+          !state.registeredHandles.has(regKey)
+        ) {
+          showToast(
+            `@${existingAgent.handle} is an agent in this swarm; pick your own handle`,
+            true
+          );
+          return;
+        }
+
         localStorage.setItem("chorus_conductor_handle", agent);
         sendBtn.disabled = true;
         try {
           if (to.startsWith("#")) {
             const ch = (state.view?.channels || []).find((c) => c.name === to);
-            const alreadyMember = ch && (ch.positions || []).some((p) => p.handle === agent);
-            const joinKey = `${swarm}:${agent}:${to}`;
+            const alreadyMember =
+              ch && (ch.positions || []).some((p) => p.handle.toLowerCase() === agentLower);
+            const joinKey = `${swarm}:${agentLower}:${to.toLowerCase()}`;
             if (!alreadyMember && !state.joinedByHandle.has(joinKey)) {
               await callMCPTool("join", {
                 swarm,
@@ -3046,11 +3088,12 @@
                 tail: 1,
               });
               state.joinedByHandle.add(joinKey);
+              state.registeredHandles.add(regKey);
             }
           } else {
-            const alreadyRegistered = (state.view?.agents || []).some((a) => a.handle === agent);
-            if (!alreadyRegistered) {
+            if (!existingAgent && !state.registeredHandles.has(regKey)) {
               await callMCPTool("who", { swarm, agent, role: "human" });
+              state.registeredHandles.add(regKey);
             }
           }
 
