@@ -50,9 +50,11 @@
 
   /**
    * render draws the timeline into rootEl.
-   * state fields read: view, selectedTarget, selectedSeq, timeWindow,
+   * state fields read: view, selectedTarget, selectedMessage, timeWindow,
    * followLive, filterAgent, filterArtifact, searchQuery.
-   * selectedTarget is {kind: "channel", name: "#x"} or {kind: "dm", key: "a|b"}.
+   * selectedTarget is {kind: "channel", name: "#x"} or
+   * {kind: "dm", pairKey: "a↔b", a, b} with a and b sorted.
+   * selectedMessage is null or {target: "#channel" | "@recipient", seq}.
    * actions used: selectTarget(selectedTarget), selectMessage(target, seq)
    * where target is "#channel" or the recipient inbox "@handle",
    * setTimeWindow({startMs, endMs}), setFollowLive(bool).
@@ -98,7 +100,8 @@
 
     const match = matcher(state);
     const sel = state.selectedTarget || null;
-    const isSelected = (e) => sel != null && state.selectedSeq === e.seq && sameTarget(sel, e);
+    const picked = state.selectedMessage || null;
+    const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
     drawOverview(svg, events, axis, ox, win, colors, plotW, actions, state);
     const top = OVERVIEW_H + PAD;
@@ -172,25 +175,28 @@
   }
 
   // toEvent tags a message with where it lives: a channel name, or for a
-  // direct message the recipient's inbox ("@handle") plus the pair key
-  // ("a|b", handles sorted) that app.js uses to select a DM conversation.
+  // direct message the recipient's inbox ("@handle") plus the sorted pair
+  // (a, b) that app.js uses to select a DM conversation.
   function toEvent(target, m) {
     const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to };
-    if (target.startsWith("@")) e.pairKey = [m.sender, target.slice(1)].sort().join("|");
+    if (target.startsWith("@")) {
+      const [a, b] = [m.sender, target.slice(1)].sort();
+      e.pair = { a, b, pairKey: a + "↔" + b };
+    }
     return e;
   }
 
   // sameTarget reports whether event e belongs to the selected channel or DM
   // conversation.
   function sameTarget(sel, e) {
-    return sel.kind === "channel" ? e.target === sel.name : e.pairKey === sel.key;
+    return sel.kind === "channel" ? e.target === sel.name : !!e.pair && e.pair.pairKey === sel.pairKey;
   }
 
   // openEvent selects the event's channel or DM conversation, then the
   // message itself.
   function openEvent(e, actions) {
-    if (e.pairKey) {
-      actions.selectTarget({ kind: "dm", key: e.pairKey });
+    if (e.pair) {
+      actions.selectTarget({ kind: "dm", pairKey: e.pair.pairKey, a: e.pair.a, b: e.pair.b });
     } else {
       actions.selectTarget({ kind: "channel", name: e.target });
     }
