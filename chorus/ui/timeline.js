@@ -162,7 +162,7 @@
     }
 
     const chosen = order.find(isSelected);
-    if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, mx, laneY, colors);
+    if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
 
     if (!state.followLive) {
       const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(height - PAD), "text-anchor": "end" });
@@ -537,17 +537,21 @@
   }
 
   // drawMentions draws, for the selected message only, a dashed connector
-  // from its dot to the lane of every agent it literally @-mentions. It
-  // shows the text's mentions, not a claim that anyone owes a reply.
-  function drawMentions(svg, e, mx, laneY, colors) {
+  // from its dot to the lane of every agent it literally @-mentions. @all in
+  // a channel message reaches every member of that channel, as the server
+  // treats it. It shows the text's mentions, not a claim that anyone owes a
+  // reply.
+  function drawMentions(svg, e, view, mx, laneY, colors) {
     const x = mx(e.t).toFixed(1);
     const y0 = laneY.get(e.sender);
     // The server matches mentions case-insensitively, so @api reaches both
     // @API and @api when both exist; every lane whose handle matches gets a
     // connector, except the sender's own.
     const mentioned = new Set(mentionedHandles(e.text));
+    const channel = e.pair ? null : (view.channels || []).find((c) => c.name === e.target);
+    const members = new Set(mentioned.has("all") && channel ? (channel.positions || []).map((p) => p.handle) : []);
     for (const [handle, y1] of laneY) {
-      if (handle === e.sender || !mentioned.has(handle.toLowerCase())) continue;
+      if (handle === e.sender || !(mentioned.has(handle.toLowerCase()) || members.has(handle))) continue;
       svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
       svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
     }

@@ -975,208 +975,6 @@ details.pin-panel > summary:hover {
   gap: 8px;
 }
 
-/* Thread & Message Progressive Disclosure Cards */
-details.thread-disclosure,
-details.msg-disclosure {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-details.thread-disclosure.selected,
-details.msg-disclosure.selected,
-.msg-card.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
-details.thread-disclosure > summary,
-details.msg-disclosure > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 10px 14px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-details.thread-disclosure > summary::-webkit-details-marker,
-details.msg-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-details.thread-disclosure > summary:hover,
-details.msg-disclosure > summary:hover {
-  background: var(--bg-elevated);
-}
-
-.disclosure-main {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  flex: 1;
-}
-
-.disclosure-header-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.headline-text {
-  font-size: 13.5px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-outcome-line {
-  font-size: 12px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-items {
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.msg-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.msg-card.msg-reply {
-  background: transparent;
-  border: none;
-  border-left: 2px solid var(--border-strong);
-  border-radius: 0;
-  padding: 4px 0 4px 12px;
-}
-
-.msg-card.human-card {
-  border-left: 3px solid var(--brand-coral);
-}
-
-.msg-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.msg-meta-left,
-.msg-meta-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sender-name {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-primary);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.seq-label {
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-
-.reply-ref-link {
-  font-family: var(--font-mono);
-  color: var(--accent);
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.reply-ref-link:hover {
-  text-decoration: underline;
-}
-
-.msg-body {
-  font-size: 13.5px;
-  line-height: 20px;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.msg-body code {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  background: var(--bg-elevated);
-  padding: 1px 5px;
-  border-radius: 4px;
-}
-
-.msg-body pre {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 18px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  padding: 10px 12px;
-  border-radius: 8px;
-  overflow-x: auto;
-  margin: 6px 0;
-}
-
-.token-mention {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.token-channel {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--teal);
-  cursor: pointer;
-}
-
-.read-line {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  padding: 2px 4px;
-}
-
-.read-line::before,
-.read-line::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
 .empty-state {
   margin: 32px auto;
   max-width: 420px;
@@ -1571,7 +1369,8 @@ details.msg-disclosure > summary:hover {
 .pin-disclosure,
 .mentions-disclosure,
 .artifact-disclosure,
-.message-disclosure {
+.message-disclosure,
+.thread-disclosure {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1579,6 +1378,14 @@ details.msg-disclosure > summary:hover {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+
+.pin-disclosure > summary:hover,
+.mentions-disclosure > summary:hover,
+.artifact-disclosure > summary:hover,
+.message-disclosure > summary:hover,
+.thread-disclosure > summary:hover {
+  background: var(--bg-elevated);
 }
 
 .pin-disclosure > summary,
@@ -1650,6 +1457,9 @@ details.msg-disclosure > summary:hover {
 
 .thread-title {
   display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-family: var(--font-sans);
   font-weight: 600;
   font-size: 13.5px;
@@ -1657,7 +1467,6 @@ details.msg-disclosure > summary:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
 }
 
 .pin-meta {
@@ -1759,6 +1568,8 @@ details.msg-disclosure > summary:hover {
 
 .message-headline {
   display: block;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   font-size: 13.5px;
   color: var(--text-primary);
@@ -1769,6 +1580,8 @@ details.msg-disclosure > summary:hover {
 
 .thread-latest {
   display: block;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   font-size: 12px;
   color: var(--text-muted);
