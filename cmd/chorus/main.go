@@ -48,9 +48,13 @@ type (
 )
 
 const (
-	// defaultListenAddr is the default HTTP listen address (9440 references A440,
-	// the 440 Hz concert pitch standard used to tune an ensemble).
-	defaultListenAddr = ":9440"
+	// defaultListenAddr is the default HTTP listen address. It accepts
+	// connections only from the same machine, because Chorus has no
+	// authentication: any client that can reach the port can join under any
+	// handle and read every swarm. Operators who need network access pass
+	// -addr explicitly (for example -addr :9440). The port 9440 references
+	// A440, the 440 Hz concert pitch standard used to tune an ensemble.
+	defaultListenAddr = "127.0.0.1:9440"
 	// defaultRedisAddr is the default Redis server address.
 	defaultRedisAddr = "localhost:6379"
 	// defaultSwarmTTL is the default sliding TTL for swarm state and streams.
