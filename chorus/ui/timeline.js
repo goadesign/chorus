@@ -140,7 +140,7 @@
 
     const pan = (next) => panTo(rootEl, state, actions, next);
     installDrag(rootEl);
-    drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
+    drawOverview(svg, rootEl, view.swarm, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
     drawAxis(svg, axis, w0, w1, mx, top, plotW, height);
@@ -374,7 +374,10 @@
       (!art || e.text.includes(art));
   }
 
-  function drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state) {
+  // drawOverview draws the whole-history strip and the draggable window.
+  // renderedSwarm is the swarm this SVG was drawn from; a drag belongs to it,
+  // not to whatever swarm app.js may have switched to since.
+  function drawOverview(svg, rootEl, renderedSwarm, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
     const strip = el("rect", { class: "tl-overview", x: String(PLOT_X0), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
     // Clicking the strip outside the window centers the view there.
@@ -410,13 +413,15 @@
     brush.appendChild(t);
     brush.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
+      // app.js already switched to another swarm and this SVG is stale.
+      if (state.activeSwarm !== renderedSwarm) return;
       drags.set(rootEl, {
         pointerId: ev.pointerId,
         startX: ev.clientX,
         base: win,
         original: state.timeWindow || null,
         originalFollow: state.followLive,
-        swarm: state.view.swarm,
+        swarm: renderedSwarm,
         state,
         axis,
         plotW,
