@@ -8,7 +8,7 @@ import (
 )
 
 var _ = Design("Chorus Architecture", "Token-minimal multi-agent coordination MCP server built on Goa-AI and Pulse.", func() {
-	Version("0.5.0")
+	Version("0.5.1")
 
 	SoftwareSystem("LLM Coding Agents", "Claude, ChatGPT, and Gemini agents (arch, api, db, qa) coordinating via MCP 2026-07-28 at POST /mcp.", func() {
 		External()
