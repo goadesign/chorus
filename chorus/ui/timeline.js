@@ -134,18 +134,6 @@
       "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Page Up and Page Down move the view, Enter opens, F toggles Follow live.`,
     });
 
-    // Input gate: app.js may switch swarms before this SVG is redrawn. Until
-    // then the chart still shows view.swarm, so every click, key, and pointer
-    // press on it is stopped here, before any handler can act on the newly
-    // active swarm with this chart's messages, targets, or interval.
-    for (const type of ["click", "keydown", "pointerdown"]) {
-      svg.addEventListener(type, (ev) => {
-        if (state.activeSwarm === view.swarm) return;
-        ev.stopImmediatePropagation();
-        ev.preventDefault();
-      }, true);
-    }
-
     // Scales: overview maps the whole compressed axis; the main plot maps the
     // selected window.
     const ox = (t) => PLOT_X0 + (axis.pos(t) / axis.total) * plotW;
@@ -158,7 +146,7 @@
 
     const pan = (next) => panTo(rootEl, state, actions, next);
     installDrag(rootEl);
-    drawOverview(svg, rootEl, view.swarm, events, axis, ox, win, colors, plotW, actions, pan, state);
+    drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
     drawAxis(svg, axis, w0, w1, mx, top, plotW, height);
@@ -393,10 +381,7 @@
   }
 
   // drawOverview draws the whole-history strip and the draggable window.
-  // renderedSwarm is the swarm this SVG was drawn from; a drag belongs to it,
-  // not to whatever swarm app.js may have switched to since. (render's input
-  // gate stops a drag from starting on a stale SVG.)
-  function drawOverview(svg, rootEl, renderedSwarm, events, axis, ox, win, colors, plotW, actions, pan, state) {
+  function drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
     const strip = el("rect", { class: "tl-overview", x: String(PLOT_X0), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
     // Clicking the strip outside the window centers the view there.
@@ -438,8 +423,6 @@
         base: win,
         original: state.timeWindow || null,
         originalFollow: state.followLive,
-        swarm: renderedSwarm,
-        state,
         axis,
         plotW,
         actions,
@@ -478,12 +461,6 @@
         d.frame = requestAnimationFrame(() => {
           d.frame = 0;
           if (drags.get(rootEl) !== d || !d.next) return;
-          // app.js may have switched swarms since the drag started, before a
-          // new snapshot has rendered; never apply this swarm's window there.
-          if (d.state.activeSwarm !== d.swarm) {
-            dropDrag(rootEl);
-            return;
-          }
           d.actions.setTimeWindow(d.next);
         });
       }
@@ -493,9 +470,6 @@
       if (!d || ev.pointerId !== d.pointerId) return;
       dropDrag(rootEl);
       if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
-      // The active swarm changed during the drag: its windows and filter do
-      // not apply to the new swarm, so nothing is restored or committed.
-      if (d.state.activeSwarm !== d.swarm) return;
       if (cancelled) {
         // An interrupted drag restores exactly what was set before it: the
         // filter and the follow mode (setTimeWindow also pauses following).
