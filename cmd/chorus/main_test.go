@@ -279,6 +279,22 @@ func TestLocalBaseURL(t *testing.T) {
 	}
 }
 
+// TestLoopbackOrigins verifies the browser origins allowed for a page served
+// by this server on its listen port.
+func TestLoopbackOrigins(t *testing.T) {
+	got := loopbackOrigins("127.0.0.1:9440")
+	want := []string{"http://localhost:9440", "http://127.0.0.1:9440", "http://[::1]:9440"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("loopbackOrigins(127.0.0.1:9440) = %v, want %v", got, want)
+	}
+	if got := loopbackOrigins(":7000"); len(got) != 3 || got[0] != "http://localhost:7000" {
+		t.Fatalf("loopbackOrigins(:7000) = %v", got)
+	}
+	if got := loopbackOrigins("bad"); got != nil {
+		t.Fatalf("loopbackOrigins(bad) = %v, want nil", got)
+	}
+}
+
 // TestDefaultListenAddrIsLoopback verifies that chorus serve and chorus up
 // listen only on the loopback interface unless -addr is passed, and that the
 // background service is started with that loopback address.

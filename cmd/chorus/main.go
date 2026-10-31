@@ -156,7 +156,10 @@ func runServe(args []string) error {
 		_ = svc.Close()
 	}()
 
-	var origins []string
+	// The dashboard page served at GET / calls POST /mcp from the server's own
+	// origin, and browsers always send Origin on POST, so the loopback origins
+	// for the listen port are always allowed alongside -origins.
+	origins := loopbackOrigins(cfg.addr)
 	for _, o := range strings.Split(cfg.origins, ",") {
 		trimmed := strings.TrimSpace(o)
 		if trimmed != "" {
@@ -380,4 +383,19 @@ func startRedisDocker(dockerBin, port, dataDir string) error {
 		"dir", dataDir,
 	)
 	return nil
+}
+
+// loopbackOrigins returns the browser Origin values of a page served by this
+// server on the port in addr: http://localhost:<port>, http://127.0.0.1:<port>,
+// and http://[::1]:<port>. It returns nil when addr has no port.
+func loopbackOrigins(addr string) []string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return nil
+	}
+	return []string{
+		"http://localhost:" + port,
+		"http://127.0.0.1:" + port,
+		"http://[::1]:" + port,
+	}
 }

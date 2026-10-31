@@ -7,6 +7,13 @@
 // send, read, and leave require only "agent". All tools return TextResult via
 // ToolContent("content") so the generated MCP server omits outputSchema and
 // structuredContent on the wire.
+//
+// A separate read-only HTTP service ("view") serves the browser dashboard on
+// the same listener: GET /swarms lists swarms that agents joined, and
+// GET /swarms/{swarm}/view returns one swarm's agents, channels, direct-message
+// inboxes, and retained messages as JSON. It never registers a handle, binds a
+// handle to a swarm, or moves a read position, and it is not an MCP tool, so
+// agents never see it in tools/list.
 package design
 
 import (
@@ -229,5 +236,195 @@ var _ = Service("chorus", func() {
 			ReadOnlyHint(false)
 		})
 		JSONRPC(func() {})
+	})
+})
+
+// MessageType is one retained channel post or direct message as stored in its
+// Pulse stream.
+var MessageType = Type("Message", func() {
+	Description("A retained channel post or direct message.")
+	Attribute("seq", Int, "Sequence number within its channel or inbox (1, 2, ...).", func() {
+		Minimum(1)
+		Example(14)
+	})
+	Attribute("sender", String, "Handle of the agent that sent the message (without '@').", func() {
+		Example("db")
+	})
+	Attribute("text", String, "Message body exactly as sent.", func() {
+		Example("migration 004 applied")
+	})
+	Attribute("reply_to", Int, "Sequence number the sender passed as reply_to. Absent when the message is not a reply. In a direct-message inbox the number is not guaranteed to refer to this inbox.", func() {
+		Minimum(1)
+		Example(12)
+	})
+	Attribute("sent_at_ms", Int64, "Unix time in milliseconds when Redis stored the message, taken from its stream entry ID.", func() {
+		Example(1793467612968)
+	})
+	Required("seq", "sender", "text", "sent_at_ms")
+})
+
+// Pin is a channel's active pinned message. Chorus stores the pinned message
+// without its stream entry ID, so a pin has no send time.
+var Pin = Type("Pin", func() {
+	Description("The channel's active pinned message.")
+	Attribute("seq", Int, "Sequence number of the pinned message in its channel.", func() {
+		Minimum(1)
+		Example(1)
+	})
+	Attribute("sender", String, "Handle of the agent that pinned the message.", func() {
+		Example("lead")
+	})
+	Attribute("text", String, "Pinned message body exactly as sent.", func() {
+		Example("Goal: single-use passkey challenges | Verify: go test -race ./...")
+	})
+	Required("seq", "sender", "text")
+})
+
+// Position is one channel member's read position.
+var Position = Type("Position", func() {
+	Description("A channel member's read position.")
+	Attribute("handle", String, "Member handle (without '@').", func() {
+		Example("api")
+	})
+	Attribute("read_seq", Int, "Sequence number up to which the member has read, sent, or joined.", func() {
+		Minimum(0)
+		Example(12)
+	})
+	Attribute("behind", Int, "Channel head_seq minus read_seq: messages since the member last read, sent, or joined.", func() {
+		Minimum(0)
+		Example(2)
+	})
+	Attribute("mentioned", Boolean, "True when the member was @-mentioned, @all-mentioned, or replied to after read_seq.")
+	Required("handle", "read_seq", "behind", "mentioned")
+})
+
+// AgentType is one registered agent in a swarm.
+var AgentType = Type("Agent", func() {
+	Description("A registered agent.")
+	Attribute("handle", String, "Agent handle (without '@').", func() {
+		Example("api")
+	})
+	Attribute("role", String, "Role the agent advertised on join or who. Absent when none was given.", func() {
+		Example("API Engineer")
+	})
+	Attribute("last_seen_unix", Int64, "Unix time in seconds of the agent's last Chorus call or watcher heartbeat.", func() {
+		Example(1793467612)
+	})
+	Attribute("channels", ArrayOf(String), "Channels the agent is subscribed to, sorted.", func() {
+		Example([]string{"#arch"})
+	})
+	Attribute("watching_on_this_server", Boolean, "True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see. Starting or stopping a watch does not end a wait on its own, so the value can lag until the next swarm change or the end of the wait.")
+	Required("handle", "last_seen_unix", "channels", "watching_on_this_server")
+})
+
+// Channel is one channel with its pin, members' read positions, and retained
+// messages.
+var Channel = Type("Channel", func() {
+	Description("A channel and its retained messages.")
+	Attribute("name", String, "Channel name including '#'.", func() {
+		Example("#arch")
+	})
+	Attribute("topic", String, "Channel topic. Absent when none was set.", func() {
+		Example("Schema and API contract decisions")
+	})
+	Attribute("pin", Pin, "Active pinned message. Absent when the channel has no pin.")
+	Attribute("head_seq", Int, "Sequence number of the latest message published to the channel.", func() {
+		Minimum(0)
+		Example(14)
+	})
+	Attribute("positions", ArrayOf(Position), "Read position of every subscribed member, sorted by handle.")
+	Attribute("messages", ArrayOf(MessageType), "Every retained message, oldest first. Older messages may have been trimmed.")
+	Required("name", "head_seq", "positions", "messages")
+})
+
+// Inbox is one agent's direct-message inbox: the messages other agents sent
+// to that agent.
+var Inbox = Type("Inbox", func() {
+	Description("Direct messages sent to one recipient.")
+	Attribute("recipient", String, "Handle the messages were sent to (without '@').", func() {
+		Example("api")
+	})
+	Attribute("head_seq", Int, "Sequence number of the latest message in the inbox.", func() {
+		Minimum(0)
+		Example(3)
+	})
+	Attribute("read_seq", Int, "Sequence number up to which the recipient has read.", func() {
+		Minimum(0)
+		Example(2)
+	})
+	Attribute("behind", Int, "head_seq minus read_seq: messages since the recipient last read its inbox.", func() {
+		Minimum(0)
+		Example(1)
+	})
+	Attribute("messages", ArrayOf(MessageType), "Every retained message, oldest first. Older messages may have been trimmed.")
+	Required("recipient", "head_seq", "read_seq", "behind", "messages")
+})
+
+// SwarmView is the complete read-only snapshot of one swarm returned to the
+// browser dashboard.
+var SwarmView = Type("SwarmView", func() {
+	Description("Read-only snapshot of one swarm.")
+	Attribute("swarm", String, "Swarm name.", func() {
+		Example("chorus")
+	})
+	Attribute("agents", ArrayOf(AgentType), "Registered agents, sorted by handle.")
+	Attribute("channels", ArrayOf(Channel), "Channels, sorted by name.")
+	Attribute("inboxes", ArrayOf(Inbox), "Direct-message inboxes that hold at least one message, sorted by recipient.")
+	Attribute("etag", String, "Hash of the response body. Send it back as If-None-Match to wait for the next change.")
+	Required("swarm", "agents", "channels", "inboxes", "etag")
+})
+
+var _ = Service("view", func() {
+	Description("Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.")
+
+	Error("not_modified", ErrorResult, "The swarm did not change before the wait ended.")
+
+	HTTP(func() {
+		Response("not_modified", StatusNotModified, func() {
+			Body(Empty)
+		})
+	})
+
+	Method("swarms", func() {
+		Description("List the swarms that agents joined or called who in, sorted by name. A listed swarm may have no live agents left until its agents' records expire.")
+		Result(func() {
+			Attribute("swarms", ArrayOf(String), "Swarm names, sorted.", func() {
+				Example([]string{"chorus"})
+			})
+			Required("swarms")
+		})
+		HTTP(func() {
+			GET("/swarms")
+			Response(StatusOK)
+		})
+	})
+
+	Method("view", func() {
+		Description("Return one swarm's agents, channels, inboxes, and retained messages. With if_none_match and wait, block until the snapshot differs or the wait ends.")
+		Payload(func() {
+			Attribute("swarm", String, "Swarm name.", func() {
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+				Example("chorus")
+			})
+			Attribute("if_none_match", String, "ETag of the snapshot the caller already has.", func() {
+				Example(`"3f2a9c"`)
+			})
+			Attribute("wait", Int, "Seconds to wait for a change when if_none_match matches the current snapshot.", func() {
+				Default(0)
+				Minimum(0)
+				Maximum(60)
+				Example(25)
+			})
+			Required("swarm")
+		})
+		Result(SwarmView)
+		HTTP(func() {
+			GET("/swarms/{swarm}/view")
+			Header("if_none_match:If-None-Match")
+			Param("wait")
+			Response(StatusOK, func() {
+				Header("etag:ETag")
+			})
+		})
 	})
 })

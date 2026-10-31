@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- MANDATORY: Declare support for both light and dark themes -->
+  <meta name="color-scheme" content="light dark">
+  <title>Chorus</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='none'%3E%3Cpath d='M 119.5 104.4 A 204 204 0 0 1 392.5 104.4' stroke='%23F59E0B' stroke-width='42' stroke-linecap='round'/%3E%3Cpath d='M 178.41 149.21 A 132 132 0 0 1 333.59 149.21' stroke='%23F59E0B' stroke-width='42' stroke-linecap='round'/%3E%3Cpath d='M 192.96 450.02 A 204 204 0 0 1 56.46 213.59' stroke='%2314B8A6' stroke-width='42' stroke-linecap='round'/%3E%3Cpath d='M 202.31 376.59 A 132 132 0 0 1 124.72 242.2' stroke='%2314B8A6' stroke-width='42' stroke-linecap='round'/%3E%3Cpath d='M 455.54 213.59 A 204 204 0 0 1 319.04 450.02' stroke='%233B82F6' stroke-width='42' stroke-linecap='round'/%3E%3Cpath d='M 387.28 242.2 A 132 132 0 0 1 309.69 376.59' stroke='%233B82F6' stroke-width='42' stroke-linecap='round'/%3E%3Crect x='200' y='222' width='28' height='68' rx='14' fill='%23F43F5E'/%3E%3Crect x='242' y='196' width='28' height='120' rx='14' fill='%23F43F5E'/%3E%3Crect x='284' y='222' width='28' height='68' rx='14' fill='%23F43F5E'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <!-- Single Calm Header Bar -->
+  <header class="top-bar">
+    <div class="top-bar-left">
+      <div class="brand">
+        <!-- Official Chorus vector logo from docs/img/chorus-logo.svg -->
+        <svg class="brand-logo" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+          <path d="M 119.5 104.4 A 204 204 0 0 1 392.5 104.4" stroke="#F59E0B" stroke-width="42" stroke-linecap="round" />
+          <path d="M 178.41 149.21 A 132 132 0 0 1 333.59 149.21" stroke="#F59E0B" stroke-width="42" stroke-linecap="round" />
+          <path d="M 192.96 450.02 A 204 204 0 0 1 56.46 213.59" stroke="#14B8A6" stroke-width="42" stroke-linecap="round" />
+          <path d="M 202.31 376.59 A 132 132 0 0 1 124.72 242.2" stroke="#14B8A6" stroke-width="42" stroke-linecap="round" />
+          <path d="M 455.54 213.59 A 204 204 0 0 1 319.04 450.02" stroke="#3B82F6" stroke-width="42" stroke-linecap="round" />
+          <path d="M 387.28 242.2 A 132 132 0 0 1 309.69 376.59" stroke="#3B82F6" stroke-width="42" stroke-linecap="round" />
+          <rect x="200" y="222" width="28" height="68" rx="14" fill="#F43F5E" />
+          <rect x="242" y="196" width="28" height="120" rx="14" fill="#F43F5E" />
+          <rect x="284" y="222" width="28" height="68" rx="14" fill="#F43F5E" />
+        </svg>
+        <span>Chorus</span>
+      </div>
+
+      <div class="swarm-control">
+        <label for="swarm-select">Swarm</label>
+        <select id="swarm-select" aria-label="Select swarm"></select>
+        <button type="button" class="btn-icon" id="btn-custom-swarm" title="Inspect a swarm by name" aria-label="Inspect a swarm by name">+</button>
+      </div>
+
+      <nav class="target-tabs scroller" id="target-tabs" aria-label="Channels and Direct Messages"></nav>
+    </div>
+
+    <div class="top-bar-right">
+      <div class="search-box">
+        <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/>
+          <path d="m20 20-3.5-3.5"/>
+        </svg>
+        <input type="search" id="search-input" placeholder="Search messages, @agent, PR #…" aria-label="Search messages">
+      </div>
+
+      <button type="button" class="live-pill" id="btn-follow-live" title="Toggle Follow live vs Reviewing earlier messages">
+        <span class="status-dot" id="live-dot"></span>
+        <span id="live-text">Connecting…</span>
+      </button>
+
+      <select id="theme-select" class="btn-tonal" aria-label="Color theme">
+        <option value="auto">Theme: Auto</option>
+        <option value="dark">Theme: Dark</option>
+        <option value="light">Theme: Light</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- Main Single-Canvas Stage (Timeline + Progressive Disclosure Stream + Composer) -->
+  <main class="stage-container scroller" id="stage-container">
+    <div class="stage-inner">
+      <!-- 1. Live Agent Strip: Each agent's handle, live watch state, and latest words -->
+      <section class="agent-strip-section" id="agent-strip" aria-label="Swarm agents"></section>
+      <div id="agent-details"></div>
+
+      <!-- 2. Interactive Sliding Swarm Timeline (Overview ribbon + expandable swimlanes) -->
+      <section class="timeline-section" id="timeline-root" aria-label="Swarm timeline"></section>
+
+      <!-- 3. Collapsible 1-Line Pin Bar + Factual Mentions & Artifact Filter Shelf -->
+      <section class="context-strips">
+        <div id="pin-container"></div>
+        <div id="mentions-artifacts-container"></div>
+      </section>
+
+      <!-- 4. Stream Controls & Progressive Disclosure Message List -->
+      <section class="stream-section" aria-label="Messages">
+        <div class="stream-toolbar">
+          <div class="stream-toolbar-left">
+            <h1 class="stream-title" id="active-title">#chorus</h1>
+            <span class="stream-subtitle" id="active-subtitle"></span>
+          </div>
+          <div class="stream-toolbar-right">
+            <div id="active-filters-bar" class="active-filters-bar"></div>
+            <div class="segmented" id="mode-control" role="group" aria-label="Message grouping">
+              <button type="button" id="mode-threaded" class="active">Threads</button>
+              <button type="button" id="mode-stream">Chronological</button>
+            </div>
+            <button type="button" class="btn-tonal" id="btn-toggle-disclosure">Expand All</button>
+          </div>
+        </div>
+
+        <div id="new-since-banner"></div>
+        <div class="message-stream" id="message-stream" role="log" aria-live="polite"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 5. Floating Steering Composer Bar -->
+  <footer class="composer-dock" aria-label="Send message">
+    <div class="composer-card">
+      <div class="composer-box">
+        <div class="composer-context">
+          <div class="context-pill" title="Your handle when sending over MCP">
+            <label for="send-handle">As @</label>
+            <input type="text" id="send-handle" value="raphael" maxlength="32">
+          </div>
+          <div class="context-pill" title="Target #channel or @agent">
+            <label for="send-target">To</label>
+            <input type="text" id="send-target" value="#chorus" list="target-suggestions">
+            <datalist id="target-suggestions"></datalist>
+          </div>
+          <span id="reply-chip-container"></span>
+        </div>
+
+        <textarea
+          id="send-text"
+          class="composer-textarea"
+          rows="1"
+          placeholder="Steer the swarm in #channel or @agent… (Enter to send, Shift+Enter for newline)"
+        ></textarea>
+
+        <div class="composer-actions">
+          <label class="btn-text pin-check-label" id="pin-toggle-label" title="Pin this message in the channel and wake all watching agents">
+            <input type="checkbox" id="send-pin">
+            <span>Pin</span>
+          </label>
+          <button type="button" class="btn-primary" id="btn-send">
+            <span>Send</span>
+          </button>
+        </div>
+      </div>
+      <div class="composer-feedback" id="composer-feedback">
+        <span id="composer-status-text"></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/ui/timeline.js" defer></script>
+  <script src="/ui/stream.js" defer></script>
+  <script src="/ui/app.js" defer></script>
+</body>
+</html>
