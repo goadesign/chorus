@@ -45,9 +45,6 @@
   // agent keeps its color across renders of the same swarm.
   const PALETTE = ["#F59E0B", "#14B8A6", "#3B82F6", "#F43F5E", "#8B5CF6", "#22C55E", "#EC4899", "#64748B"];
 
-  // Per-root state that is about interaction only (focus, drag), never data.
-  const ui = new WeakMap();
-
   /**
    * render draws the timeline into rootEl.
    * state fields read: view, selectedTarget, selectedMessage, timeWindow,
@@ -61,6 +58,9 @@
    */
   function render(rootEl, state, actions) {
     const view = state && state.view;
+    // Re-rendering replaces the SVG; keep keyboard focus on the timeline if
+    // it had it, so arrow-key navigation survives new messages arriving.
+    const hadFocus = rootEl.contains(document.activeElement);
     clear(rootEl);
     if (!view) {
       rootEl.appendChild(note("Loading swarm…"));
@@ -153,10 +153,7 @@
 
     svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, state));
     rootEl.appendChild(svg);
-    const mem = ui.get(rootEl);
-    if (mem && mem.focused) svg.focus();
-    svg.addEventListener("focus", () => ui.set(rootEl, { focused: true }));
-    svg.addEventListener("blur", () => ui.set(rootEl, { focused: false }));
+    if (hadFocus) svg.focus();
   }
 
   // collectEvents flattens every retained channel message and DM into one
