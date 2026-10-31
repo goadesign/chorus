@@ -52,8 +52,10 @@ type JoinPayloadTransport struct {
 	Topic *string `json:"topic,omitempty"`
 	// Optional role description to advertise for the calling agent.
 	Role *string `json:"role,omitempty"`
-	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
-	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	// The exact id of the model you are running, as your provider names it (e.g.
+	// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
+	// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+	// dashboard uses 'human'.
 	Model *string `json:"model"`
 	// Maximum recent messages to return per joined channel.
 	Tail *JoinPayloadIntTransport `json:"tail,omitempty"`
@@ -102,12 +104,12 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 		}
 	}
 	if value.Model != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "\\S"))
 		if utf8.RuneCountInString(*value.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*value.Model) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 64, false))
+		if utf8.RuneCountInString(*value.Model) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 256, false))
 		}
 	}
 	if value.Tail != nil {
@@ -640,8 +642,10 @@ type WhoPayloadTransport struct {
 	Swarm *string `json:"swarm"`
 	// Optional role description to advertise to peers in this swarm.
 	Role *string `json:"role,omitempty"`
-	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
-	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	// The exact id of the model you are running, as your provider names it (e.g.
+	// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
+	// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+	// dashboard uses 'human'.
 	Model *string `json:"model"`
 }
 
@@ -671,12 +675,12 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 		}
 	}
 	if value.Model != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "\\S"))
 		if utf8.RuneCountInString(*value.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*value.Model) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 64, false))
+		if utf8.RuneCountInString(*value.Model) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 256, false))
 		}
 	}
 	return err

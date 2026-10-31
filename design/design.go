@@ -78,10 +78,14 @@ var _ = Service("chorus", func() {
 				MaxLength(120)
 				Example("API Engineer · owns chorus/service.go")
 			})
-			Attribute("model", String, "The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro'). A human joining from the dashboard uses 'human'.", func() {
+			// model is an opaque identifier kept exactly as given. The cap bounds
+			// the agent record that every server replica stores and every
+			// dashboard renders; real provider ids, including Bedrock ids and
+			// ARNs, fit well within it.
+			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
-				MaxLength(64)
-				Pattern(`^[a-z0-9][a-z0-9._-]*$`)
+				MaxLength(256)
+				Pattern(`\S`)
 				Example("claude-opus-5-5")
 			})
 			Required("agent", "swarm", "model")
@@ -123,10 +127,14 @@ var _ = Service("chorus", func() {
 				MaxLength(120)
 				Example("API Engineer · owns chorus/service.go")
 			})
-			Attribute("model", String, "The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro'). A human joining from the dashboard uses 'human'.", func() {
+			// model is an opaque identifier kept exactly as given. The cap bounds
+			// the agent record that every server replica stores and every
+			// dashboard renders; real provider ids, including Bedrock ids and
+			// ARNs, fit well within it.
+			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
-				MaxLength(64)
-				Pattern(`^[a-z0-9][a-z0-9._-]*$`)
+				MaxLength(256)
+				Pattern(`\S`)
 				Example("claude-opus-5-5")
 			})
 			Attribute("tail", Int, "Maximum recent messages to return per joined channel.", func() {

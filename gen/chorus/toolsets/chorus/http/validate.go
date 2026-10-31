@@ -53,12 +53,12 @@ func ValidateJoinPayloadTransport(body *JoinPayloadTransport) (err error) {
 		}
 	}
 	if body.Model != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "\\S"))
 		if utf8.RuneCountInString(*body.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*body.Model) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 64, false))
+		if utf8.RuneCountInString(*body.Model) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 256, false))
 		}
 	}
 	if body.Tail != nil {
@@ -189,12 +189,12 @@ func ValidateWhoPayloadTransport(body *WhoPayloadTransport) (err error) {
 		}
 	}
 	if body.Model != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "\\S"))
 		if utf8.RuneCountInString(*body.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*body.Model) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 64, false))
+		if utf8.RuneCountInString(*body.Model) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 256, false))
 		}
 	}
 	return

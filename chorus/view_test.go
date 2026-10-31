@@ -134,7 +134,7 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 }
 
 // TestJoinRequiresDeclaredModel verifies that who and join reject a missing
-// or malformed model, that the declared model is stored with the agent and
+// or blank model, that the declared model is stored with the agent and
 // returned by the view, that ordinary calls keep it, and that a later join
 // with another model replaces it.
 func TestJoinRequiresDeclaredModel(t *testing.T) {
@@ -143,7 +143,7 @@ func TestJoinRequiresDeclaredModel(t *testing.T) {
 	base := cluster.replicas[0].httpServer.URL
 
 	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": nil})
-	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": "Claude Opus"})
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": "   "})
 	api.callExpectingError("who", map[string]any{"model": nil})
 
 	api.call("join", map[string]any{"channels": []string{"#m"}, "model": "claude-opus-5-5"})
@@ -154,10 +154,13 @@ func TestJoinRequiresDeclaredModel(t *testing.T) {
 	require.NotNil(t, doc.Agents[0].Model)
 	assert.Equal(t, "claude-opus-5-5", *doc.Agents[0].Model)
 
-	api.call("join", map[string]any{"channels": []string{"#m"}, "model": "gpt-5-codex"})
+	// Real provider ids are kept exactly as given, including case, colons,
+	// and slashes.
+	const bedrock = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": bedrock})
 	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
 	require.NotNil(t, doc.Agents[0].Model)
-	assert.Equal(t, "gpt-5-codex", *doc.Agents[0].Model)
+	assert.Equal(t, bedrock, *doc.Agents[0].Model)
 }
 
 // TestSwarmViewWaitsForChanges verifies the If-None-Match wait: it returns
