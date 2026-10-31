@@ -75,7 +75,6 @@
   --scrollbar-thumb: var(--scrollbar-thumb-light);
   --scrollbar-track: var(--scrollbar-track-light);
 
-  /* Fallback for browsers without light-dark support */
   @media (prefers-color-scheme: dark) {
     --bg-canvas: var(--bg-canvas-dark);
     --bg-surface: var(--bg-surface-dark);
@@ -206,8 +205,8 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 15px;
+  line-height: 22px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -233,20 +232,12 @@ button, input, select, textarea {
 }
 
 .icon-sm {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   color: var(--text-muted);
 }
 
-.mono {
-  font-family: var(--font-mono);
-}
-
-.muted {
-  color: var(--text-muted);
-}
-
-/* Agent Color Classes (No inline style required) */
+/* Agent Color Classes */
 .agent-c0 { color: #3B82F6; --agent-color: #3B82F6; }
 .agent-c1 { color: #14B8A6; --agent-color: #14B8A6; }
 .agent-c2 { color: #F59E0B; --agent-color: #F59E0B; }
@@ -257,25 +248,25 @@ button, input, select, textarea {
 .agent-c7 { color: #06B6D4; --agent-color: #06B6D4; }
 .agent-human { color: #F43F5E; --agent-color: #F43F5E; }
 
-.sender-dot {
-  width: 8px;
-  height: 8px;
+.agent-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--agent-color, var(--accent));
   flex-shrink: 0;
   display: inline-block;
 }
 
-/* Top Header Bar */
+/* 1. Single Clean Header Bar */
 .top-bar {
-  height: 54px;
+  min-height: 60px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
-  padding: 0 20px;
+  padding: 6px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
   flex-shrink: 0;
   z-index: 20;
 }
@@ -284,7 +275,7 @@ button, input, select, textarea {
 .top-bar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -295,9 +286,9 @@ button, input, select, textarea {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   font-weight: 700;
-  font-size: 16px;
+  font-size: 18px;
   letter-spacing: -0.02em;
   color: var(--text-primary);
   user-select: none;
@@ -305,8 +296,8 @@ button, input, select, textarea {
 }
 
 .brand-logo {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
 }
 
@@ -316,13 +307,13 @@ button, input, select, textarea {
   gap: 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px 8px;
+  border-radius: 10px;
+  padding: 4px 10px;
   flex-shrink: 0;
 }
 
 .swarm-control label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
   font-weight: 500;
 }
@@ -331,7 +322,7 @@ button, input, select, textarea {
   background: transparent;
   border: none;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   padding: 2px 4px;
@@ -344,11 +335,12 @@ button, input, select, textarea {
 .btn-icon {
   background: transparent;
   border: none;
-  border-radius: 5px;
-  padding: 1px 6px;
+  border-radius: 6px;
+  padding: 2px 7px;
   color: var(--text-muted);
   cursor: pointer;
   font-weight: 600;
+  font-size: 14px;
 }
 
 .btn-icon:hover {
@@ -356,11 +348,11 @@ button, input, select, textarea {
   color: var(--text-primary);
 }
 
-/* Channel & DM Target Pills in Header */
+/* Channel & DM Conversation Tabs in Header */
 .target-tabs {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   overflow-x: auto;
   min-width: 0;
   padding: 2px 0;
@@ -369,13 +361,13 @@ button, input, select, textarea {
 .target-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 4px 11px;
+  padding: 6px 14px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
@@ -397,10 +389,10 @@ button, input, select, textarea {
 
 .count-pill {
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: var(--bg-elevated);
   color: var(--text-muted);
@@ -414,31 +406,31 @@ button, input, select, textarea {
 .search-box {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px 10px;
+  border-radius: 10px;
+  padding: 6px 12px;
 }
 
 .search-box input {
   border: none;
   background: transparent;
-  font-size: 12.5px;
-  width: 190px;
+  font-size: 13.5px;
+  width: 210px;
   outline: none;
 }
 
 .live-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  padding: 5px 10px;
+  padding: 6px 13px;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
@@ -457,8 +449,8 @@ button, input, select, textarea {
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--teal);
   flex-shrink: 0;
@@ -476,9 +468,9 @@ button, input, select, textarea {
 .btn-tonal {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 5px 10px;
-  font-size: 12px;
+  border-radius: 10px;
+  padding: 6px 13px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
@@ -503,15 +495,15 @@ button, input, select, textarea {
 .btn-text {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   white-space: nowrap;
 }
 
@@ -524,9 +516,9 @@ button, input, select, textarea {
   background: var(--accent);
   color: #ffffff;
   border: none;
-  border-radius: 8px;
-  padding: 7px 14px;
-  font-size: 13px;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -550,7 +542,7 @@ button, input, select, textarea {
   width: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 24px 28px;
+  padding: 18px 24px 32px;
 }
 
 .stage-inner {
@@ -559,42 +551,37 @@ button, input, select, textarea {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
-/* 1. Live Agent Strip ("Each agent's latest words are its status") */
+/* 2. Participants Strip */
 .agent-strip-section {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
 }
 
-.agent-cards-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 8px;
-}
-
-.agent-status-card {
+.agent-summary {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 12px;
+  border-radius: 12px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  min-width: 0;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
 }
 
-.agent-status-card:hover {
+.agent-summary:hover {
   border-color: var(--border-strong);
   background: var(--bg-elevated);
 }
 
-.agent-status-card.active {
+.agent-summary.is-selected {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -602,529 +589,155 @@ button, input, select, textarea {
 .agent-card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
-.agent-card-identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.agent-handle {
+.agent-name {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-primary);
 }
 
-.agent-role {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-latest-quote {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-detail-bar {
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 10px;
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-
-.agent-detail-facts {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  color: var(--text-secondary);
-}
-
-/* 2. Interactive Sliding Swarm Timeline (Full-width stage) */
-.timeline-section {
-  width: 100%;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.timeline-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.timeline-title-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.timeline-title {
-  font-weight: 700;
+.agent-status {
   font-size: 12.5px;
-  color: var(--text-primary);
-}
-
-.timeline-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.timeline-svg-wrap {
-  width: 100%;
-  overflow-x: auto;
-  position: relative;
-}
-
-.timeline-svg {
-  display: block;
-  width: 100%;
-  min-width: 640px;
-  user-select: none;
-}
-
-.timeline-tooltip {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-secondary);
+  font-weight: 500;
+  color: var(--text-muted);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 30px;
-}
-
-.timeline-scrubber-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-
-.timeline-scrubber-row input[type="range"] {
-  flex: 1;
-  cursor: pointer;
-}
-
-/* 3. Collapsible 1-Line Pin & Context Strips (Readable measure centered below timeline) */
-.context-strips {
-  width: 100%;
-  max-width: 88ch;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-details.pin-panel {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-details.pin-panel > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  user-select: none;
-  font-size: 12.5px;
-}
-
-details.pin-panel > summary::-webkit-details-marker {
-  display: none;
-}
-
-details.pin-panel > summary:hover {
-  background: var(--bg-elevated);
-}
-
-.pin-summary-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.pin-summary-text {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.pin-summary-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.pin-body {
-  padding: 12px 14px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-  border-bottom-left-radius: 10px;
-  border-bottom-right-radius: 10px;
-}
-
-.pin-clauses-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.pin-clause {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-
-.pin-clause-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  margin-bottom: 2px;
-}
-
-.pin-clause-content {
-  font-size: 13px;
-  color: var(--text-primary);
-  word-break: break-word;
-}
-
-.pin-raw {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin-top: 8px;
-}
-
-/* Mentions & Artifacts Shelf */
-.shelf-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-
-.chip-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  padding: 2px 8px;
   border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
-  cursor: pointer;
 }
 
-.chip-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-}
-
-.chip-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+.agent-status.is-watching {
+  background: var(--teal-soft);
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 35%, transparent);
   font-weight: 600;
 }
 
-.chip-btn.mention-chip {
+.agent-behind-pill {
+  margin-left: auto;
   background: var(--amber-soft);
   color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
 }
 
-/* 4. Stream Section & Progressive Disclosure (Readable 88ch measure centered below timeline) */
-.stream-section {
-  width: 100%;
-  max-width: 88ch;
+.agent-caught-up-pill {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-role-inline {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
-  margin: 0 auto;
+  width: 100%;
+}
+
+.agent-latest,
+.agent-last-message {
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  width: 100%;
+}
+
+#agent-details:not(:empty) {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 14px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.stream-toolbar {
+.details-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
 }
 
-.stream-toolbar-left,
-.stream-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.stream-title {
+.details-heading h3 {
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   margin: 0;
 }
 
-.stream-subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.segmented {
-  display: inline-flex;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 2px;
-}
-
-.segmented button {
-  border: none;
-  background: transparent;
-  padding: 3px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.segmented button.active {
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-/* "New since you looked" Divider Banner */
-.new-since-divider {
-  background: var(--amber-soft);
-  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
-  color: var(--amber);
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.message-stream {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.empty-state {
-  margin: 32px auto;
-  max-width: 420px;
-  text-align: center;
-  padding: 20px;
-  color: var(--text-muted);
-}
-
-/* 5. Floating Composer Dock */
-.composer-dock {
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border);
-  padding: 10px 24px;
-  flex-shrink: 0;
-}
-
-.composer-card {
-  width: 100%;
-  max-width: 88ch;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.composer-box {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 8px 6px 10px;
-}
-
-.composer-box:focus-within {
-  border-color: var(--accent);
-  background: var(--bg-surface);
-}
-
-.composer-context {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 3px 0;
-}
-
-.context-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 7px;
-  font-size: 12px;
-}
-
-.context-pill label {
-  color: var(--text-muted);
-}
-
-.context-pill input {
-  border: none;
-  background: transparent;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  outline: none;
-  field-sizing: content;
-  width: auto;
-  min-inline-size: 6ch;
-  max-inline-size: 18ch;
-}
-
-.composer-textarea {
-  flex: 1 1 220px;
-  border: none;
-  background: transparent;
+.agent-role {
+  margin: 0;
   font-size: 14px;
-  line-height: 20px;
-  padding: 4px;
-  resize: none;
-  outline: none;
-  field-sizing: content;
-  height: auto;
-  min-block-size: 28px;
-  max-block-size: 140px;
-  overflow-y: auto;
+  color: var(--text-secondary);
 }
 
-.composer-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
+.agent-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 13.5px;
 }
 
-.pin-check-label {
-  cursor: pointer;
-}
-
-.pin-check-label.disabled {
-  opacity: 0.4;
-}
-
-.composer-feedback {
+.agent-facts dt {
   font-size: 12px;
-  min-height: 16px;
+  font-weight: 600;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.composer-feedback.error {
-  color: var(--coral);
-  font-weight: 500;
+.agent-facts dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
 }
 
-.composer-feedback.ok {
-  color: var(--teal);
-  font-weight: 500;
+.detail-actions,
+.pin-actions,
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-@media (max-width: 760px) {
-  .top-bar {
-    padding: 0 12px;
-    flex-wrap: wrap;
-    height: auto;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-  .stage-container,
-  .composer-dock {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-  .search-box input {
-    width: 120px;
-  }
+.pin-actions,
+.message-actions {
+  padding: 0 18px 12px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
+/* 3. Interactive Sliding Swarm Timeline */
+.timeline-section {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  touch-action: none;
 }
 
-/* SVG Swarm Timeline Styles (chorus/ui/timeline.js) */
 .tl {
   display: block;
   width: 100%;
@@ -1143,23 +756,25 @@ details.pin-panel > summary:hover {
   fill: var(--bg-elevated);
   stroke: var(--border);
   stroke-width: 1;
+  cursor: pointer;
+  touch-action: none;
 }
 
 .tl-tick {
-  stroke-width: 1.5;
-  opacity: 0.75;
+  stroke-width: 2;
+  opacity: 0.8;
 }
 
 .tl-label {
-  fill: var(--text-muted);
-  font-size: 11px;
+  fill: var(--text-secondary);
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .tl-window {
-  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  fill: color-mix(in srgb, var(--accent) 20%, transparent);
   stroke: var(--accent);
-  stroke-width: 1.5;
+  stroke-width: 2;
   cursor: grab;
   touch-action: none;
 }
@@ -1170,19 +785,20 @@ details.pin-panel > summary:hover {
 
 .tl-quiet {
   fill: var(--bg-elevated);
-  opacity: 0.65;
+  opacity: 0.7;
 }
 
 .tl-quiet-label {
   fill: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 .tl-axis {
-  fill: var(--text-muted);
+  fill: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .tl-lane {
@@ -1203,75 +819,68 @@ details.pin-panel > summary:hover {
 
 .tl-lane-label {
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.tl-lane-label.is-left {
+.tl-lane-label.is-left,
+.tl-lane-dot.is-left {
   opacity: 0.55;
 }
 
 .tl-pin {
   stroke: var(--brand-amber);
-  stroke-width: 1.5;
-  stroke-dasharray: 3 2;
+  stroke-width: 1.75;
+  stroke-dasharray: 4 3;
 }
 
 .tl-pin-label {
   fill: var(--amber);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .tl-reply {
   fill: none;
-  stroke-width: 1.25;
+  stroke-width: 1.5;
   opacity: 0.45;
   pointer-events: none;
 }
 
 .tl-read {
   fill: var(--teal);
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .tl-read.is-behind {
   fill: var(--amber);
 }
 
-.tl-read-edge {
-  fill: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.tl-read-edge.is-behind {
-  fill: var(--amber);
-}
-
 .tl-mention {
   fill: none;
-  stroke-width: 1;
+  stroke-width: 1.5;
   stroke-dasharray: 4 3;
-  opacity: 0.65;
+  opacity: 0.7;
   pointer-events: none;
 }
 
 .tl-mention-end {
   fill: none;
-  stroke-width: 1.25;
+  stroke-width: 1.5;
   pointer-events: none;
 }
 
 .tl-dot {
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.65;
+  stroke: var(--bg-surface);
+  stroke-width: 1.5;
   transition: r 0.12s, opacity 0.12s;
 }
 
 .tl-dot.is-target {
-  opacity: 0.92;
+  opacity: 0.96;
 }
 
 .tl-dot:hover {
@@ -1281,7 +890,7 @@ details.pin-panel > summary:hover {
 .tl-dot.is-selected {
   opacity: 1;
   stroke: var(--text-primary);
-  stroke-width: 2;
+  stroke-width: 2.5;
 }
 
 .tl-dot.is-dim {
@@ -1290,80 +899,120 @@ details.pin-panel > summary:hover {
 
 .tl-review {
   fill: var(--amber);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .tl-empty {
-  margin: 8px 0;
-  font-size: 12.5px;
+  margin: 12px 0;
+  font-size: 14px;
   color: var(--text-muted);
   text-align: center;
 }
 
-/* Stream Module CSS Hooks (chorus/ui/stream.js) */
-.agent-summary {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 12px;
+/* 4. Context Strips & Newest-First Stream (Readable 960px measure) */
+.context-strips,
+.stream-section {
+  width: 100%;
+  max-width: 960px;
+  min-width: 0;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  gap: 10px;
 }
 
-.agent-summary:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-elevated);
+#mentions-artifacts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.agent-summary.is-selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.agent-name {
-  font-family: var(--font-mono);
-  font-weight: 700;
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
   font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chip-btn:hover {
+  background: var(--bg-elevated);
   color: var(--text-primary);
 }
 
-.agent-latest,
-.agent-last-message {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.chip-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  font-weight: 600;
 }
 
-.agent-facts {
+.stream-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stream-toolbar-left,
+.stream-toolbar-right,
+.active-filters-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
-.details-heading {
-  font-size: 12px;
+.stream-title {
+  font-family: var(--font-mono);
+  font-size: 18px;
   font-weight: 700;
-  color: var(--text-primary);
   margin: 0;
 }
 
-.detail-actions,
-.pin-actions,
-.message-actions {
+.stream-subtitle {
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.segmented {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  padding: 5px 13px;
+  border-radius: 7px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.message-stream {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .pin-disclosure,
@@ -1377,7 +1026,7 @@ details.pin-panel > summary:hover {
   overflow: hidden;
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .pin-disclosure > summary:hover,
@@ -1395,26 +1044,28 @@ details.pin-panel > summary:hover {
 .mentions-summary {
   list-style: none;
   cursor: pointer;
-  padding: 8px 14px;
+  padding: 12px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .thread-disclosure > summary,
 .thread-summary {
   list-style: none;
   cursor: pointer;
-  padding: 10px 14px;
+  padding: 14px 18px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1425,11 +1076,11 @@ details.pin-panel > summary:hover {
 .message-summary {
   list-style: none;
   cursor: pointer;
-  padding: 9px 14px;
+  padding: 12px 18px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
+  gap: 5px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1445,9 +1096,9 @@ details.pin-panel > summary:hover {
 }
 
 .pin-title {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 14.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1462,7 +1113,8 @@ details.pin-panel > summary:hover {
   min-width: 0;
   font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 16px;
+  line-height: 23px;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1474,51 +1126,83 @@ details.pin-panel > summary:hover {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
 .message-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  font-size: 12px;
+  font-size: 13.5px;
   color: var(--text-muted);
 }
 
 .message-meta .stream-action {
   margin-left: auto;
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
+.thread-count-pill {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .pin-updated {
   background: var(--amber-soft);
   color: var(--amber);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: 999px;
 }
 
 .pin-clauses {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-  padding: 10px 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  padding: 8px 18px 14px;
+  margin: 0;
+}
+
+.pin-clauses dt {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pin-clauses dd {
+  margin: 0 0 8px;
+  font-size: 14.5px;
+  line-height: 22px;
 }
 
 .pin-raw-text,
 .message-code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13.5px;
+  line-height: 20px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 6px 18px 14px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-body .message-code {
+  margin: 8px 0;
 }
 
 .mention-list,
@@ -1527,7 +1211,9 @@ details.pin-panel > summary:hover {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 6px 14px 10px;
+  padding: 6px 18px 14px;
+  margin: 0;
+  list-style: none;
 }
 
 .mention-row,
@@ -1539,10 +1225,17 @@ details.pin-panel > summary:hover {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 11.5px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+.stream-action:hover,
+.artifact-filter:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
 }
 
 .artifact-filter.is-selected,
@@ -1554,7 +1247,8 @@ details.pin-panel > summary:hover {
 
 .message-sender {
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 14px;
   color: var(--text-primary);
 }
 
@@ -1562,7 +1256,7 @@ details.pin-panel > summary:hover {
 .message-time,
 .message-reference {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1571,7 +1265,8 @@ details.pin-panel > summary:hover {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: 15.5px;
+  line-height: 23px;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1583,45 +1278,190 @@ details.pin-panel > summary:hover {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .message-body {
-  padding: 8px 14px 12px;
-  font-size: 13.5px;
-  line-height: 20px;
+  padding: 10px 18px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 15.5px;
+  line-height: 24px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.thread-messages {
-  padding: 8px 14px 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.message-body code {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 5px;
 }
 
-.new-messages-divider {
-  background: var(--amber-soft);
-  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
-  color: var(--amber);
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
+.thread-messages {
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 10px;
 }
 
-.empty-inline {
-  font-size: 12px;
+.empty-state {
+  margin: 36px auto;
+  max-width: 460px;
+  text-align: center;
+  padding: 24px;
   color: var(--text-muted);
-  padding: 4px 0;
+}
+
+.empty-inline {
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 6px 0;
+  margin: 0;
+}
+
+/* 5. Floating Composer Dock */
+.composer-dock {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  padding: 12px 24px;
+  flex-shrink: 0;
+}
+
+.composer-card {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 8px 12px;
+  transition: border-color 0.15s;
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent);
+}
+
+.composer-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.context-pill label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.context-pill input {
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text-primary);
+  width: 11ch;
+  outline: none;
+}
+
+.composer-textarea {
+  flex: 1;
+  min-width: 220px;
+  border: none;
+  background: transparent;
+  resize: none;
+  font-size: 15px;
+  line-height: 22px;
+  padding: 4px 6px;
+  max-height: 150px;
+  overflow-y: auto;
+  outline: none;
+  field-sizing: content;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.pin-check-label {
+  cursor: pointer;
+  user-select: none;
+}
+
+.pin-check-label.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.composer-feedback {
+  font-size: 13px;
+  min-height: 18px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.composer-feedback.error {
+  color: var(--coral);
+}
+
+.composer-feedback.ok {
+  color: var(--teal);
+}
+
+@media (max-width: 760px) {
+  .top-bar {
+    padding: 8px 14px;
+    flex-wrap: wrap;
+    height: auto;
+  }
+  .stage-container,
+  .composer-dock {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .search-box input {
+    width: 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

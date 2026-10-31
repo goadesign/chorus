@@ -12,7 +12,7 @@
       for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) root.replaceChildren();
       delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
-      els.subtitleEl.textContent = "Loading swarm";
+      els.subtitleEl.textContent = "Loading swarm…";
       els.streamEl.replaceChildren(empty("Loading messages", "Connecting to the swarm…"));
       return;
     }
@@ -27,8 +27,8 @@
     renderSelection(els.detailsEl, state, actions, entries, visible);
     const target = state.selectedTarget;
     els.titleEl.textContent = target?.kind === "channel" ? target.name
-      : target?.kind === "dm" ? `@${target.a} and @${target.b}` : "All messages";
-    els.subtitleEl.textContent = `${visible.length} of ${targetEntries.length} retained messages`;
+      : target?.kind === "dm" ? `@${target.a} ↔ @${target.b}` : "All messages";
+    els.subtitleEl.textContent = `${visible.length} of ${targetEntries.length} messages · newest first`;
   }
 
   // retainedMessages attaches each message's real channel or recipient inbox.
@@ -61,7 +61,7 @@
   }
 
   // compareEntries gives equal-time messages from separate streams a stable
-  // display order; it does not claim that one caused the other.
+  // ascending display order; presentation reverses this to show newest on top.
   function compareEntries(a, b) {
     return a.message.sent_at_ms - b.message.sent_at_ms
       || a.target.localeCompare(b.target) || a.message.seq - b.message.seq;
@@ -84,32 +84,103 @@
       .toLowerCase().includes(query);
   }
 
-  // renderAgents shows what each current agent last said, with its full role
-  // and heartbeat facts available on demand rather than repeated as badges.
+  // renderAgents renders each active participant card with their role, watch
+  // state on this server, last call age, read position gap in the active
+  // channel/inbox, and latest message headline.
   function renderAgents(els, state, actions, entries) {
     const latest = new Map();
     for (const entry of entries) latest.set(entry.message.sender, entry);
+    const activeChannel = state.selectedTarget?.kind === "channel"
+      ? state.view.channels.find((ch) => ch.name === state.selectedTarget.name)
+      : state.view.channels[0] || null;
+    const inboxByHandle = new Map((state.view.inboxes || []).map((ib) => [ib.recipient, ib]));
+
     const nodes = state.view.agents.map((agent) => {
       const entry = latest.get(agent.handle);
-      const button = element("button", "agent-summary",
+      const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
+      const inbox = inboxByHandle.get(agent.handle) || null;
+      const colorClass = window.ChorusUI?.agentColorClass
+        ? window.ChorusUI.agentColorClass(agent.handle, agent.role)
+        : "";
+
+      const statusText = agent.watching_on_this_server
+        ? "Watching here"
+        : `Last call ${age(agent.last_seen_unix * 1000)} ago`;
+      const statusBadge = element(
+        "span",
+        `agent-status${agent.watching_on_this_server ? " is-watching" : ""}`,
+        statusText
+      );
+
+      const headerRow = element(
+        "span",
+        "agent-card-top",
+        element("span", `agent-dot ${colorClass}`),
         element("strong", "agent-name", `@${agent.handle}`),
-        element("span", "agent-latest", entry ? headline(entry.message.text) : "No retained messages"));
+        statusBadge
+      );
+
+      if (pos && pos.behind > 0) {
+        headerRow.append(
+          element(
+            "span",
+            "agent-behind-pill",
+            `${pos.behind} behind (#${pos.read_seq})${pos.mentioned ? " · @mentioned" : ""}`
+          )
+        );
+      } else if (inbox && inbox.behind > 0) {
+        headerRow.append(
+          element("span", "agent-behind-pill", `DM ${inbox.behind} behind`)
+        );
+      } else if (pos && pos.read_seq > 0) {
+        headerRow.append(
+          element("span", "agent-caught-up-pill", `Read #${pos.read_seq}`)
+        );
+      }
+
+      const cardChildren = [headerRow];
+      if (agent.role) {
+        cardChildren.push(element("span", "agent-role-inline", agent.role));
+      }
+      cardChildren.push(
+        element(
+          "span",
+          "agent-latest",
+          entry
+            ? `${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): ${headline(entry.message.text)}`
+            : "No retained messages"
+        )
+      );
+
+      const button = element(
+        "button",
+        `agent-summary${state.filterAgent === agent.handle ? " is-selected" : ""}`,
+        ...cardChildren
+      );
       button.type = "button";
       button.dataset.focusKey = `agent:${agent.handle}`;
-      button.setAttribute("aria-label", `Show details for @${agent.handle}`);
+      button.setAttribute("aria-label", `Inspect @${agent.handle}`);
       button.addEventListener("click", () => {
         actions.selectMessage(null, 0);
+        if (els.detailsEl.dataset.agent === agent.handle) {
+          delete els.detailsEl.dataset.agent;
+          els.detailsEl.replaceChildren();
+          return;
+        }
         els.detailsEl.dataset.agent = agent.handle;
-        showAgent(els.detailsEl, agent, actions, entry);
+        showAgent(els.detailsEl, agent, state, actions, entry);
       });
       return button;
     });
-    if (nodes.length === 0) nodes.push(element("p", "empty-inline", "No agents are currently registered."));
+
+    if (nodes.length === 0) {
+      nodes.push(element("p", "empty-inline", "No active agents in the last 5 minutes. Historical messages remain visible below."));
+    }
     replaceKeepingFocus(els.agentStripEl, nodes);
     const inspected = els.detailsEl.dataset.agent;
     if (inspected) {
       const agent = state.view.agents.find((item) => item.handle === inspected);
-      if (agent) showAgent(els.detailsEl, agent, actions, latest.get(inspected));
+      if (agent) showAgent(els.detailsEl, agent, state, actions, latest.get(inspected));
       else {
         delete els.detailsEl.dataset.agent;
         els.detailsEl.replaceChildren();
@@ -117,27 +188,54 @@
     }
   }
 
-  // showAgent describes current registration facts and sends composing work
-  // back to app.js. A heartbeat never becomes a claim that an agent is working.
-  function showAgent(root, agent, actions, latest) {
+  // showAgent describes current registration facts, per-channel read watermarks,
+  // and 1-click actions to message, filter, or copy the chorus watch command.
+  function showAgent(root, agent, state, actions, latest) {
     const close = actionButton("Close", "close-agent", () => {
       delete root.dataset.agent;
       root.replaceChildren();
     });
+
+    const posSummaries = [];
+    for (const ch of state.view.channels || []) {
+      const p = (ch.positions || []).find((item) => item.handle === agent.handle);
+      if (p) {
+        posSummaries.push(
+          p.behind > 0
+            ? `${ch.name}: read #${p.read_seq} (${p.behind} behind head #${ch.head_seq}${p.mentioned ? ", @mentioned" : ""})`
+            : `${ch.name}: caught up at #${p.read_seq}`
+        );
+      }
+    }
+
     const facts = element("dl", "agent-facts",
       element("dt", "", "Last Chorus call or heartbeat"),
       element("dd", "", `${age(agent.last_seen_unix * 1000)} ago`),
       element("dt", "", "Watching on this server"),
-      element("dd", "", agent.watching_on_this_server ? "Yes" : "No"),
-      element("dt", "", "Channels"),
-      element("dd", "", agent.channels.join(", ") || "None"));
+      element("dd", "", agent.watching_on_this_server ? "Yes (listening)" : "No"),
+      element("dt", "", "Subscribed channels"),
+      element("dd", "", agent.channels.join(", ") || "None"),
+      element("dt", "", "Read watermarks"),
+      element("dd", "", posSummaries.join(" · ") || "No channel watermarks"));
+
+    const watchCmd = `chorus watch ${agent.handle}`;
+    const copyWatchBtn = actionButton(`Copy: ${watchCmd}`, `copy-watch:${agent.handle}`, (ev) => {
+      const btn = ev.currentTarget;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(watchCmd).then(() => {
+          btn.textContent = `Copied: ${watchCmd}`;
+        }).catch(() => {});
+      }
+    });
+
     const nodes = [element("div", "details-heading", element("h3", "", `@${agent.handle}`), close)];
     if (agent.role) nodes.push(element("p", "agent-role", agent.role));
     nodes.push(facts);
-    if (latest) nodes.push(element("p", "agent-last-message", `Latest message: ${headline(latest.message.text)}`));
+    if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): ${headline(latest.message.text)}`));
     nodes.push(element("div", "detail-actions",
-      actionButton("Direct message", `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
-      actionButton("Show messages", `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle))));
+      actionButton(`Direct message @${agent.handle}`, `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
+      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : `Filter by @${agent.handle}`, `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
+      copyWatchBtn));
     replaceKeepingFocus(root, nodes);
   }
 
@@ -162,8 +260,8 @@
     disclosure.dataset.disclosureKey = `pin:${key}`;
     const newer = channel.messages.filter((message) => message.seq > pin.seq).length;
     const summary = element("summary", "pin-summary",
-      element("strong", "pin-title", `Pin: ${headline(pin.text)}`),
-      element("span", "pin-meta", `Pinned at #${pin.seq} · ${newer} newer retained messages`));
+      element("strong", "pin-title", `Pinned goal (#${pin.seq}): ${headline(pin.text)}`),
+      element("span", "pin-meta", `by @${pin.sender} · ${newer} newer messages · click to expand`));
     summary.dataset.focusKey = `pin:${key}`;
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
@@ -199,8 +297,6 @@
     replaceKeepingFocus(root, [disclosure]);
   }
 
-  // pinClauses recognizes the documented display convention only when every
-  // segment is preserved. Other pin text remains available verbatim.
   function pinClauses(text) {
     const segments = text.split("|");
     if (segments.length < 2) return [];
@@ -213,9 +309,8 @@
     return clauses;
   }
 
-  // renderMentions shows written mentions of known people and the reserved
-  // @all audience, never inferred requests or work states. Other tokens remain
-  // in the original messages. Replies are linked only inside their channel.
+  // renderMentions shows written mentions of known participants and @all, plus
+  // clickable references for commits, PRs, and files.
   function renderMentions(root, entries, state, actions, allEntries) {
     const mentionTargets = new Set(["all", ...state.view.agents.map((agent) => agent.handle.toLowerCase())]);
     for (const entry of allEntries) {
@@ -233,12 +328,12 @@
     disclosure.open = open;
     const last = mentions.at(-1);
     disclosure.append(element("summary", "mentions-summary", last
-      ? `@${last.entry.message.sender} mentioned @${last.handle} · ${age(last.entry.message.sent_at_ms)} ago`
-      : "No mentions of known participants"));
+      ? `Recent mentions: @${last.entry.message.sender} → @${last.handle} (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`
+      : "No mentions in this view"));
     const list = element("ul", "mention-list");
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
-        actionButton(`@${entry.message.sender} mentioned @${handle}`, `mention:${coordinate(entry)}:${handle}`,
+        actionButton(`@${entry.message.sender} mentioned @${handle} (${entry.target}#${entry.message.seq})`, `mention:${coordinate(entry)}:${handle}`,
           () => actions.selectMessage(entry.target, entry.message.seq)),
         element("span", "message-time", `${age(entry.message.sent_at_ms)} ago`));
       if (entry.target.startsWith("#")) {
@@ -252,7 +347,7 @@
     const references = [...new Set(entries.flatMap((entry) => artifacts(entry.message.text)))];
     const filters = element("details", "artifact-disclosure");
     filters.open = root.querySelector(".artifact-disclosure")?.open === true;
-    filters.append(element("summary", "", `Find in messages (${references.length} references)`));
+    filters.append(element("summary", "", `Referenced files, commits & PRs (${references.length})`));
     const buttons = element("div", "artifact-filters");
     for (const reference of references) {
       const button = actionButton(reference, `artifact:${reference}`, () => actions.setFilterArtifact(reference === state.filterArtifact ? "" : reference));
@@ -267,8 +362,6 @@
     ]);
   }
 
-  // renderNewMessages counts retained messages after this browser's per-source
-  // position. Missing positions mean a first visit, not an unread backlog.
   function renderNewMessages(root, entries, state, actions) {
     const fresh = entries.filter((entry) => Object.hasOwn(state.lastSeenSeqByTarget, entry.target)
       && entry.message.seq > state.lastSeenSeqByTarget[entry.target]);
@@ -276,11 +369,9 @@
       root.replaceChildren();
       return;
     }
-    const button = actionButton(`${fresh.length} new since you looked`, "new-messages", () => {
-      const first = fresh[0];
-      actions.setFollowLive(false);
-      actions.setTimeWindow(null);
-      actions.selectMessage(first.target, first.message.seq);
+    const newest = fresh.at(-1);
+    const button = actionButton(`${fresh.length} new since you looked · Mark seen`, "new-messages", () => {
+      actions.selectMessage(newest.target, newest.message.seq);
       for (const target of new Set(fresh.map((entry) => entry.target))) {
         const latest = entries.filter((entry) => entry.target === target).at(-1);
         actions.markSeen(target, latest.message.seq);
@@ -289,8 +380,10 @@
     replaceKeepingFocus(root, [button]);
   }
 
-  // renderMessages preserves disclosure choices, focus, and the visible reading
-  // anchor across snapshots. New arrivals scroll only while following live.
+  // renderMessages stacks newest threads and newest messages at the top of the
+  // feed so the latest conversation is immediately visible below the timeline
+  // without scrolling to the bottom of the page. When paused (followLive=false),
+  // top insertions preserve the reader's visible card offset with zero drift.
   function renderMessages(root, scrollEl, entries, targetEntries, state, actions) {
     const openKeys = new Set([...root.querySelectorAll("details[open][data-disclosure-key]")]
       .map((node) => node.dataset.disclosureKey));
@@ -308,35 +401,52 @@
     const selectionChanged = root.dataset.selectedMessage !== selectionKey;
     const oldTop = scrollEl.scrollTop;
     const rootTop = scrollEl.getBoundingClientRect().top;
-    const anchor = [...root.querySelectorAll("[data-message-key]")]
+    // Match both collapsed thread cards and message cards as scroll anchors so
+    // new items inserted at the top while paused do not shift the viewport.
+    const anchor = [...root.querySelectorAll("[data-disclosure-key]")]
       .find((node) => node.getBoundingClientRect().bottom >= rootTop);
-    const anchorKey = anchor?.dataset.messageKey;
+    const anchorKey = anchor?.dataset.disclosureKey;
     const anchorOffset = anchor ? anchor.getBoundingClientRect().top - rootTop : 0;
+
     const byTarget = new Map();
     for (const entry of targetEntries) {
       if (!byTarget.has(entry.target)) byTarget.set(entry.target, new Map());
       byTarget.get(entry.target).set(entry.message.seq, entry);
     }
+
     const nodes = [];
     if (entries.length === 0) {
       nodes.push(empty(targetEntries.length === 0 ? "Waiting for the first message" : "No matching messages",
         targetEntries.length === 0 ? "Messages will appear here when someone posts." : "Change the time range, search, or filters to see more."));
     } else if (state.viewMode === "threaded") {
-      for (const group of threadGroups(entries, byTarget)) {
+      // Order thread groups by their latest message descending (newest activity on top).
+      const groups = threadGroups(entries, byTarget).sort((a, b) => {
+        const lastA = a.at(-1).message;
+        const lastB = b.at(-1).message;
+        return lastB.sent_at_ms - lastA.sent_at_ms || lastB.seq - lastA.seq;
+      });
+      for (const group of groups) {
         if (group.length === 1) nodes.push(messageDisclosure(group[0], state, actions, byTarget, openKeys));
         else nodes.push(threadDisclosure(group, state, actions, byTarget, openKeys));
       }
     } else {
-      for (const entry of entries) nodes.push(messageDisclosure(entry, state, actions, byTarget, openKeys));
+      // Chronological stream with newest messages stacked on top.
+      for (const entry of entries.toReversed()) {
+        nodes.push(messageDisclosure(entry, state, actions, byTarget, openKeys));
+      }
     }
+
     replaceKeepingFocus(root, nodes);
-    if (state.followLive && !state.selectedMessage) scrollEl.scrollTop = scrollEl.scrollHeight;
-    else {
+
+    if (!state.followLive) {
       scrollEl.scrollTop = oldTop;
-      const restored = anchorKey ? [...root.querySelectorAll("[data-message-key]")]
-        .find((node) => node.dataset.messageKey === anchorKey) : null;
-      if (restored) scrollEl.scrollTop += restored.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - anchorOffset;
+      const restored = anchorKey ? [...root.querySelectorAll("[data-disclosure-key]")]
+        .find((node) => node.dataset.disclosureKey === anchorKey) : null;
+      if (restored) {
+        scrollEl.scrollTop += restored.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - anchorOffset;
+      }
     }
+
     const selected = state.selectedMessage;
     if (selected) {
       const node = [...root.querySelectorAll("[data-message-key]")]
@@ -352,11 +462,8 @@
     root.dataset.expandAll = String(expandAll);
   }
 
-  // threadGroups joins only explicit channel reply links, including cycles and
-  // forward references. Each visible message belongs to exactly one group.
   function threadGroups(entries, byTarget) {
     const parents = new Map();
-    // root follows the current component links; only distinct roots are joined.
     function root(key) {
       if (!parents.has(key)) parents.set(key, key);
       let cursor = key;
@@ -369,8 +476,6 @@
       }
       return cursor;
     }
-    // Join every retained channel edge once. Filtered replies still share their
-    // real ancestor without repeatedly walking each message's entire history.
     for (const [target, messages] of byTarget) {
       if (!target.startsWith("#")) continue;
       for (const entry of messages.values()) {
@@ -390,8 +495,9 @@
     return [...groups.values()];
   }
 
-  // threadDisclosure names the first visible message and the latest visible
-  // reply. "Latest" describes message order, not task completion.
+  // threadDisclosure keeps the original root headline and the newest reply
+  // visible in the summary, and stacks the thread's messages newest-first when
+  // expanded so the latest replies are immediately at the top.
   function threadDisclosure(entries, state, actions, byTarget, openKeys) {
     const first = entries[0];
     const last = entries.at(-1);
@@ -399,9 +505,28 @@
     const details = element("details", "thread-disclosure");
     details.dataset.disclosureKey = key;
     details.open = openKeys.has(key) || entries.some((entry) => selected(entry, state));
+
+    const metaRow = element(
+      "span",
+      "message-meta",
+      element("strong", "message-sender", `@${last.message.sender}`),
+      element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
+      element("span", "thread-count-pill", `${entries.length} messages`),
+      element("time", "message-time", `${age(last.message.sent_at_ms)} ago · ${clock(last.message.sent_at_ms)}`)
+    );
+    if (last.target.startsWith("#")) {
+      const replyButton = actionButton("Reply", `reply-thread:${key}`, (event) => {
+        event.stopPropagation();
+        actions.setReplyTo(last.target, last.message.seq, last.message.sender);
+      });
+      metaRow.append(replyButton);
+    }
+
     details.append(element("summary", "thread-summary",
+      metaRow,
       element("strong", "thread-title", headline(first.message.text)),
-      element("span", "thread-latest", `${entries.length} messages · latest @${last.message.sender}: ${headline(last.message.text)}`)));
+      element("span", "thread-latest", `Latest (@${last.message.sender} #${last.message.seq}): ${headline(last.message.text)}`)));
+
     const summary = details.querySelector("summary");
     summary.dataset.focusKey = key;
     summary.addEventListener("click", (event) => {
@@ -412,13 +537,14 @@
       actions.setFollowLive(false);
     });
     const body = element("div", "thread-messages");
-    for (const entry of entries) body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
+    // Stack newest replies at the top of the expanded thread.
+    for (const entry of entries.toReversed()) {
+      body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
+    }
     details.append(body);
     return details;
   }
 
-  // messageDisclosure always retains the full body behind the first-line
-  // headline. DMs keep their inbox coordinate and do not invent reply links.
   function messageDisclosure(entry, state, actions, byTarget, openKeys) {
     const message = entry.message;
     const key = coordinate(entry);
@@ -427,22 +553,23 @@
     details.dataset.disclosureKey = `message:${key}`;
     details.open = openKeys.has(`message:${key}`) || selected(entry, state);
     details.classList.toggle("is-selected", selected(entry, state));
-    const summary = element("summary", "message-summary",
-      element("span", "message-meta", element("strong", "message-sender", `@${message.sender}`),
-        element("span", "message-coordinate", `${entry.target}#${message.seq}`),
-        element("time", "message-time", clock(message.sent_at_ms))),
-      element("span", "message-headline", headline(message.text)));
-    summary.dataset.focusKey = `message:${key}`;
+    const meta = element("span", "message-meta",
+      element("strong", "message-sender", `@${message.sender}`),
+      element("span", "message-coordinate", `${entry.target}#${message.seq}`),
+      element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`));
     if (entry.target.startsWith("#")) {
-      const reply = actionButton("Reply", `reply:${key}`, (event) => {
-        event.preventDefault();
+      const replyButton = actionButton("Reply", `reply:${key}`, (event) => {
         event.stopPropagation();
         actions.setReplyTo(entry.target, message.seq, message.sender);
       });
-      reply.classList.add("message-reply");
-      summary.querySelector(".message-meta").append(reply);
+      meta.append(replyButton);
     }
+    const summary = element("summary", "message-summary",
+      meta,
+      element("span", "message-headline", headline(message.text)));
+    summary.dataset.focusKey = `message:${key}`;
     summary.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
       event.preventDefault();
       details.open = !details.open;
       if (details.open) {
@@ -455,19 +582,18 @@
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
       const parent = byTarget.get(entry.target).get(message.reply_to);
-      if (parent) controls.append(actionButton(`Reply to #${parent.message.seq}`, `parent:${key}`,
+      if (parent) controls.append(actionButton(`In reply to #${parent.message.seq} (@${parent.message.sender})`, `parent:${key}`,
         () => actions.selectMessage(entry.target, parent.message.seq)));
-      else if (message.reply_to) controls.append(element("span", "message-reference", `Reply to #${message.reply_to} · not in retained history`));
+      else if (message.reply_to) controls.append(element("span", "message-reference", `In reply to #${message.reply_to} (older than retained history)`));
     } else if (message.reply_to) controls.append(element("span", "message-reference", `Reply reference #${message.reply_to}`));
     for (const reference of artifacts(message.text)) {
       controls.append(actionButton(reference, `message-artifact:${key}:${reference}`, () => actions.setFilterArtifact(reference)));
     }
-    details.append(body, controls);
+    details.append(body);
+    if (controls.childElementCount > 0) details.append(controls);
     return details;
   }
 
-  // renderSelection refreshes an already selected message's details while
-  // preserving the separate agent inspector until the user selects a message.
   function renderSelection(root, state, actions, entries, visible) {
     const choice = state.selectedMessage;
     if (!choice) {
@@ -486,15 +612,13 @@
     }
     const nodes = [element("div", "details-heading", element("h3", "", `${entry.target}#${entry.message.seq}`),
       actionButton("Close", "close-message", () => actions.selectMessage(null, 0))),
-    element("p", "message-meta", `@${entry.message.sender} · ${clock(entry.message.sent_at_ms)}`),
+    element("p", "message-meta", `@${entry.message.sender} · ${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`),
     element("div", "message-body", formattedText(entry.message.text))];
     if (entry.target.startsWith("#")) nodes.push(actionButton("Reply", "reply-selected",
       () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender)));
     replaceKeepingFocus(root, nodes);
   }
 
-  // mentionedHandles uses the server's handle boundaries, excluding embedded
-  // email fragments, and returns each written mention once per message.
   function mentionedHandles(text) {
     const result = new Map();
     const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g;
@@ -504,8 +628,6 @@
     return [...result.values()];
   }
 
-  // artifacts extracts literal references for local text filtering; it does
-  // not claim that a commit, pull request, or file exists in any repository.
   function artifacts(text) {
     const result = new Set();
     const patterns = [/\bPR\s+#\d+\b/g, /\b[0-9a-f]{7,40}\b/gi,
@@ -514,8 +636,6 @@
     return [...result];
   }
 
-  // formattedText creates text and code nodes only; message-authored markup
-  // never becomes HTML, an inline style, or a script.
   function formattedText(text) {
     const fragment = document.createDocumentFragment();
     for (const part of text.split(/(```[\s\S]*?```)/g)) {
@@ -531,29 +651,22 @@
     return fragment;
   }
 
-  // headline keeps the sender's first nonempty line; CSS may truncate its
-  // display, while expanding the message always reveals the original body.
   function headline(text) {
     return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || "Empty message";
   }
 
-  // coordinate keeps a source and its sequence number together for all DOM
-  // identities, including two different DM inboxes both containing message #1.
   function coordinate(entry) {
     return `${entry.target}:${entry.message.seq}`;
   }
 
-  // selected compares both source and sequence, never a swarm-wide number.
   function selected(entry, state) {
     return state.selectedMessage?.target === entry.target && state.selectedMessage.seq === entry.message.seq;
   }
 
-  // clock formats the stored Redis message time in the reader's local zone.
   function clock(milliseconds) {
     return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(milliseconds);
   }
 
-  // age describes elapsed time since a recorded event, never time spent on work.
   function age(milliseconds) {
     const seconds = Math.max(0, Math.floor((Date.now() - milliseconds) / 1000));
     if (seconds < 60) return `${seconds}s`;
@@ -561,8 +674,6 @@
     return `${Math.floor(seconds / 3600)}h`;
   }
 
-  // actionButton creates an ordinary keyboard-accessible control whose click
-  // invokes the controller action rather than embedding an event attribute.
   function actionButton(label, key, action) {
     const button = element("button", "stream-action", label);
     button.type = "button";
@@ -571,7 +682,6 @@
     return button;
   }
 
-  // element constructs safe DOM content without parsing authored strings.
   function element(tag, className, ...children) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -579,16 +689,13 @@
     return node;
   }
 
-  // empty provides a readable state for loading, no matches, or trimmed data.
   function empty(title, description) {
     return element("div", "empty-state", element("h3", "", title), element("p", "", description));
   }
 
-  // replaceKeepingFocus installs current callbacks and returns keyboard focus
-  // to the same control when a changed snapshot rebuilds its subtree.
   function replaceKeepingFocus(root, nodes) {
     const active = document.activeElement;
-    const focusKey = root.contains(active) ? active.dataset.focusKey : null;
+    const focusKey = root && root.contains(active) ? active.dataset.focusKey : null;
     root.replaceChildren(...nodes);
     if (focusKey) [...root.querySelectorAll("[data-focus-key]")]
       .find((node) => node.dataset.focusKey === focusKey)?.focus({ preventScroll: true });

@@ -322,6 +322,8 @@
       if (state.followLive) {
         state.timeWindow = null;
         state.selectedMessage = null;
+        const stageEl = document.getElementById("stage-container");
+        if (stageEl) stageEl.scrollTop = 0;
       }
       renderAll();
     },
@@ -455,11 +457,11 @@
     } else if (!state.followLive) {
       btn.className = "live-pill reviewing";
       dot.className = "status-dot warn";
-      txt.textContent = "Reviewing earlier · Resume live";
+      txt.textContent = "History view · Return to live";
     } else {
       btn.className = "live-pill";
       dot.className = "status-dot";
-      txt.textContent = "Follow live";
+      txt.textContent = "Live";
     }
   }
 
@@ -986,7 +988,7 @@
       stageEl.addEventListener(
         "wheel",
         (e) => {
-          if (e.deltaY < 0 && state.followLive) {
+          if (e.deltaY > 0 && stageEl.scrollTop > 80 && state.followLive) {
             actions.setFollowLive(false);
           }
         },
@@ -995,10 +997,7 @@
       stageEl.addEventListener(
         "touchmove",
         () => {
-          if (
-            state.followLive &&
-            stageEl.scrollHeight - stageEl.scrollTop - stageEl.clientHeight > 80
-          ) {
+          if (state.followLive && stageEl.scrollTop > 120) {
             actions.setFollowLive(false);
           }
         },
