@@ -647,18 +647,24 @@
     }
     const abortCtrl = new AbortController();
     state.pollAbort = abortCtrl;
-    const switchedSwarm = state.view && state.view.swarm && state.view.swarm !== swarmName;
+    const prevSwarm = state.activeSwarm;
+    const switchedSwarm =
+      (Boolean(prevSwarm) && prevSwarm !== swarmName) ||
+      Boolean(state.view && state.view.swarm && state.view.swarm !== swarmName);
     state.activeSwarm = swarmName;
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
     state.lastSeenSeqByTarget = loadLastSeenMap(swarmName);
+    writeHashState();
     if (switchedSwarm) {
       state.view = null;
+      const stageEl = document.getElementById("stage-container");
+      if (stageEl) stageEl.scrollTop = 0;
       renderAll();
+    } else {
+      renderLiveStatus();
     }
-    writeHashState();
-    renderLiveStatus();
 
     let retryDelaySec = 1;
     while (!abortCtrl.signal.aborted) {
