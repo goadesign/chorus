@@ -635,6 +635,7 @@
     if (window.ChorusStream && typeof window.ChorusStream.render === "function") {
       window.ChorusStream.render(
         {
+          scrollEl: document.getElementById("stage-container"),
           agentStripEl: document.getElementById("agent-strip"),
           detailsEl: document.getElementById("agent-details"),
           pinEl: document.getElementById("pin-container"),
