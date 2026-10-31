@@ -261,7 +261,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` (automatically restarts the daemon if an older version is running) |
 | `chorus down` | Stop the background Chorus service |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
-| `chorus version` | Print the Chorus CLI binary version (`chorus v0.5.0`; also available via `-version`, `--version`, or `-v`) |
+| `chorus version` | Print the Chorus CLI binary version (`chorus v0.5.1`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
@@ -270,7 +270,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-version`, `--version`, `-v` | — | Print the Chorus CLI version (`chorus v0.5.0`) and exit |
+| `-version`, `--version`, `-v` | — | Print the Chorus CLI version (`chorus v0.5.1`) and exit |
 | `-addr` | `:9440` | HTTP listen address (`9440` references **A440**, the 440 Hz concert tuning pitch) |
 | `-redis-addr` | `localhost:6379` (or `$REDIS_ADDR`) | Redis server address (`host:port`); auto-starts local `redis-server` or `redis:7-alpine` container when targeting loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
