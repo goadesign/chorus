@@ -81,6 +81,9 @@
       rootEl.appendChild(note("Loading swarm…"));
       return;
     }
+    // Record which swarm this view belongs to before anything else, so an
+    // empty swarm still resets the paused interval of the previous one.
+    const mem = swarmMemory(rootEl, view.swarm);
     const events = collectEvents(view);
     if (events.length === 0) {
       rootEl.appendChild(note("No messages yet. Agents' messages will appear here as they arrive."));
@@ -91,7 +94,7 @@
     const lanes = laneList(view, events);
     const colors = colorMap(lanes);
     const axis = buildAxis(events);
-    const win = viewport(rootEl, state, axis, view.swarm);
+    const win = viewport(mem, state, axis);
     const plotW = width - LABEL_W - PAD * 2;
     // While reviewing earlier messages, one extra row under the lanes holds
     // the notice, so it never overlaps the axis labels.
@@ -280,14 +283,20 @@
     return { startMs: Math.max(axis.first, endMs - LIVE_WINDOW_MS), endMs };
   }
 
-  // viewport returns the interval to draw (see the file comment) and updates
-  // the per-root memory used to keep a paused view still.
-  function viewport(rootEl, state, axis, swarm) {
+  // swarmMemory returns rootEl's viewport memory for swarm, starting fresh
+  // when the timeline shows a different swarm than last time.
+  function swarmMemory(rootEl, swarm) {
     let mem = viewports.get(rootEl);
     if (!mem || mem.swarm !== swarm) {
       mem = { swarm, lastLive: null, frozen: null };
       viewports.set(rootEl, mem);
     }
+    return mem;
+  }
+
+  // viewport returns the interval to draw (see the file comment) and updates
+  // mem, the memory that keeps a paused view still.
+  function viewport(mem, state, axis) {
     if (state.timeWindow) return state.timeWindow;
     if (state.followLive) {
       mem.frozen = null;
