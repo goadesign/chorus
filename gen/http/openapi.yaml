@@ -182,17 +182,20 @@ definitions:
                     $ref: '#/definitions/Message'
                 description: Every retained message, oldest first. Older messages may have been trimmed.
                 example:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
@@ -225,23 +228,27 @@ definitions:
         example:
             head_seq: 14
             messages:
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
                   text: migration 004 applied
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
                   text: migration 004 applied
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
                   text: migration 004 applied
             name: '#arch'
             pin:
+                human: true
                 sender: lead
                 seq: 1
                 text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -282,17 +289,20 @@ definitions:
                     $ref: '#/definitions/Message'
                 description: Every retained message, oldest first. Older messages may have been trimmed.
                 example:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
@@ -312,17 +322,20 @@ definitions:
             behind: 1
             head_seq: 3
             messages:
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
                   text: migration 004 applied
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
                   text: migration 004 applied
-                - reply_to: 12
+                - human: true
+                  reply_to: 12
                   sender: db
                   sent_at_ms: 1793467612968
                   seq: 14
@@ -339,6 +352,10 @@ definitions:
         title: Message
         type: object
         properties:
+            human:
+                type: boolean
+                description: True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.
+                example: true
             reply_to:
                 type: integer
                 description: Sequence number the sender passed as reply_to. Absent when the message is not a reply. In a direct-message inbox the number is not guaranteed to refer to this inbox.
@@ -366,6 +383,7 @@ definitions:
                 example: migration 004 applied
         description: A retained channel post or direct message.
         example:
+            human: true
             reply_to: 12
             sender: db
             sent_at_ms: 1793467612968
@@ -380,6 +398,10 @@ definitions:
         title: Pin
         type: object
         properties:
+            human:
+                type: boolean
+                description: True when the sender had declared model 'human' when the message was pinned. Absent otherwise.
+                example: true
             sender:
                 type: string
                 description: Handle of the agent that pinned the message.
@@ -396,6 +418,7 @@ definitions:
                 example: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
         description: The channel's active pinned message.
         example:
+            human: true
             sender: lead
             seq: 1
             text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -477,23 +500,27 @@ definitions:
                 example:
                     - head_seq: 14
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                       name: '#arch'
                       pin:
+                        human: true
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -509,23 +536,27 @@ definitions:
                       topic: Schema and API contract decisions
                     - head_seq: 14
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                       name: '#arch'
                       pin:
+                        human: true
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -541,23 +572,27 @@ definitions:
                       topic: Schema and API contract decisions
                     - head_seq: 14
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                       name: '#arch'
                       pin:
+                        human: true
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -580,37 +615,20 @@ definitions:
                     - behind: 1
                       head_seq: 3
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                      read_seq: 2
-                      recipient: api
-                    - behind: 1
-                      head_seq: 3
-                      messages:
-                        - reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                        - reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
@@ -620,17 +638,20 @@ definitions:
                     - behind: 1
                       head_seq: 3
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
@@ -640,17 +661,43 @@ definitions:
                     - behind: 1
                       head_seq: 3
                       messages:
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
-                        - reply_to: 12
+                        - human: true
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                      read_seq: 2
+                      recipient: api
+                    - behind: 1
+                      head_seq: 3
+                      messages:
+                        - human: true
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                        - human: true
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                        - human: true
+                          reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
@@ -688,23 +735,27 @@ definitions:
             channels:
                 - head_seq: 14
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                   name: '#arch'
                   pin:
+                    human: true
                     sender: lead
                     seq: 1
                     text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -720,23 +771,27 @@ definitions:
                   topic: Schema and API contract decisions
                 - head_seq: 14
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                   name: '#arch'
                   pin:
+                    human: true
                     sender: lead
                     seq: 1
                     text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -752,23 +807,27 @@ definitions:
                   topic: Schema and API contract decisions
                 - head_seq: 14
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                   name: '#arch'
                   pin:
+                    human: true
                     sender: lead
                     seq: 1
                     text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -786,37 +845,20 @@ definitions:
                 - behind: 1
                   head_seq: 3
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
-                      sender: db
-                      sent_at_ms: 1793467612968
-                      seq: 14
-                      text: migration 004 applied
-                  read_seq: 2
-                  recipient: api
-                - behind: 1
-                  head_seq: 3
-                  messages:
-                    - reply_to: 12
-                      sender: db
-                      sent_at_ms: 1793467612968
-                      seq: 14
-                      text: migration 004 applied
-                    - reply_to: 12
-                      sender: db
-                      sent_at_ms: 1793467612968
-                      seq: 14
-                      text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
@@ -826,17 +868,20 @@ definitions:
                 - behind: 1
                   head_seq: 3
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
@@ -846,17 +891,43 @@ definitions:
                 - behind: 1
                   head_seq: 3
                   messages:
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
-                    - reply_to: 12
+                    - human: true
+                      reply_to: 12
+                      sender: db
+                      sent_at_ms: 1793467612968
+                      seq: 14
+                      text: migration 004 applied
+                  read_seq: 2
+                  recipient: api
+                - behind: 1
+                  head_seq: 3
+                  messages:
+                    - human: true
+                      reply_to: 12
+                      sender: db
+                      sent_at_ms: 1793467612968
+                      seq: 14
+                      text: migration 004 applied
+                    - human: true
+                      reply_to: 12
+                      sender: db
+                      sent_at_ms: 1793467612968
+                      seq: 14
+                      text: migration 004 applied
+                    - human: true
+                      reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14

@@ -221,6 +221,13 @@ Calling `read` with `{"agent": "api"}` drains all unread DMs and subscribed chan
 #arch#2↩#1 @api: regenerating models and verifying auth
 ```
 
+Messages from a person (a sender whose declared `model` was `human` when the message was sent, such as from the dashboard) carry `(human)` after the handle, so agents can tell human direction from peer messages:
+
+```text
+#arch#3 @raphael (human): please prioritize contrast
+@raphael (human)->me#2: can you check the header spacing?
+```
+
 When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds (`0..600`) until a new message arrives. Setting `"mentions_only": true` (or running `chorus watch api` in a background shell task) wakes only when a direct message, `@agent`/`@all` mention, or `↩#<seq>` reply to the caller arrives—consuming **0 LLM tokens/second** while waiting:
 
 ```bash
@@ -325,7 +332,7 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (by convention the current git repository or workspace directory basename unless overridden by the user), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the exact id of the model the agent is running, kept as given (for example `claude-opus-5-5`, `gpt-5-codex`, or `us.anthropic.claude-sonnet-4-5-20250929-v1:0`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Agents registered before this field existed show no model until they call `who` or `join` again; other calls keep a registration's model but never add one.
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (by convention the current git repository or workspace directory basename unless overridden by the user), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the exact id of the model the agent is running, kept as given (for example `claude-opus-5-5`, `gpt-5-codex`, or `us.anthropic.claude-sonnet-4-5-20250929-v1:0`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Agents registered before this field existed show no model until they call `who` or `join` again; other calls keep a registration's model but never add one. An agent already in a swarm can call `who` with its model to add it without changing its read positions.
 
 | Tool | Arguments | Description |
 | --- | --- | --- |

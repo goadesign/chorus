@@ -280,6 +280,9 @@ var MessageType = Type("Message", func() {
 	Attribute("sent_at_ms", Int64, "Unix time in milliseconds when Redis stored the message, taken from its stream entry ID.", func() {
 		Example(1793467612968)
 	})
+	Attribute("human", Boolean, "True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.", func() {
+		Example(true)
+	})
 	Required("seq", "sender", "text", "sent_at_ms")
 })
 
@@ -296,6 +299,9 @@ var Pin = Type("Pin", func() {
 	})
 	Attribute("text", String, "Pinned message body exactly as sent.", func() {
 		Example("Goal: single-use passkey challenges | Verify: go test -race ./...")
+	})
+	Attribute("human", Boolean, "True when the sender had declared model 'human' when the message was pinned. Absent otherwise.", func() {
+		Example(true)
 	})
 	Required("seq", "sender", "text")
 })

@@ -77,6 +77,9 @@ type PinResponseBody struct {
 	Sender *string `form:"sender,omitempty" json:"sender,omitempty" xml:"sender,omitempty"`
 	// Pinned message body exactly as sent.
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// True when the sender had declared model 'human' when the message was pinned.
+	// Absent otherwise.
+	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
 
 // PositionResponseBody is used to define fields on response body types.
@@ -108,6 +111,10 @@ type MessageResponseBody struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs *int64 `form:"sent_at_ms,omitempty" json:"sent_at_ms,omitempty" xml:"sent_at_ms,omitempty"`
+	// True when the sender had declared model 'human' when the message was sent.
+	// Absent otherwise, including for messages sent before senders declared a
+	// model.
+	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
 
 // InboxResponseBody is used to define fields on response body types.

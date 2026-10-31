@@ -106,11 +106,11 @@ var (
 	sharedRedisAddr string
 
 	// channelMsgRegex matches "#chan#14 @sender: text", "#chan#14↩#12 @sender: text",
-	// and pinned manifest lines "pin #chan#1 @sender: text".
-	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+): (.*)$`)
+	// "#chan#14 @sender (human): text", and pinned manifest lines "pin #chan#1 @sender: text".
+	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+)(?: \(human\))?: (.*)$`)
 
-	// dmMsgRegex matches "@sender->me#3: text" and "@sender->me#3↩#2: text".
-	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)->me#(\d+)(?:↩#(\d+))?: (.*)$`)
+	// dmMsgRegex matches "@sender->me#3: text", "@sender->me#3↩#2: text", and "@sender (human)->me#3: text".
+	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)(?: \(human\))?->me#(\d+)(?:↩#(\d+))?: (.*)$`)
 )
 
 // TestMain boots a shared local redis-server instance for all integration tests
@@ -1173,6 +1173,50 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	freshSend := arch.send("#auth", "first message in fresh channel", 0)
 	if freshSend.seq != 1 {
 		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
+	}
+
+	// 7. Participants that declared model "human" (such as from the browser UI)
+	// are annotated with "(human)" on channel and direct-message wire lines so
+	// agents immediately distinguish human steering from peer worker messages.
+	// The role is free text and never decides it.
+	arch.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+	})
+	human := c.newAgent(0, swarm, "raphael")
+	human.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"model":    "human",
+	})
+	impostor := c.newAgent(0, swarm, "worker")
+	impostor.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"role":     "human",
+	})
+	impostor.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "role text alone",
+	})
+	human.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "Please prioritize accessibility and contrast",
+	})
+	human.call("send", map[string]any{
+		"to":   "@arch",
+		"text": "Can you check the header spacing?",
+	})
+	archRead := arch.call("read", map[string]any{})
+	if !strings.Contains(archRead, "#ui-review#2 @raphael (human): Please prioritize accessibility and contrast") {
+		t.Fatalf("expected channel message from model=human to carry (human) tag, got:\n%s", archRead)
+	}
+	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
+		t.Fatalf("expected direct message from model=human to carry (human) tag, got:\n%s", archRead)
+	}
+	if !strings.Contains(archRead, "@worker: role text alone") {
+		t.Fatalf("expected role=human without model=human to stay untagged, got:\n%s", archRead)
+	}
+	parsedHuman := parseWireMessages(t, archRead)
+	if len(parsedHuman) != 3 {
+		t.Fatalf("expected parseWireMessages to parse all three messages, got %d", len(parsedHuman))
 	}
 }
 
