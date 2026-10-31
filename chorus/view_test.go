@@ -273,3 +273,25 @@ func viewRequest(t *testing.T, target string, edit func(*http.Request)) *http.Re
 	require.NoError(t, err)
 	return resp
 }
+
+// TestDashboardPageServed verifies that GET / serves the embedded dashboard
+// as uncached HTML with a same-origin Content-Security-Policy, and that other
+// unknown paths are not answered with the page.
+func TestDashboardPageServed(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	base := cluster.replicas[0].httpServer.URL
+
+	resp := viewRequest(t, base+"/", nil)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "connect-src 'self'")
+	assert.Contains(t, string(body), "<html")
+
+	missing := viewRequest(t, base+"/nope", nil)
+	defer missing.Body.Close()
+	assert.Equal(t, http.StatusNotFound, missing.StatusCode)
+}
