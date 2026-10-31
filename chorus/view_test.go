@@ -33,8 +33,9 @@ type (
 			Name    string `json:"name"`
 			HeadSeq int    `json:"head_seq"`
 			Pin     *struct {
-				Seq  int    `json:"seq"`
-				Text string `json:"text"`
+				Seq   int    `json:"seq"`
+				Text  string `json:"text"`
+				Human *bool  `json:"human"`
 			} `json:"pin"`
 			Positions []struct {
 				Handle    string `json:"handle"`
@@ -66,6 +67,8 @@ type (
 		ReplyTo *int `json:"reply_to"`
 		// SentAtMs is the Redis storage time in Unix milliseconds.
 		SentAtMs int64 `json:"sent_at_ms"`
+		// Human is true when the sender had role "human" when the message was sent.
+		Human *bool `json:"human"`
 	}
 )
 
@@ -81,15 +84,19 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	lead.call("send", map[string]any{"to": "#auth", "text": "Goal: passkeys | Verify: go test ./...", "pin": true})
 	lead.send("#auth", "@api please wire ConsumeChallenge", 1)
 	lead.send("@api", "use GETDEL", 0)
+	human := cluster.newAgent(0, "auth", "raphael")
+	human.call("join", map[string]any{"channels": []string{"#auth"}, "role": "human"})
+	human.call("send", map[string]any{"to": "#auth", "text": "Please focus on contrast"})
 
 	base := cluster.replicas[0].httpServer.URL
 	before := time.Now().UnixMilli()
 	doc, etag := getView(t, base, "auth", "", 0, http.StatusOK)
 
 	assert.Equal(t, "auth", doc.Swarm)
-	require.Len(t, doc.Agents, 2)
+	require.Len(t, doc.Agents, 3)
 	assert.Equal(t, "api", doc.Agents[0].Handle)
 	assert.Equal(t, "lead", doc.Agents[1].Handle)
+	assert.Equal(t, "raphael", doc.Agents[2].Handle)
 	require.NotNil(t, doc.Agents[1].Role)
 	assert.Equal(t, "Tech Lead", *doc.Agents[1].Role)
 	assert.Equal(t, []string{"#auth"}, doc.Agents[0].Channels)
@@ -97,21 +104,28 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	require.Len(t, doc.Channels, 1)
 	ch := doc.Channels[0]
 	assert.Equal(t, "#auth", ch.Name)
-	assert.Equal(t, 2, ch.HeadSeq)
+	assert.Equal(t, 3, ch.HeadSeq)
 	require.NotNil(t, ch.Pin)
 	assert.Equal(t, 1, ch.Pin.Seq)
-	require.Len(t, ch.Messages, 2)
+	assert.Nil(t, ch.Pin.Human)
+	require.Len(t, ch.Messages, 3)
+	assert.Nil(t, ch.Messages[0].Human)
+	assert.Nil(t, ch.Messages[1].Human)
+	require.NotNil(t, ch.Messages[2].Human)
+	assert.True(t, *ch.Messages[2].Human)
 	require.NotNil(t, ch.Messages[1].ReplyTo)
 	assert.Equal(t, 1, *ch.Messages[1].ReplyTo)
 	assert.InDelta(t, before, ch.Messages[1].SentAtMs, float64(time.Minute.Milliseconds()))
-	require.Len(t, ch.Positions, 2)
+	require.Len(t, ch.Positions, 3)
 	assert.Equal(t, "api", ch.Positions[0].Handle)
 	assert.Equal(t, 0, ch.Positions[0].ReadSeq)
-	assert.Equal(t, 2, ch.Positions[0].Behind)
+	assert.Equal(t, 3, ch.Positions[0].Behind)
 	assert.True(t, ch.Positions[0].Mentioned)
 	assert.Equal(t, "lead", ch.Positions[1].Handle)
-	assert.Equal(t, 0, ch.Positions[1].Behind)
+	assert.Equal(t, 1, ch.Positions[1].Behind)
 	assert.False(t, ch.Positions[1].Mentioned)
+	assert.Equal(t, "raphael", ch.Positions[2].Handle)
+	assert.Equal(t, 0, ch.Positions[2].Behind)
 
 	require.Len(t, doc.Inboxes, 1)
 	assert.Equal(t, "api", doc.Inboxes[0].Recipient)

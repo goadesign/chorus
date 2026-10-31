@@ -401,6 +401,10 @@ func (v *viewService) channel(
 		var pin messageEvent
 		if err := json.Unmarshal([]byte(rawPin), &pin); err == nil && pin.Seq > 0 {
 			ch.Pin = &genview.Pin{Seq: pin.Seq, Sender: pin.Sender, Text: pin.Text}
+			if pin.Human {
+				human := true
+				ch.Pin.Human = &human
+			}
 		}
 	}
 	mentionAll := parseSeq(snap[mentionMapKey("all", name)])
@@ -455,6 +459,10 @@ func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target stri
 		if m.ReplyTo > 0 {
 			replyTo := m.ReplyTo
 			msg.ReplyTo = &replyTo
+		}
+		if m.Human {
+			human := true
+			msg.Human = &human
 		}
 		msgs = append(msgs, msg)
 	}

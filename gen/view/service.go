@@ -110,6 +110,9 @@ type Message struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64
+	// True when the sender was registered with role human when the message was
+	// sent. Absent otherwise.
+	Human *bool
 }
 
 // The channel's active pinned message.
@@ -120,6 +123,9 @@ type Pin struct {
 	Sender string
 	// Pinned message body exactly as sent.
 	Text string
+	// True when the sender was registered with role human when the message was
+	// pinned. Absent otherwise.
+	Human *bool
 }
 
 // A channel member's read position.
@@ -423,6 +429,9 @@ type jsonMessageTransport struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs *channelInt64Transport `json:"sent_at_ms"`
+	// True when the sender was registered with role human when the message was
+	// sent. Absent otherwise.
+	Human *bool `json:"human,omitempty"`
 }
 
 // validatejsonMessageTransport checks decoded JSON before it becomes a service value.
@@ -463,6 +472,9 @@ type jsonPinTransport struct {
 	Sender *string `json:"sender"`
 	// Pinned message body exactly as sent.
 	Text *string `json:"text"`
+	// True when the sender was registered with role human when the message was
+	// pinned. Absent otherwise.
+	Human *bool `json:"human,omitempty"`
 }
 
 // validatejsonPinTransport checks decoded JSON before it becomes a service value.
@@ -1111,6 +1123,7 @@ func EncodeMessage(in *Message) ([]byte, error) {
 		body = &jsonMessageTransport{
 			Sender: &in.Sender,
 			Text:   &in.Text,
+			Human:  in.Human,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1151,6 +1164,7 @@ func ValidateMessageValue(in *Message) error {
 		body = &jsonMessageTransport{
 			Sender: &in.Sender,
 			Text:   &in.Text,
+			Human:  in.Human,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1197,6 +1211,7 @@ func DecodeMessage(data []byte) (out *Message, err error) {
 			Sender:   *body.Sender,
 			Text:     *body.Text,
 			SentAtMs: int64(*body.SentAtMs),
+			Human:    body.Human,
 		}
 		if body.ReplyTo != nil {
 			replyTo := int(*body.ReplyTo)
@@ -1219,6 +1234,7 @@ func EncodePin(in *Pin) ([]byte, error) {
 		body = &jsonPinTransport{
 			Sender: &in.Sender,
 			Text:   &in.Text,
+			Human:  in.Human,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1253,6 +1269,7 @@ func ValidatePinValue(in *Pin) error {
 		body = &jsonPinTransport{
 			Sender: &in.Sender,
 			Text:   &in.Text,
+			Human:  in.Human,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1292,6 +1309,7 @@ func DecodePin(data []byte) (out *Pin, err error) {
 			Seq:    int(*body.Seq),
 			Sender: *body.Sender,
 			Text:   *body.Text,
+			Human:  body.Human,
 		}
 	}
 	return out, nil
@@ -1620,6 +1638,7 @@ func decodeMessageTransportToMessage(v *jsonMessageTransport) *Message {
 		Sender:   *v.Sender,
 		Text:     *v.Text,
 		SentAtMs: int64(*v.SentAtMs),
+		Human:    v.Human,
 	}
 	if v.ReplyTo != nil {
 		replyTo := int(*v.ReplyTo)
@@ -1634,6 +1653,7 @@ func decodePinTransportToPin(v *jsonPinTransport) *Pin {
 		Seq:    int(*v.Seq),
 		Sender: *v.Sender,
 		Text:   *v.Text,
+		Human:  v.Human,
 	}
 
 	return res
@@ -1722,6 +1742,7 @@ func encodeMessageToMessageTransport(v *Message) *jsonMessageTransport {
 	res := &jsonMessageTransport{
 		Sender: &v.Sender,
 		Text:   &v.Text,
+		Human:  v.Human,
 	}
 	seq := channelIntTransport(v.Seq)
 	res.Seq = &seq
@@ -1739,6 +1760,7 @@ func encodePinToPinTransport(v *Pin) *jsonPinTransport {
 	res := &jsonPinTransport{
 		Sender: &v.Sender,
 		Text:   &v.Text,
+		Human:  v.Human,
 	}
 	seq := channelIntTransport(v.Seq)
 	res.Seq = &seq
@@ -2038,6 +2060,13 @@ func validateChannelJSONValue4(path string, value any, description string) error
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "human":
+			if err := validateAgentJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "True when the sender was registered with role human when the message was sent. Absent otherwise.",
+			); err != nil {
+				return err
+			}
 		case "reply_to":
 			if err := validateChannelJSONValue2(
 				generatedJSONChildPath(path, key, false),
@@ -2075,6 +2104,7 @@ func validateChannelJSONValue4(path string, value any, description string) error
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"human",
 				"reply_to",
 				"sender",
 				"sent_at_ms",
@@ -2106,6 +2136,13 @@ func validateChannelJSONValue5(path string, value any, description string) error
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "human":
+			if err := validateAgentJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "True when the sender was registered with role human when the message was pinned. Absent otherwise.",
+			); err != nil {
+				return err
+			}
 		case "sender":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
@@ -2129,6 +2166,7 @@ func validateChannelJSONValue5(path string, value any, description string) error
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"human",
 				"sender",
 				"seq",
 				"text",

@@ -38,8 +38,13 @@
     revealSelectedMessage(els.streamEl, state, selectionChanged);
 
     const target = state.selectedTarget;
-    els.titleEl.textContent = target?.kind === "channel" ? target.name
-      : target?.kind === "dm" ? `@${target.a} ↔ @${target.b}` : "All messages";
+    if (target?.kind === "channel") {
+      els.titleEl.textContent = target.name;
+    } else if (target?.kind === "dm") {
+      els.titleEl.replaceChildren(handleBadgeNode(target.a, state), " ↔ ", handleBadgeNode(target.b, state));
+    } else {
+      els.titleEl.textContent = "All messages";
+    }
     els.subtitleEl.textContent = `${visible.length} of ${targetEntries.length} messages · newest first`;
   }
 
@@ -116,23 +121,11 @@
     }
     for (const [handle, entry] of latest) {
       if (registeredByHandle.has(handle)) continue;
-      const seenChannels = [
-        ...new Set(
-          entries
-            .filter((e) => e.message.sender === handle && e.target.startsWith("#"))
-            .map((e) => e.target)
-        ),
-      ];
-      const item = {
-        handle,
-        role: isHumanHandle(handle, state) ? "human" : "",
-        last_seen_unix: 0,
-        last_message_ms: entry.message.sent_at_ms,
-        channels: seenChannels,
-        watching_on_this_server: false,
-        registered: false,
-      };
-      participants.push(item);
+      const seenChannels = [...new Set(entries.filter((e) => e.message.sender === handle && e.target.startsWith("#")).map((e) => e.target))];
+      participants.push({
+        handle, role: "", last_seen_unix: 0, last_message_ms: entry.message.sent_at_ms,
+        channels: seenChannels, watching_on_this_server: false, registered: false,
+      });
     }
     const participantByHandle = new Map(participants.map((p) => [p.handle, p]));
 
@@ -140,30 +133,17 @@
       const entry = latest.get(agent.handle);
       const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
       const inbox = inboxByHandle.get(agent.handle) || null;
-      const colorClass = senderColorClass(agent.handle, state);
-      const human = agent.role === "human" || isHumanHandle(agent.handle, state);
-
+      const human = Boolean(agent.registered && agent.role === "human");
+      const colorClass = senderColorClass(agent.handle, state, human);
       const statusText = agent.registered
-        ? agent.watching_on_this_server
-          ? "Watching here"
-          : `Last call or heartbeat ${age(agent.last_seen_unix * 1000)} ago`
-        : entry
-          ? `Last message ${age(entry.message.sent_at_ms)} ago`
-          : "Earlier participant";
-      const statusBadge = element(
-        "span",
-        `agent-status${agent.watching_on_this_server ? " is-watching" : ""}`,
-        statusText
-      );
-
-      const headerRow = element(
-        "span",
-        "agent-card-top",
-        avatarNode(agent.handle, state),
+        ? (agent.watching_on_this_server ? "Watching here" : `Last call or heartbeat ${age(agent.last_seen_unix * 1000)} ago`)
+        : (entry ? `Last message ${age(entry.message.sent_at_ms)} ago` : "Earlier participant");
+      const statusBadge = element("span", `agent-status${agent.watching_on_this_server ? " is-watching" : ""}`, statusText);
+      const headerRow = element("span", "agent-card-top",
+        avatarNode(agent.handle, state, agent.registered ? agent.role || "" : ""),
         element("strong", `agent-name ${colorClass}`.trim(), `@${agent.handle}`),
         ...(human ? [element("span", "human-pill", "Human")] : []),
-        statusBadge
-      );
+        statusBadge);
 
       if (pos && pos.behind > 0) {
         const gapLabel = `Position gap ${pos.behind} · Read through #${pos.read_seq}${pos.mentioned ? " · @mentioned" : ""}`;
@@ -192,24 +172,12 @@
       }
 
       const cardChildren = [headerRow];
-      if (agent.role && agent.role !== "human") {
-        cardChildren.push(element("span", "agent-role-inline", agent.role));
-      }
-      cardChildren.push(
-        element(
-          "span",
-          "agent-latest",
-          entry
-            ? `${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): ${headline(entry.message.text)}`
-            : "No retained messages"
-        )
-      );
-
-      const button = element(
-        "button",
+      if (agent.role && agent.role !== "human") cardChildren.push(element("span", "agent-role-inline", agent.role));
+      cardChildren.push(element("span", "agent-latest",
+        entry ? `${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): ${headline(entry.message.text)}` : "No retained messages"));
+      const button = element("button",
         `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
-        ...cardChildren
-      );
+        ...cardChildren);
       button.type = "button";
       button.dataset.focusKey = `agent:${agent.handle}`;
       button.setAttribute("aria-label", `Inspect @${agent.handle}`);
@@ -272,15 +240,7 @@
 
     const facts = element("dl", "agent-facts",
       element("dt", "", agent.registered !== false ? "Last call or heartbeat" : "Last message"),
-      element(
-        "dd",
-        "",
-        agent.registered !== false
-          ? `${age(agent.last_seen_unix * 1000)} ago`
-          : latest
-            ? `${age(latest.message.sent_at_ms)} ago`
-            : "Unknown"
-      ),
+      element("dd", "", agent.registered !== false ? `${age(agent.last_seen_unix * 1000)} ago` : (latest ? `${age(latest.message.sent_at_ms)} ago` : "Unknown")),
       element("dt", "", "Watching on this server"),
       element("dd", "", agent.watching_on_this_server ? "Yes (listening)" : "No"),
       element("dt", "", "Channels"),
@@ -298,13 +258,25 @@
       }
     });
 
-    const nodes = [element("div", "details-heading", element("h3", "", `@${agent.handle}`), close)];
+    const nodes = [
+      element(
+        "div",
+        "details-heading",
+        element(
+          "h3",
+          "details-agent-title",
+          avatarNode(agent.handle, state, agent.registered !== false ? agent.role || "" : "", agent.role === "human"),
+          `@${agent.handle}`
+        ),
+        close
+      ),
+    ];
     if (agent.role) nodes.push(element("p", "agent-role", agent.role));
     nodes.push(facts);
     if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): ${headline(latest.message.text)}`));
     nodes.push(element("div", "detail-actions",
-      actionButton(`Direct message @${agent.handle}`, `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
-      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : `Filter by @${agent.handle}`, `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
+      actionButton(["Direct message ", handleBadgeNode(agent.handle, state)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
+      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
       copyWatchBtn));
     replaceKeepingFocus(root, nodes);
   }
@@ -331,7 +303,7 @@
     const newer = channel.messages.filter((message) => message.seq > pin.seq).length;
     const summary = element("summary", "pin-summary",
       element("strong", "pin-title", `Pinned goal (#${pin.seq}): ${headline(pin.text)}`),
-      element("span", "pin-meta", `by @${pin.sender} · ${newer} newer messages`));
+      element("span", "pin-meta", "by ", handleBadgeNode(pin.sender, state), ` · ${newer} newer messages`));
     summary.dataset.focusKey = `pin:${key}`;
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
@@ -397,20 +369,33 @@
     const disclosure = element("details", "mentions-disclosure");
     disclosure.open = open;
     const last = mentions.at(-1);
-    const mentionsSummary = element("summary", "mentions-summary", last
-      ? `Recent mentions: @${last.entry.message.sender} → @${last.handle} (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`
-      : "No mentions in this view");
+    const mentionsSummary = element(
+      "summary",
+      "mentions-summary",
+      ...(last
+        ? [
+            "Recent mentions: ",
+            handleBadgeNode(last.entry.message.sender, state),
+            " → ",
+            handleBadgeNode(last.handle, state),
+            ` (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`,
+          ]
+        : ["No mentions in this view"])
+    );
     mentionsSummary.dataset.focusKey = "mentions-summary";
     disclosure.append(mentionsSummary);
     const list = element("ul", "mention-list");
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
-        actionButton(`@${entry.message.sender} mentioned @${handle} (${entry.target}#${entry.message.seq})`, `mention:${coordinate(entry)}:${handle}`,
-          () => actions.selectMessage(entry.target, entry.message.seq)),
+        actionButton(
+          [handleBadgeNode(entry.message.sender, state), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
+          `mention:${coordinate(entry)}:${handle}`,
+          () => actions.selectMessage(entry.target, entry.message.seq)
+        ),
         element("span", "message-time", `${age(entry.message.sent_at_ms)} ago`));
       if (entry.target.startsWith("#")) {
         const reply = entries.find((item) => item.target === entry.target && item.message.reply_to === entry.message.seq);
-        if (reply) row.append(actionButton(`Reply by @${reply.message.sender}`, `mention-reply:${coordinate(reply)}`,
+        if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state)], `mention-reply:${coordinate(reply)}`,
           () => actions.selectMessage(reply.target, reply.message.seq)));
       }
       list.append(row);
@@ -642,8 +627,8 @@
     const last = entries.at(-1);
     const key = `thread:${coordinate(first)}`;
 
-    const rootFromHuman = isHumanHandle(first.message.sender, state);
-    const latestReplyToHuman = entries.toReversed().map((e) => humanResponseBadge(e, byTarget, state)).find(Boolean) || "";
+    const rootFromHuman = isFromHumanMessage(first.message);
+    const latestReplyToHuman = entries.toReversed().map((e) => humanResponseBadge(e, byTarget)).find(Boolean) || "";
 
     const details = element(
       "details",
@@ -653,12 +638,12 @@
     details.dataset.anchorVersion = `${entries.length}:${last.message.seq}`;
     details.open = openKeys.has(key) || entries.some((entry) => selected(entry, state));
 
-    const senderColor = senderColorClass(last.message.sender, state);
+    const senderColor = senderColorClass(last.message.sender, state, isFromHumanMessage(last.message));
     const metaRow = element(
       "span",
       "message-meta",
       element("strong", `message-sender ${senderColor}`.trim(), `@${last.message.sender}`),
-      ...(rootFromHuman ? [element("span", "human-pill", `Human thread (@${first.message.sender})`)] : []),
+      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state), ")")] : []),
       ...(latestReplyToHuman ? [element("span", "human-response-pill", latestReplyToHuman)] : []),
       element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
       element("span", "thread-count-pill", `${entries.length} messages`),
@@ -670,13 +655,13 @@
       "row-main",
       metaRow,
       element("strong", "thread-title", headline(first.message.text)),
-      element("span", "thread-latest", `Latest (@${last.message.sender} #${last.message.seq}): ${headline(last.message.text)}`)
+      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state), ` #${last.message.seq}): ${headline(last.message.text)}`)
     );
 
     const summary = element(
       "summary",
       "thread-summary",
-      avatarNode(last.message.sender, state),
+      avatarNode(last.message.sender, state, "", isFromHumanMessage(last.message)),
       contentCol
     );
     summary.dataset.focusKey = key;
@@ -716,8 +701,8 @@
   function messageDisclosure(entry, state, actions, byTarget, openKeys) {
     const message = entry.message;
     const key = coordinate(entry);
-    const fromHuman = isHumanHandle(message.sender, state);
-    const toHumanBadge = humanResponseBadge(entry, byTarget, state);
+    const fromHuman = isFromHumanMessage(message);
+    const toHumanBadge = humanResponseBadge(entry, byTarget);
 
     const details = element(
       "details",
@@ -729,7 +714,7 @@
     details.open = openKeys.has(`message:${key}`) || selected(entry, state);
     details.classList.toggle("is-selected", selected(entry, state));
 
-    const senderColor = senderColorClass(message.sender, state);
+    const senderColor = senderColorClass(message.sender, state, fromHuman);
     const meta = element(
       "span",
       "message-meta",
@@ -752,7 +737,7 @@
     const summary = element(
       "summary",
       "message-summary",
-      avatarNode(message.sender, state),
+      avatarNode(message.sender, state, "", fromHuman),
       contentCol
     );
     summary.dataset.focusKey = `message:${key}`;
@@ -771,7 +756,7 @@
       if (parent) {
         controls.append(
           actionButton(
-            `In reply to #${parent.message.seq} (@${parent.message.sender})`,
+            [`In reply to #${parent.message.seq} (`, handleBadgeNode(parent.message.sender, state), ")"],
             `parent:${key}`,
             () => actions.selectMessage(entry.target, parent.message.seq)
           )
@@ -821,61 +806,73 @@
     }
     const nodes = [element("div", "details-heading", element("h3", "", `${entry.target}#${entry.message.seq}`),
       actionButton("Close", "close-message", () => actions.selectMessage(null, 0))),
-    element("p", "message-meta", `@${entry.message.sender} · ${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`),
+    element("p", "message-meta", handleBadgeNode(entry.message.sender, state), ` · ${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`),
     element("div", "message-body", formattedText(entry.message.text))];
     if (entry.target.startsWith("#")) nodes.push(actionButton("Reply", "reply-selected",
       () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender)));
     replaceKeepingFocus(root, nodes);
   }
 
-  // isHumanHandle reports whether handle is registered with role "human" in the
-  // current swarm view or matches the human user's handle in the UI composer
-  // (when not registered as a non-human agent).
-  function isHumanHandle(handle, state) {
-    if (!handle) return false;
-    const agent = (state.view?.agents || []).find((a) => a.handle === handle);
-    if (agent) return agent.role === "human";
-    const uiInput = typeof document !== "undefined" ? document.getElementById("send-handle") : null;
-    const uiHandle = (uiInput?.value || "").trim().replace(/^@/, "");
-    return Boolean(uiHandle) && handle === uiHandle;
+  // isFromHumanMessage reports whether the message event carries send-time
+  // human provenance (message.human === true). Historical messages without this
+  // saved field remain unclassified rather than being inferred from mutable
+  // current registration roles or input fields.
+  function isFromHumanMessage(message) {
+    return message?.human === true;
   }
 
-  // humanResponseBadge returns a concise callout label when an agent message
-  // replies to a human's message, sends a direct message to a human, or
-  // @mentions a human participant.
-  function humanResponseBadge(entry, byTarget, state) {
+  // humanResponseBadge returns a concise callout label when a non-human channel
+  // message replies via reply_to to a retained message with send-time human
+  // provenance (parent.message.human === true).
+  function humanResponseBadge(entry, byTarget) {
     const msg = entry.message;
-    if (isHumanHandle(msg.sender, state)) return "";
+    if (isFromHumanMessage(msg)) return "";
     if (entry.target.startsWith("#") && msg.reply_to > 0) {
       const parent = byTarget.get(entry.target)?.get(msg.reply_to);
-      if (parent && isHumanHandle(parent.message.sender, state)) {
+      if (parent && isFromHumanMessage(parent.message)) {
         return `↩ Reply to @${parent.message.sender} (#${parent.message.seq})`;
-      }
-    }
-    if (entry.target.startsWith("@")) {
-      const recipient = entry.target.slice(1);
-      if (isHumanHandle(recipient, state)) {
-        return `Direct to @${recipient}`;
-      }
-    }
-    if (entry.target.startsWith("#")) {
-      for (const h of mentionedHandles(msg.text)) {
-        if (isHumanHandle(h, state)) {
-          return `Response to @${h}`;
-        }
       }
     }
     return "";
   }
 
   // avatarNode renders a 32px circular avatar in the participant's SVG color
-  // with their exact-case 2-character handle monogram.
-  function avatarNode(handle, state) {
-    const colorClass = senderColorClass(handle, state);
+  // with an official brand mark (when resolveIdentity recognizes the model/client)
+  // or their exact-case 2-character handle monogram.
+  function avatarNode(handle, state, currentRole = "", isHuman = false) {
+    const colorClass = senderColorClass(handle, state, isHuman);
     const label = String(handle || "?").slice(0, 2);
-    const node = element("span", `agent-avatar ${colorClass}`.trim(), label);
+    const node = element("span", `agent-avatar ${colorClass}`.trim());
     node.setAttribute("aria-hidden", "true");
+    const roleHint = currentRole || (state?.view?.agents || []).find((a) => a.handle === handle)?.role || "";
+    const identity = window.ChorusUI?.resolveIdentity
+      ? window.ChorusUI.resolveIdentity(handle, roleHint)
+      : null;
+    if ((identity?.iconUrl || identity?.avatarUrl) && !isHuman) {
+      node.dataset.provider = identity.provider || "";
+      const img = document.createElement("img");
+      img.className = "agent-brand-logo";
+      img.src = identity.iconUrl || identity.avatarUrl;
+      img.alt = "";
+      img.addEventListener("error", () => {
+        delete node.dataset.provider;
+        node.textContent = label;
+      });
+      node.append(img);
+    } else {
+      node.textContent = label;
+    }
     return node;
+  }
+
+  // handleBadgeNode renders @<handle> with an inline 16px brand mark when
+  // resolveIdentity recognizes the handle or its current registration role.
+  function handleBadgeNode(handle, state, extraClass = "") {
+    const roleHint = (state?.view?.agents || []).find((a) => a.handle === handle)?.role || "";
+    if (window.ChorusUI?.handleBadge) {
+      return window.ChorusUI.handleBadge(handle, roleHint, extraClass);
+    }
+    return element("span", extraClass, `@${handle}`);
   }
 
   function mentionedHandles(text) {
@@ -902,12 +899,38 @@
         fragment.append(element("pre", "message-code", element("code", "", part.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\n/, ""))));
       } else {
         for (const inline of part.split(/(`[^`\n]+`)/g)) {
-          fragment.append(inline.startsWith("`") && inline.endsWith("`")
-            ? element("code", "", inline.slice(1, -1)) : document.createTextNode(inline));
+          if (inline.startsWith("`") && inline.endsWith("`")) {
+            fragment.append(element("code", "", inline.slice(1, -1)));
+          } else {
+            appendTextWithMentions(fragment, inline);
+          }
         }
       }
     }
     return fragment;
+  }
+
+  function appendTextWithMentions(target, text) {
+    const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g;
+    let lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      const prefix = match[1] || "";
+      const handle = match[2];
+      const matchStart = match.index + prefix.length;
+      if (matchStart > lastIndex) {
+        target.append(document.createTextNode(text.slice(lastIndex, matchStart)));
+      }
+      const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle) : null;
+      if (identity?.iconUrl && window.ChorusUI?.handleBadge) {
+        target.append(window.ChorusUI.handleBadge(handle));
+      } else {
+        target.append(document.createTextNode(`@${handle}`));
+      }
+      lastIndex = matchStart + 1 + handle.length;
+    }
+    if (lastIndex < text.length) {
+      target.append(document.createTextNode(text.slice(lastIndex)));
+    }
   }
 
   function headline(text) {
@@ -923,9 +946,10 @@
     return `${entry.target}:${entry.message.seq}`;
   }
 
-  function senderColorClass(handle, state) {
+  function senderColorClass(handle, state, isHuman = false) {
     if (!window.ChorusUI?.agentColorClass) return "";
-    return window.ChorusUI.agentColorClass(handle, isHumanHandle(handle, state) ? "human" : "");
+    const registeredHuman = (state.view?.agents || []).some((a) => a.handle === handle && a.role === "human");
+    return window.ChorusUI.agentColorClass(handle, isHuman || registeredHuman ? "human" : "");
   }
 
   function selected(entry, state) {
@@ -944,7 +968,8 @@
   }
 
   function actionButton(label, key, action) {
-    const button = element("button", "stream-action", label);
+    const children = Array.isArray(label) ? label : [label];
+    const button = element("button", "stream-action", ...children);
     button.type = "button";
     button.dataset.focusKey = key;
     button.addEventListener("click", action);

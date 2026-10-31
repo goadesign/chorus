@@ -61,7 +61,8 @@ func mountUI(mux goahttp.Muxer) {
 // headers, or 404 when it does not exist. Responses are not cached so a
 // rebuilt server is picked up on the next page load.
 func serveUIFile(w http.ResponseWriter, r *http.Request, name string) {
-	if _, err := fs.Stat(uiRoot, name); err != nil {
+	info, err := fs.Stat(uiRoot, name)
+	if err != nil || info.IsDir() || name == "brands/SOURCES.md" {
 		http.NotFound(w, r)
 		return
 	}

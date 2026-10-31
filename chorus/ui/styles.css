@@ -272,6 +272,57 @@ button, input, select, textarea {
   border: 1.5px solid color-mix(in srgb, var(--agent-color, var(--accent)) 45%, transparent);
   flex-shrink: 0;
   user-select: none;
+  overflow: hidden;
+}
+
+.agent-avatar[data-provider="openai"] {
+  background: #171717;
+  border-color: #2e2e2e;
+}
+
+.agent-brand-logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  display: block;
+}
+
+.handle-with-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: middle;
+}
+
+.inline-brand-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.inline-brand-badge[data-provider="openai"] {
+  background: #171717;
+  border-color: #2e2e2e;
+}
+
+.inline-brand-logo {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+  display: block;
+}
+
+.details-agent-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 1. Single Clean Header Bar */
@@ -871,6 +922,25 @@ button, input, select, textarea {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
+}
+
+.tl-avatar-plate {
+  fill: #171717;
+  stroke: #2e2e2e;
+  stroke-width: 1px;
+}
+
+.tl-avatar-icon {
+  pointer-events: none;
+}
+
+.tl-avatar-initial {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
 }
 
 .tl-lane-label.is-left {

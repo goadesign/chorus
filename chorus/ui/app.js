@@ -60,6 +60,62 @@
     return palette[Math.abs(hash) % palette.length];
   }
 
+  // resolveIdentity maps explicitly recognized model/provider handles (or a
+  // current registration role when provided for a live participant) to the
+  // official brand mark under /ui/brands/, leaving custom or multi-model client
+  // handles (such as agy) neutral with iconUrl/avatarUrl: null.
+  function resolveIdentity(handle, currentRole = "") {
+    const raw = String(handle || "");
+    const h = raw.toLowerCase();
+    const roleLower = String(currentRole || "").toLowerCase();
+    if (roleLower === "human") {
+      return { handle: raw, label: `@${raw}`, provider: "human", iconUrl: null, avatarUrl: null };
+    }
+    if (/^(codex|gpt|openai|chatgpt|o1|o3|o4)($|[-_0-9])/.test(h)) {
+      return { handle: raw, label: `@${raw}`, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
+    }
+    if (/^(opus|sonnet|haiku|claude)($|[-_0-9])/.test(h)) {
+      return { handle: raw, label: `@${raw}`, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
+    }
+    if (/^gemini($|[-_0-9])/.test(h)) {
+      return { handle: raw, label: `@${raw}`, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
+    }
+    if (/\b(codex|chatgpt|openai|gpt-)\b/.test(roleLower)) {
+      return { handle: raw, label: `@${raw}`, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
+    }
+    if (/\b(claude|opus|sonnet|haiku)\b/.test(roleLower)) {
+      return { handle: raw, label: `@${raw}`, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
+    }
+    if (/\bgemini\b/.test(roleLower)) {
+      return { handle: raw, label: `@${raw}`, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
+    }
+    return { handle: raw, label: `@${raw}`, provider: null, iconUrl: null, avatarUrl: null };
+  }
+
+  // handleBadge renders @<handle> with an inline 16px brand mark when
+  // resolveIdentity recognizes the handle or current registration role.
+  function handleBadge(handle, currentRole = "", extraClass = "") {
+    const raw = String(handle || "");
+    const identity = resolveIdentity(raw, currentRole);
+    const span = document.createElement("span");
+    span.className = `handle-with-logo ${extraClass}`.trim();
+    if (identity.iconUrl) {
+      const badge = document.createElement("span");
+      badge.className = "inline-brand-badge";
+      badge.dataset.provider = identity.provider || "";
+      badge.setAttribute("aria-hidden", "true");
+      const img = document.createElement("img");
+      img.className = "inline-brand-logo";
+      img.src = identity.iconUrl;
+      img.alt = "";
+      img.addEventListener("error", () => badge.remove());
+      badge.appendChild(img);
+      span.appendChild(badge);
+    }
+    span.appendChild(document.createTextNode(`@${raw}`));
+    return span;
+  }
+
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -410,7 +466,8 @@
       el(
         "span",
         { className: "context-pill" },
-        `↩ #${state.replyToSeq}${state.replyToSender ? ` (@${state.replyToSender})` : ""}`,
+        `↩ #${state.replyToSeq}`,
+        ...(state.replyToSender ? [" (", handleBadge(state.replyToSender), ")"] : []),
         el(
           "button",
           {
@@ -531,7 +588,7 @@
                 b: pair.b,
               }),
           },
-          el("span", {}, `@${pair.a} ↔ @${pair.b}`),
+          el("span", {}, handleBadge(pair.a), " ↔ ", handleBadge(pair.b)),
           el("span", { className: "count-pill" }, String(pair.messages.length))
         )
       );
@@ -569,7 +626,9 @@
               className: "chip-btn active",
               onClick: () => actions.setFilterAgent(""),
             },
-            `Agent: @${state.filterAgent} ×`
+            "Agent: ",
+            handleBadge(state.filterAgent),
+            " ×"
           )
         );
       }
@@ -1033,6 +1092,8 @@
     el,
     agentColorClass,
     agentColorHex,
+    resolveIdentity,
+    handleBadge,
   };
 
   async function boot() {

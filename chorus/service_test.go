@@ -106,11 +106,11 @@ var (
 	sharedRedisAddr string
 
 	// channelMsgRegex matches "#chan#14 @sender: text", "#chan#14↩#12 @sender: text",
-	// and pinned manifest lines "pin #chan#1 @sender: text".
-	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+): (.*)$`)
+	// "#chan#14 @sender (human): text", and pinned manifest lines "pin #chan#1 @sender: text".
+	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+)(?: \(human\))?: (.*)$`)
 
-	// dmMsgRegex matches "@sender->me#3: text" and "@sender->me#3↩#2: text".
-	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)->me#(\d+)(?:↩#(\d+))?: (.*)$`)
+	// dmMsgRegex matches "@sender->me#3: text", "@sender->me#3↩#2: text", and "@sender (human)->me#3: text".
+	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)(?: \(human\))?->me#(\d+)(?:↩#(\d+))?: (.*)$`)
 )
 
 // TestMain boots a shared local redis-server instance for all integration tests
@@ -1200,6 +1200,10 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	}
 	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
 		t.Fatalf("expected direct message from role=human to carry (human) tag, got:\n%s", archRead)
+	}
+	parsedHuman := parseWireMessages(t, archRead)
+	if len(parsedHuman) != 2 {
+		t.Fatalf("expected parseWireMessages to parse both human messages, got %d", len(parsedHuman))
 	}
 }
 
