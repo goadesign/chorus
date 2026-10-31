@@ -542,6 +542,7 @@ button, input, select, textarea {
   width: 100%;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 18px 24px 32px;
 }
 
@@ -791,7 +792,7 @@ button, input, select, textarea {
 .tl-quiet-label {
   fill: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .tl-axis {
@@ -823,8 +824,7 @@ button, input, select, textarea {
   font-weight: 700;
 }
 
-.tl-lane-label.is-left,
-.tl-lane-dot.is-left {
+.tl-lane-label.is-left {
   opacity: 0.55;
 }
 
@@ -1390,7 +1390,9 @@ button, input, select, textarea {
   font-weight: 600;
   font-size: 13.5px;
   color: var(--text-primary);
-  width: 11ch;
+  min-width: 8ch;
+  max-width: 24ch;
+  field-sizing: content;
   outline: none;
 }
 

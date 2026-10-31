@@ -19,11 +19,12 @@
     const entries = retainedMessages(state.view);
     const targetEntries = selectedMessages(entries, state);
     const visible = targetEntries.filter((entry) => matches(entry, state));
+    const scrollSnapshot = captureScrollSnapshot(els.streamEl, els.scrollEl);
     renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderNewMessages(els.newSinceEl, targetEntries, state, actions);
-    renderMessages(els.streamEl, els.scrollEl, visible, targetEntries, state, actions);
+    renderMessages(els.streamEl, els.scrollEl, visible, targetEntries, state, actions, scrollSnapshot);
     renderSelection(els.detailsEl, state, actions, entries, visible);
     const target = state.selectedTarget;
     els.titleEl.textContent = target?.kind === "channel" ? target.name
@@ -84,18 +85,47 @@
       .toLowerCase().includes(query);
   }
 
-  // renderAgents renders each active participant card with their role, watch
-  // state on this server, last call age, read position gap in the active
-  // channel/inbox, and latest message headline.
+  // renderAgents renders each active and historical participant card with their
+  // role, watch state on this server, last call/heartbeat or latest message age,
+  // read position gap in the active channel/inbox, and latest message headline.
   function renderAgents(els, state, actions, entries) {
     const latest = new Map();
     for (const entry of entries) latest.set(entry.message.sender, entry);
     const activeChannel = state.selectedTarget?.kind === "channel"
       ? state.view.channels.find((ch) => ch.name === state.selectedTarget.name)
-      : state.view.channels[0] || null;
+      : null;
     const inboxByHandle = new Map((state.view.inboxes || []).map((ib) => [ib.recipient, ib]));
 
-    const nodes = state.view.agents.map((agent) => {
+    const registeredByHandle = new Map();
+    const participants = [];
+    for (const agent of state.view.agents || []) {
+      const item = { ...agent, registered: true };
+      registeredByHandle.set(agent.handle, item);
+      participants.push(item);
+    }
+    for (const [handle, entry] of latest) {
+      if (registeredByHandle.has(handle)) continue;
+      const seenChannels = [
+        ...new Set(
+          entries
+            .filter((e) => e.message.sender === handle && e.target.startsWith("#"))
+            .map((e) => e.target)
+        ),
+      ];
+      const item = {
+        handle,
+        role: "",
+        last_seen_unix: 0,
+        last_message_ms: entry.message.sent_at_ms,
+        channels: seenChannels,
+        watching_on_this_server: false,
+        registered: false,
+      };
+      participants.push(item);
+    }
+    const participantByHandle = new Map(participants.map((p) => [p.handle, p]));
+
+    const nodes = participants.map((agent) => {
       const entry = latest.get(agent.handle);
       const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
       const inbox = inboxByHandle.get(agent.handle) || null;
@@ -103,9 +133,13 @@
         ? window.ChorusUI.agentColorClass(agent.handle, agent.role)
         : "";
 
-      const statusText = agent.watching_on_this_server
-        ? "Watching here"
-        : `Last call ${age(agent.last_seen_unix * 1000)} ago`;
+      const statusText = agent.registered
+        ? agent.watching_on_this_server
+          ? "Watching here"
+          : `Last call or heartbeat ${age(agent.last_seen_unix * 1000)} ago`
+        : entry
+          ? `Last message ${age(entry.message.sent_at_ms)} ago`
+          : "Earlier participant";
       const statusBadge = element(
         "span",
         `agent-status${agent.watching_on_this_server ? " is-watching" : ""}`,
@@ -154,7 +188,7 @@
 
       const button = element(
         "button",
-        `agent-summary${state.filterAgent === agent.handle ? " is-selected" : ""}`,
+        `agent-summary${agent.registered ? "" : " is-historical"}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
         ...cardChildren
       );
       button.type = "button";
@@ -179,7 +213,7 @@
     replaceKeepingFocus(els.agentStripEl, nodes);
     const inspected = els.detailsEl.dataset.agent;
     if (inspected) {
-      const agent = state.view.agents.find((item) => item.handle === inspected);
+      const agent = participantByHandle.get(inspected);
       if (agent) showAgent(els.detailsEl, agent, state, actions, latest.get(inspected));
       else {
         delete els.detailsEl.dataset.agent;
@@ -188,8 +222,9 @@
     }
   }
 
-  // showAgent describes current registration facts, per-channel read watermarks,
-  // and 1-click actions to message, filter, or copy the chorus watch command.
+  // showAgent describes current registration or historical message facts,
+  // per-channel and DM read watermarks, and 1-click actions to message, filter,
+  // or copy the chorus watch command.
   function showAgent(root, agent, state, actions, latest) {
     const close = actionButton("Close", "close-agent", () => {
       delete root.dataset.agent;
@@ -207,14 +242,30 @@
         );
       }
     }
+    const inbox = (state.view.inboxes || []).find((ib) => ib.recipient === agent.handle);
+    if (inbox) {
+      posSummaries.push(
+        inbox.behind > 0
+          ? `DMs: read #${inbox.read_seq} (${inbox.behind} behind head #${inbox.head_seq})`
+          : `DMs: caught up at #${inbox.read_seq}`
+      );
+    }
 
     const facts = element("dl", "agent-facts",
-      element("dt", "", "Last Chorus call or heartbeat"),
-      element("dd", "", `${age(agent.last_seen_unix * 1000)} ago`),
+      element("dt", "", agent.registered !== false ? "Last call or heartbeat" : "Last message"),
+      element(
+        "dd",
+        "",
+        agent.registered !== false
+          ? `${age(agent.last_seen_unix * 1000)} ago`
+          : latest
+            ? `${age(latest.message.sent_at_ms)} ago`
+            : "Unknown"
+      ),
       element("dt", "", "Watching on this server"),
       element("dd", "", agent.watching_on_this_server ? "Yes (listening)" : "No"),
-      element("dt", "", "Subscribed channels"),
-      element("dd", "", agent.channels.join(", ") || "None"),
+      element("dt", "", "Channels"),
+      element("dd", "", (agent.channels || []).join(", ") || "None"),
       element("dt", "", "Read watermarks"),
       element("dd", "", posSummaries.join(" · ") || "No channel watermarks"));
 
@@ -380,18 +431,48 @@
     replaceKeepingFocus(root, [button]);
   }
 
+  // isVisibleAnchorRow returns true for collapsed thread rows and visible
+  // message rows, skipping expanded thread containers (whose inner message rows
+  // are the real reading anchors) and hidden children inside closed disclosures.
+  function isVisibleAnchorRow(node, root) {
+    if (node.classList.contains("thread-disclosure") && node.open) return false;
+    let parent = node.parentElement;
+    while (parent && parent !== root) {
+      if (parent.tagName === "DETAILS" && !parent.open) return false;
+      parent = parent.parentElement;
+    }
+    return true;
+  }
+
+  // captureScrollSnapshot records the scroll offset and visible reading rows
+  // before any section in the scrollable stage replaces its DOM children.
+  function captureScrollSnapshot(root, scrollEl) {
+    if (!root || !scrollEl) return { oldTop: 0, candidates: [] };
+    if (scrollEl.style) scrollEl.style.overflowAnchor = "none";
+    const oldTop = scrollEl.scrollTop;
+    const rootTop = scrollEl.getBoundingClientRect().top;
+    const candidates = [...root.querySelectorAll("[data-disclosure-key]")]
+      .filter((node) => isVisibleAnchorRow(node, root) && node.getBoundingClientRect().bottom >= rootTop)
+      .map((node) => ({
+        key: node.dataset.disclosureKey,
+        version: node.dataset.anchorVersion || "",
+        offset: node.getBoundingClientRect().top - rootTop,
+      }));
+    return { oldTop, candidates };
+  }
+
   // renderMessages stacks newest threads and newest messages at the top of the
   // feed so the latest conversation is immediately visible below the timeline
   // without scrolling to the bottom of the page. When paused (followLive=false),
   // top insertions preserve the reader's visible card offset with zero drift.
-  function renderMessages(root, scrollEl, entries, targetEntries, state, actions) {
+  function renderMessages(root, scrollEl, entries, targetEntries, state, actions, scrollSnapshot) {
     const openKeys = new Set([...root.querySelectorAll("details[open][data-disclosure-key]")]
       .map((node) => node.dataset.disclosureKey));
     const expandAll = state.expandAllMessages === true;
     if (root.dataset.expandAll !== String(expandAll)) {
       openKeys.clear();
       if (expandAll) {
-        for (const entry of entries) {
+        for (const entry of targetEntries) {
           openKeys.add(`message:${coordinate(entry)}`);
           openKeys.add(`thread:${coordinate(entry)}`);
         }
@@ -399,14 +480,7 @@
     }
     const selectionKey = state.selectedMessage ? `${state.selectedMessage.target}:${state.selectedMessage.seq}` : "";
     const selectionChanged = root.dataset.selectedMessage !== selectionKey;
-    const oldTop = scrollEl.scrollTop;
-    const rootTop = scrollEl.getBoundingClientRect().top;
-    // Match both collapsed thread cards and message cards as scroll anchors so
-    // new items inserted at the top while paused do not shift the viewport.
-    const anchor = [...root.querySelectorAll("[data-disclosure-key]")]
-      .find((node) => node.getBoundingClientRect().bottom >= rootTop);
-    const anchorKey = anchor?.dataset.disclosureKey;
-    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - rootTop : 0;
+    const snapshot = scrollSnapshot || captureScrollSnapshot(root, scrollEl);
 
     const byTarget = new Map();
     for (const entry of targetEntries) {
@@ -439,11 +513,30 @@
     replaceKeepingFocus(root, nodes);
 
     if (!state.followLive) {
-      scrollEl.scrollTop = oldTop;
-      const restored = anchorKey ? [...root.querySelectorAll("[data-disclosure-key]")]
-        .find((node) => node.dataset.disclosureKey === anchorKey) : null;
-      if (restored) {
-        scrollEl.scrollTop += restored.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - anchorOffset;
+      scrollEl.scrollTop = snapshot.oldTop;
+      const afterRows = [...root.querySelectorAll("[data-disclosure-key]")]
+        .filter((node) => isVisibleAnchorRow(node, root));
+      let match = null;
+      for (const cand of snapshot.candidates) {
+        const node = afterRows.find(
+          (row) => row.dataset.disclosureKey === cand.key && (row.dataset.anchorVersion || "") === cand.version
+        );
+        if (node) {
+          match = { cand, node };
+          break;
+        }
+      }
+      if (!match) {
+        for (const cand of snapshot.candidates) {
+          const node = afterRows.find((row) => row.dataset.disclosureKey === cand.key);
+          if (node) {
+            match = { cand, node };
+            break;
+          }
+        }
+      }
+      if (match) {
+        scrollEl.scrollTop += match.node.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - match.cand.offset;
       }
     }
 
@@ -489,7 +582,14 @@
     const groups = new Map();
     for (const entry of entries) {
       const key = root(coordinate(entry));
-      if (!groups.has(key)) groups.set(key, []);
+      if (!groups.has(key)) {
+        const list = [];
+        const colon = key.indexOf(":");
+        const rootTarget = colon >= 0 ? key.slice(0, colon) : entry.target;
+        const rootSeq = colon >= 0 ? Number(key.slice(colon + 1)) : entry.message.seq;
+        list.rootEntry = byTarget.get(rootTarget)?.get(rootSeq) || entry;
+        groups.set(key, list);
+      }
       groups.get(key).push(entry);
     }
     return [...groups.values()];
@@ -499,11 +599,12 @@
   // visible in the summary, and stacks the thread's messages newest-first when
   // expanded so the latest replies are immediately at the top.
   function threadDisclosure(entries, state, actions, byTarget, openKeys) {
-    const first = entries[0];
+    const first = entries.rootEntry || entries[0];
     const last = entries.at(-1);
     const key = `thread:${coordinate(first)}`;
     const details = element("details", "thread-disclosure");
     details.dataset.disclosureKey = key;
+    details.dataset.anchorVersion = `${entries.length}:${last.message.seq}`;
     details.open = openKeys.has(key) || entries.some((entry) => selected(entry, state));
 
     const metaRow = element(
@@ -530,6 +631,7 @@
     const summary = details.querySelector("summary");
     summary.dataset.focusKey = key;
     summary.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
       event.preventDefault();
       const closing = details.open;
       details.open = !closing;
@@ -551,6 +653,7 @@
     const details = element("details", "message-disclosure");
     details.dataset.messageKey = key;
     details.dataset.disclosureKey = `message:${key}`;
+    details.dataset.anchorVersion = `1:${message.seq}`;
     details.open = openKeys.has(`message:${key}`) || selected(entry, state);
     details.classList.toggle("is-selected", selected(entry, state));
     const meta = element("span", "message-meta",

@@ -21,7 +21,6 @@
     // timeWindow: null | { startMs: number, endMs: number }
     timeWindow: null,
     followLive: true,
-    timelineExpanded: true,
     viewMode: "threaded", // "threaded" | "stream"
     expandAllMessages: false,
     filterAgent: "",
@@ -327,11 +326,6 @@
       renderAll();
     },
 
-    setTimelineExpanded(expanded) {
-      state.timelineExpanded = Boolean(expanded);
-      renderAll();
-    },
-
     setFilterAgent(handle) {
       const clean = String(handle || "").replace(/^@/, "");
       state.filterAgent = state.filterAgent === clean ? "" : clean;
@@ -378,7 +372,6 @@
       if (sendPin) sendPin.checked = true;
       if (sendText) {
         sendText.value = text || "";
-        syncComposerHeight();
         sendText.focus();
       }
     },
@@ -654,11 +647,16 @@
     }
     const abortCtrl = new AbortController();
     state.pollAbort = abortCtrl;
+    const switchedSwarm = state.view && state.view.swarm && state.view.swarm !== swarmName;
     state.activeSwarm = swarmName;
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
     state.lastSeenSeqByTarget = loadLastSeenMap(swarmName);
+    if (switchedSwarm) {
+      state.view = null;
+      renderAll();
+    }
     writeHashState();
     renderLiveStatus();
 
@@ -776,18 +774,13 @@
     if (!wrap || !txt) return;
     wrap.className = `composer-feedback${kind ? ` ${kind}` : ""}`;
     txt.textContent = msg;
-    clearTimeout(setComposerFeedback._timer);
+      clearTimeout(setComposerFeedback._timer);
     if (msg && kind === "ok") {
       setComposerFeedback._timer = setTimeout(() => {
         wrap.className = "composer-feedback";
         txt.textContent = "";
       }, 4000);
     }
-  }
-
-  function syncComposerHeight() {
-    // Sizing is handled via CSS field-sizing: content in styles.css so no
-    // inline style mutation is needed under strict default-src 'self' CSP.
   }
 
   async function sendMessage() {
@@ -861,7 +854,6 @@
       await callMCPTool("send", sendArgs);
 
       textInput.value = "";
-      syncComposerHeight();
       pinCheck.checked = false;
       state.replyToSeq = 0;
       state.replyToTarget = "";
@@ -971,7 +963,6 @@
     });
 
     const sendText = document.getElementById("send-text");
-    sendText.addEventListener("input", syncComposerHeight);
     sendText.addEventListener("keydown", (e) => {
       if (e.isComposing) return;
       if (e.key === "Enter" && !e.shiftKey) {
@@ -987,7 +978,7 @@
       stageEl.addEventListener(
         "wheel",
         (e) => {
-          if (e.deltaY > 0 && stageEl.scrollTop > 80 && state.followLive) {
+          if (e.deltaY > 0 && state.followLive) {
             actions.setFollowLive(false);
           }
         },
@@ -996,12 +987,36 @@
       stageEl.addEventListener(
         "touchmove",
         () => {
-          if (state.followLive && stageEl.scrollTop > 120) {
+          if (state.followLive) {
             actions.setFollowLive(false);
           }
         },
         { passive: true }
       );
+      stageEl.addEventListener(
+        "scroll",
+        () => {
+          if (stageEl.scrollTop > 0 && state.followLive) {
+            actions.setFollowLive(false);
+          }
+        },
+        { passive: true }
+      );
+      const onScrollKey = (e) => {
+        if (!state.followLive) return;
+        const tag = e.target?.tagName || "";
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return;
+        if (
+          e.key === "ArrowDown" ||
+          e.key === "PageDown" ||
+          e.key === "End" ||
+          (e.key === " " && !e.shiftKey)
+        ) {
+          actions.setFollowLive(false);
+        }
+      };
+      stageEl.addEventListener("keydown", onScrollKey);
+      window.addEventListener("keydown", onScrollKey);
     }
 
     window.addEventListener("resize", () => {
