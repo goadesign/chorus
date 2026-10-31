@@ -1175,9 +1175,10 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
 	}
 
-	// 7. Participants registered with model "human" (such as from the browser UI)
+	// 7. Participants that declared model "human" (such as from the browser UI)
 	// are annotated with "(human)" on channel and direct-message wire lines so
 	// agents immediately distinguish human steering from peer worker messages.
+	// The role is free text and never decides it.
 	arch.call("join", map[string]any{
 		"channels": []string{"#ui-review"},
 	})
@@ -1185,7 +1186,15 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	human.call("join", map[string]any{
 		"channels": []string{"#ui-review"},
 		"model":    "human",
-		"role":     "Product Lead",
+	})
+	impostor := c.newAgent(0, swarm, "worker")
+	impostor.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"role":     "human",
+	})
+	impostor.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "role text alone",
 	})
 	human.call("send", map[string]any{
 		"to":   "#ui-review",
@@ -1196,15 +1205,18 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		"text": "Can you check the header spacing?",
 	})
 	archRead := arch.call("read", map[string]any{})
-	if !strings.Contains(archRead, "#ui-review#1 @raphael (human): Please prioritize accessibility and contrast") {
+	if !strings.Contains(archRead, "#ui-review#2 @raphael (human): Please prioritize accessibility and contrast") {
 		t.Fatalf("expected channel message from model=human to carry (human) tag, got:\n%s", archRead)
 	}
 	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
 		t.Fatalf("expected direct message from model=human to carry (human) tag, got:\n%s", archRead)
 	}
+	if !strings.Contains(archRead, "@worker: role text alone") {
+		t.Fatalf("expected role=human without model=human to stay untagged, got:\n%s", archRead)
+	}
 	parsedHuman := parseWireMessages(t, archRead)
-	if len(parsedHuman) != 2 {
-		t.Fatalf("expected parseWireMessages to parse both human messages, got %d", len(parsedHuman))
+	if len(parsedHuman) != 3 {
+		t.Fatalf("expected parseWireMessages to parse all three messages, got %d", len(parsedHuman))
 	}
 }
 

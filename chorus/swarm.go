@@ -71,6 +71,11 @@ const (
 	// eventTypeMessage is the Pulse stream event name used for all Chorus messages.
 	eventTypeMessage = "msg"
 
+	// humanModel is the declared model a person uses on join or who (the
+	// dashboard sends it). Messages published while the sender's declared model
+	// is humanModel are saved as human; nothing else marks a message human.
+	humanModel = "human"
+
 	// touchInterval throttles background agent LastSeenUnix updates in rmap so
 	// high-frequency tool calls do not write to Redis on every invocation.
 	touchInterval = 15 * time.Second
@@ -683,12 +688,15 @@ func (s *swarmHandle) appendUnderSemaphore(
 		}
 	}
 
+	// The sender's declared model at publication time decides, once and for
+	// good, whether this message came from a person; the role is free text and
+	// never decides it.
 	rawSender, _ := s.state.Get(agentMapKey(sender))
 	senderRec, _ := parseAgentRecord(rawSender)
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
-		Human:   senderRec.Model == "human",
+		Human:   senderRec.Model == humanModel,
 		Text:    text,
 		ReplyTo: replyTo,
 	})

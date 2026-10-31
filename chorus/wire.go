@@ -26,7 +26,10 @@ type (
 		Seq int `json:"seq"`
 		// Sender is the handle of the agent that sent the message (without '@').
 		Sender string `json:"sender"`
-		// Human is true when the sender's declared model was "human" at publication time.
+		// Human is true when the sender had declared model "human" when the
+		// message was published. It is saved with the message and never
+		// recomputed, so a later registration under the same handle cannot
+		// change it.
 		Human bool `json:"human,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`

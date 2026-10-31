@@ -114,8 +114,9 @@ type Message struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64
-	// True when the sender declared model "human" when the message was sent.
-	// Absent otherwise.
+	// True when the sender had declared model 'human' when the message was sent.
+	// Absent otherwise, including for messages sent before senders declared a
+	// model.
 	Human *bool
 }
 
@@ -127,7 +128,7 @@ type Pin struct {
 	Sender string
 	// Pinned message body exactly as sent.
 	Text string
-	// True when the sender declared model "human" when the message was pinned.
+	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool
 }
@@ -437,8 +438,9 @@ type jsonMessageTransport struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs *channelInt64Transport `json:"sent_at_ms"`
-	// True when the sender declared model "human" when the message was sent.
-	// Absent otherwise.
+	// True when the sender had declared model 'human' when the message was sent.
+	// Absent otherwise, including for messages sent before senders declared a
+	// model.
 	Human *bool `json:"human,omitempty"`
 }
 
@@ -480,7 +482,7 @@ type jsonPinTransport struct {
 	Sender *string `json:"sender"`
 	// Pinned message body exactly as sent.
 	Text *string `json:"text"`
-	// True when the sender declared model "human" when the message was pinned.
+	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool `json:"human,omitempty"`
 }
@@ -2084,7 +2086,7 @@ func validateChannelJSONValue4(path string, value any, description string) error
 		case "human":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when the sender declared model \"human\" when the message was sent. Absent otherwise.",
+				typed[key], "True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.",
 			); err != nil {
 				return err
 			}
@@ -2160,7 +2162,7 @@ func validateChannelJSONValue5(path string, value any, description string) error
 		case "human":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when the sender declared model \"human\" when the message was pinned. Absent otherwise.",
+				typed[key], "True when the sender had declared model 'human' when the message was pinned. Absent otherwise.",
 			); err != nil {
 				return err
 			}

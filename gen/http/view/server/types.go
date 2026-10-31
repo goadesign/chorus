@@ -76,7 +76,7 @@ type PinResponseBody struct {
 	Sender string `form:"sender" json:"sender" xml:"sender"`
 	// Pinned message body exactly as sent.
 	Text string `form:"text" json:"text" xml:"text"`
-	// True when the sender declared model "human" when the message was pinned.
+	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
@@ -110,8 +110,9 @@ type MessageResponseBody struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64 `form:"sent_at_ms" json:"sent_at_ms" xml:"sent_at_ms"`
-	// True when the sender declared model "human" when the message was sent.
-	// Absent otherwise.
+	// True when the sender had declared model 'human' when the message was sent.
+	// Absent otherwise, including for messages sent before senders declared a
+	// model.
 	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
 

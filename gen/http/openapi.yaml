@@ -354,7 +354,7 @@ definitions:
         properties:
             human:
                 type: boolean
-                description: True when the sender declared model "human" when the message was sent. Absent otherwise.
+                description: True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.
                 example: true
             reply_to:
                 type: integer
@@ -400,7 +400,7 @@ definitions:
         properties:
             human:
                 type: boolean
-                description: True when the sender declared model "human" when the message was pinned. Absent otherwise.
+                description: True when the sender had declared model 'human' when the message was pinned. Absent otherwise.
                 example: true
             sender:
                 type: string

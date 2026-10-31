@@ -68,7 +68,7 @@ type (
 		ReplyTo *int `json:"reply_to"`
 		// SentAtMs is the Redis storage time in Unix milliseconds.
 		SentAtMs int64 `json:"sent_at_ms"`
-		// Human is true when the sender had role "human" when the message was sent.
+		// Human is true when the sender had declared model "human" when the message was sent.
 		Human *bool `json:"human"`
 	}
 )
@@ -86,7 +86,7 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	lead.send("#auth", "@api please wire ConsumeChallenge", 1)
 	lead.send("@api", "use GETDEL", 0)
 	human := cluster.newAgent(0, "auth", "raphael")
-	human.call("join", map[string]any{"channels": []string{"#auth"}, "model": "human", "role": "Product Lead"})
+	human.call("join", map[string]any{"channels": []string{"#auth"}, "model": "human", "role": "Product owner"})
 	human.call("send", map[string]any{"to": "#auth", "text": "Please focus on contrast"})
 
 	base := cluster.replicas[0].httpServer.URL
