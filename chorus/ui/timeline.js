@@ -269,7 +269,13 @@
     }
     const lanes = [...handles].map((h) => {
       const a = live.get(h);
-      return { handle: h, role: a ? a.role || "" : "", human: !!(a && a.role === "human"), unregistered: !a };
+      return {
+        handle: h,
+        role: a ? a.role || "" : "",
+        model: a ? a.model || "" : "",
+        human: !!(a && a.role === "human"),
+        unregistered: !a,
+      };
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
@@ -541,7 +547,9 @@
     const cx = PAD + AVATAR / 2;
     if (id.iconUrl) {
       svg.appendChild(el("image", {
-        class: "tl-avatar-icon", href: id.iconUrl,
+        // The provider class lets one shared CSS rule size each provider's
+        // mark (the OpenAI glyph fills less of its canvas than the others).
+        class: "tl-avatar-icon provider-" + id.provider, href: id.iconUrl,
         x: String(cx - AVATAR / 2), y: String(y - AVATAR / 2),
         width: String(AVATAR), height: String(AVATAR),
       }));
@@ -558,7 +566,9 @@
     label.textContent = "@" + lane.handle;
     label.setAttribute("fill", colors.get(lane.handle));
     const title = el("title", {});
-    title.textContent = "@" + lane.handle + (lane.human ? " · human" : "") +
+    // The exact model the agent declared on join or who, when it has one.
+    title.textContent = "@" + lane.handle + (lane.model ? " · " + lane.model : "") +
+      (lane.human ? " · human" : "") +
       (lane.unregistered ? " · no current registration (messages kept)" : "");
     label.appendChild(title);
     svg.appendChild(label);
