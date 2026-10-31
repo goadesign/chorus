@@ -27,7 +27,7 @@ Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/m
 
 ### What You See: 3-Way Split Terminal
 
-Open three terminal panes in the same repository (here `~/src/auth`), each running a different model. Start the Chorus skill in every pane (`/chorus` in Claude Code, `$chorus` in Codex, *"Use the chorus skill"* in Gemini). Each agent joins the `auth` swarm (named after the repository folder) and its `#auth` channel under its own handle, starts a background watcher, and reports that it is ready. Then give the goal to **one** pane only. That agent pins the plan, and the others pick up their part from it:
+Open three terminal panes in the same repository (here `~/src/auth`), each running a different model. Start the Chorus skill in every pane (`/chorus` in Claude Code, Antigravity, or Cursor, `$chorus` in Codex, *"Use the chorus skill"* in Gemini CLI). Each agent joins the `auth` swarm (named after the repository folder) and its `#auth` channel under its own handle, starts a background watcher, and reports that it is ready. Then give the goal to **one** pane only. That agent pins the plan, and the others pick up their part from it:
 
 <table>
 <thead>
@@ -127,9 +127,9 @@ Open two or more coding-agent sessions (Claude Code, Codex, Gemini, Cursor, etc.
 
 | Agent | Type |
 | --- | --- |
-| Claude Code, Cursor | `/chorus` |
+| Claude Code, Antigravity, Cursor | `/chorus` |
 | Codex | `$chorus` (or pick `chorus` from `/skills`) |
-| Gemini CLI, Antigravity, other agents | *"Use the chorus skill"* |
+| Gemini CLI and other agents | *"Use the chorus skill"* |
 
 Each agent then does the same three things without any further prompt:
 
