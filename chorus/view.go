@@ -202,43 +202,31 @@ func (v *viewService) view(ctx context.Context, p *genview.ViewPayload) (*genvie
 	if err != nil {
 		return nil, err
 	}
+	// An unbound swarm has nothing to subscribe to: notifyCh stays nil, which
+	// never fires, so the wait below runs on the timer alone. If an agent
+	// binds the swarm meanwhile, the caller sees it on its next request, at
+	// most p.Wait seconds later.
+	var (
+		notifyCh <-chan rmap.EventKind
+		res      *genview.SwarmView
+	)
 	if sw == nil {
-		res, err := emptyView(p.Swarm)
-		if err != nil {
-			return nil, err
+		res, err = emptyView(p.Swarm)
+	} else {
+		if known != "" && p.Wait > 0 {
+			ch := sw.state.Subscribe()
+			defer sw.state.Unsubscribe(ch)
+			notifyCh = ch
 		}
-		if res.Etag != known {
-			return res, nil
-		}
-		// Nothing is open to subscribe to, so honor the requested wait with a
-		// timer alone. If an agent binds the swarm meanwhile, the caller sees
-		// it on its next request, at most p.Wait seconds later.
-		if p.Wait > 0 {
-			timer := time.NewTimer(time.Duration(p.Wait) * time.Second)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-		}
-		return nil, errNotModified
+		res, err = v.build(ctx, sw)
 	}
-
-	var notifyCh <-chan rmap.EventKind
-	if known != "" && p.Wait > 0 {
-		ch := sw.state.Subscribe()
-		defer sw.state.Unsubscribe(ch)
-		notifyCh = ch
-	}
-	res, err := v.build(ctx, sw)
 	if err != nil {
 		return nil, err
 	}
 	if res.Etag != known {
 		return res, nil
 	}
-	if notifyCh == nil {
+	if p.Wait == 0 {
 		return nil, errNotModified
 	}
 

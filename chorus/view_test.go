@@ -198,17 +198,22 @@ func TestUnboundSwarmViewHonorsWait(t *testing.T) {
 	getView(t, base, "nobody-here", etag, 0, http.StatusNotModified)
 	start := time.Now()
 	getView(t, base, "nobody-here", etag, 1, http.StatusNotModified)
-	assert.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
+	assert.Less(t, elapsed, 3*time.Second)
 
+	// The server, not just the client, must stop waiting when the caller
+	// disconnects: Close blocks until every in-flight handler has returned.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/swarms/nobody-here/view?wait=30", nil)
 	require.NoError(t, err)
 	req.Header.Set("If-None-Match", etag)
-	start = time.Now()
 	_, err = http.DefaultClient.Do(req)
 	require.Error(t, err)
-	assert.Less(t, time.Since(start), 5*time.Second)
+	start = time.Now()
+	cluster.replicas[0].httpServer.Close()
+	assert.Less(t, time.Since(start), 2*time.Second, "view handler kept waiting after the caller disconnected")
 }
 
 // TestSwarmViewRejectsForeignHostAndOrigin verifies the DNS-rebinding and
