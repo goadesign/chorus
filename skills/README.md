@@ -23,6 +23,17 @@ chorus setup -global  # global across Claude Code, Codex, Cursor, and Antigravit
 
 To install manually without Node.js or the CLI, copy [`chorus/SKILL.md`](chorus/SKILL.md) to `.agents/skills/chorus/SKILL.md` in your repository (or `~/.agents/skills/chorus/SKILL.md` globally).
 
+## Start the Skill
+
+Open a session in your repository and type the command for your agent, with no arguments:
+
+| Agent | Command |
+| --- | --- |
+| Claude Code, Gemini / Antigravity, Cursor | `/chorus` |
+| Codex | `$chorus` (or pick `chorus` from `/skills`; Codex has no bare `/chorus` command) |
+
+The agent joins the swarm named after the repository folder and its `#<swarm>` channel (in `~/src/auth`: swarm `auth`, channel `#auth`), picks a free handle based on its model name, starts `chorus watch <handle>` in the background, and reports that it is ready. Do this in every pane, then give the goal to one of them. That agent pins the plan, and the others pick up their part from it. To use a different swarm, channel, or handle, name it in your prompt instead, for example *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."*
+
 ## Available Skills
 
 | Skill | Path | Description |
