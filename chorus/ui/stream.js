@@ -9,11 +9,26 @@
     restoreScrollSnapshot,
   });
 
+  // Displayed previews belong only to this page visit and the retained messages
+  // in the current swarm. Displaying a preview does not mean reading its text.
+  const displayedPreviews = new Set();
+  // Switching swarms starts a new display context even when sequence IDs match.
+  let previewSwarm = "";
+  // The observer is replaced after each render so removed rows are not retained.
+  let previewObserver = null;
+  document.addEventListener("visibilitychange", observeUnshownPreviews);
+
   // render updates the message surfaces without keeping another copy of swarm
   // data. Disclosure choices and reading position belong to the existing DOM.
   function render(els, state, actions) {
+    previewObserver?.disconnect();
+    previewObserver = null;
+    if (previewSwarm !== state.activeSwarm) {
+      displayedPreviews.clear();
+      previewSwarm = state.activeSwarm;
+    }
     if (state.view === null) {
-      for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) {
+      for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.detailsEl]) {
         root.replaceChildren();
       }
       delete els.detailsEl.dataset.agent;
@@ -23,6 +38,10 @@
       return;
     }
     const entries = retainedMessages(state.view);
+    const retainedKeys = new Set(entries.map(coordinate));
+    for (const key of displayedPreviews) {
+      if (!retainedKeys.has(key)) displayedPreviews.delete(key);
+    }
     const targetEntries = selectedMessages(entries, state);
     const visible = targetEntries.filter((entry) => matches(entry, state));
     const scrollSnapshot = els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl);
@@ -30,12 +49,13 @@
     renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
-    renderNewMessages(els.newSinceEl, targetEntries, state, actions);
     const selectionChanged = renderMessages(els.streamEl, visible, targetEntries, state, actions);
     renderSelection(els.detailsEl, state, actions, entries, visible);
 
     restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot, state);
     revealSelectedMessage(els.streamEl, state, selectionChanged);
+    previewObserver = new IntersectionObserver(exposePreviews, { root: els.scrollEl });
+    observeUnshownPreviews();
 
     const target = state.selectedTarget;
     if (target?.kind === "channel") {
@@ -524,28 +544,57 @@
     ]);
   }
 
-  // renderNewMessages separates the retained new-message count from the
-  // "Jump to new" and "Mark seen" actions so jumping never silently marks seen.
-  function renderNewMessages(root, entries, state, actions) {
-    const fresh = entries.filter((entry) => Object.hasOwn(state.lastSeenSeqByTarget, entry.target)
-      && entry.message.seq > state.lastSeenSeqByTarget[entry.target]);
-    if (fresh.length === 0) {
-      root.replaceChildren();
-      return;
+  // preparePreviewCue names only the text actually shown in this summary: one
+  // message, or a thread's root and latest message. Hidden replies are separate.
+  function preparePreviewCue(summary, first, latest = first) {
+    summary.dataset.previewKey = coordinate(first);
+    summary.dataset.latestPreviewKey = coordinate(latest);
+    updatePreviewCue(summary);
+  }
+
+  // updatePreviewCue keeps the small dot and its accessible description tied to
+  // whether this summary's previews have appeared during the current visit.
+  function updatePreviewCue(summary) {
+    const unshown = !displayedPreviews.has(summary.dataset.previewKey)
+      || !displayedPreviews.has(summary.dataset.latestPreviewKey);
+    summary.classList.toggle("has-unshown-preview", unshown);
+    if (unshown) {
+      summary.setAttribute("aria-description", "Preview not yet shown during this visit");
+    } else {
+      summary.removeAttribute("aria-description");
     }
-    const newest = fresh.at(-1);
-    const bar = element("div", "new-messages-bar",
-      element("span", "new-messages-count", `${fresh.length} new since you looked`),
-      actionButton([svgIcon("arrowUp", "icon icon-xs"), "Jump to new"], "jump-new-messages", () => {
-        actions.selectMessage(newest.target, newest.message.seq);
-      }),
-      iconButton("check", "Mark seen", "new-messages", () => {
-        for (const target of new Set(fresh.map((entry) => entry.target))) {
-          const latest = entries.filter((entry) => entry.target === target).at(-1);
-          actions.markSeen(target, latest.message.seq);
-        }
-      }));
-    replaceKeepingFocus(root, [bar]);
+    return unshown;
+  }
+
+  // observeUnshownPreviews also runs when a background tab becomes visible:
+  // observing again requests fresh intersections even if no row moved.
+  function observeUnshownPreviews() {
+    if (!previewObserver || document.visibilityState !== "visible") return;
+    previewObserver.disconnect();
+    for (const summary of previewObserver.root.querySelectorAll("summary.has-unshown-preview")) {
+      previewObserver.observe(summary);
+    }
+  }
+
+  // exposePreviews settles cues only for summaries inside the visible stage.
+  // A collapsed thread never exposes the summaries of its hidden children.
+  function exposePreviews(changes, observer) {
+    if (observer !== previewObserver || document.visibilityState !== "visible") return;
+    for (const change of changes) {
+      if (!change.isIntersecting || change.intersectionRect.width <= 0
+        || change.intersectionRect.height <= 0) continue;
+      const summary = change.target;
+      let parent = summary.parentElement.parentElement;
+      while (parent && (parent.tagName !== "DETAILS" || parent.open)) parent = parent.parentElement;
+      if (parent) continue;
+      displayedPreviews.add(summary.dataset.previewKey);
+      displayedPreviews.add(summary.dataset.latestPreviewKey);
+    }
+    // A thread preview and an individual message can show the same text. Keep
+    // their dots consistent without retaining another map of rendered rows.
+    for (const summary of observer.root.querySelectorAll("summary[data-preview-key]")) {
+      if (!updatePreviewCue(summary)) observer.unobserve(summary);
+    }
   }
 
   // isVisibleAnchorRow returns true for collapsed thread rows and visible
@@ -731,6 +780,7 @@
 
     const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, "", lastFromHuman), contentCol);
     summary.dataset.focusKey = key;
+    preparePreviewCue(summary, first, last);
     details.append(summary);
     details.addEventListener("toggle", () => {
       if (!details.open && entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
@@ -738,7 +788,13 @@
 
     const body = element("div", "thread-messages");
     for (const entry of entries.toReversed()) body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
-    details.append(body);
+    const controls = element("div", "message-actions");
+    const reply = actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply-thread:${key}`, () => {
+      actions.setReplyTo(last.target, last.message.seq, last.message.sender);
+    });
+    reply.setAttribute("aria-label", `Reply to @${last.message.sender} in ${last.target} message #${last.message.seq}`);
+    controls.append(reply);
+    details.append(controls, body);
     return details;
   }
 
@@ -772,6 +828,7 @@
 
     const summary = element("summary", "message-summary", avatarNode(message.sender, state, "", fromHuman), contentCol);
     summary.dataset.focusKey = `message:${key}`;
+    preparePreviewCue(summary, entry);
     details.append(summary);
     details.addEventListener("toggle", () => {
       if (!details.open && selected(entry, state)) actions.selectMessage(null, 0);
