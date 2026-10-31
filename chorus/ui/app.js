@@ -26,8 +26,6 @@
     filterAgent: "",
     filterArtifact: "",
     searchQuery: "",
-    // lastSeenSeqByTarget: { [target]: number } for activeSwarm
-    lastSeenSeqByTarget: {},
     replyToSeq: 0,
     replyToTarget: "",
     replyToSender: "",
@@ -43,7 +41,6 @@
     code: ["m16 18 6-6-6-6", "m8 6-6 6 6 6"],
     check: ["M20 6 9 17l-5-5"],
     copy: ["M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2", "M16 4h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"],
-    arrowUp: ["m5 12 7-7 7 7", "M12 19V5"],
   };
 
   function svgIcon(name, className = "icon") {
@@ -208,41 +205,6 @@
     return pairs;
   }
 
-  function loadLastSeenMap(swarm) {
-    if (!swarm) return {};
-    try {
-      const raw = localStorage.getItem(`chorus_seen:${swarm}`);
-      const parsed = raw ? JSON.parse(raw) : null;
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch { return {}; }
-  }
-
-  function saveLastSeenMap(swarm, map) {
-    if (!swarm) return;
-    try { localStorage.setItem(`chorus_seen:${swarm}`, JSON.stringify(map)); } catch {}
-  }
-
-  function initializeBaselineSeenIfEmpty(view) {
-    if (!view || !state.activeSwarm) return;
-    const map = state.lastSeenSeqByTarget;
-    let changed = false;
-    for (const ch of view.channels || []) {
-      if (map[ch.name] === undefined) {
-        const msgs = ch.messages || [];
-        map[ch.name] = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
-        changed = true;
-      }
-    }
-    for (const ib of view.inboxes || []) {
-      const key = `@${ib.recipient}`;
-      if (map[key] === undefined) {
-        map[key] = ib.head_seq || 0;
-        changed = true;
-      }
-    }
-    if (changed) saveLastSeenMap(state.activeSwarm, map);
-  }
-
   function readHashState() {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     return { swarm: params.get("swarm") || "", target: params.get("target") || "", mode: params.get("mode") || "" };
@@ -399,26 +361,6 @@
       await callMCPTool("send", { agent, to: channelName, text: cleanText, pin: true, wait_sec: 0 });
       if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     },
-
-    markSeen(target, seq) {
-      if (target && seq > 0) {
-        state.lastSeenSeqByTarget[target] = seq;
-      } else if (state.selectedTarget?.kind === "channel") {
-        const ch = (state.view?.channels || []).find((c) => c.name === state.selectedTarget.name);
-        if (ch) {
-          const msgs = ch.messages || [];
-          state.lastSeenSeqByTarget[ch.name] = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
-        }
-      } else if (state.selectedTarget?.kind === "dm") {
-        const pair = state.pairedDMs.find((p) => p.pairKey === state.selectedTarget.pairKey);
-        if (pair) {
-          if (pair.inboxA) state.lastSeenSeqByTarget[`@${pair.inboxA.recipient}`] = pair.inboxA.head_seq || 0;
-          if (pair.inboxB) state.lastSeenSeqByTarget[`@${pair.inboxB.recipient}`] = pair.inboxB.head_seq || 0;
-        }
-      }
-      saveLastSeenMap(state.activeSwarm, state.lastSeenSeqByTarget);
-      renderAll();
-    },
   };
 
   function renderReplyChip() {
@@ -493,14 +435,11 @@
     const tabNodes = [];
     for (const ch of channels) {
       const isActive = state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
-      const seenSeq = state.lastSeenSeqByTarget[ch.name];
       const msgs = ch.messages || [];
-      const headSeq = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
-      const newCount = seenSeq !== undefined ? Math.max(0, headSeq - seenSeq) : 0;
       tabNodes.push(
         el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }) },
           el("span", {}, ch.name),
-          el("span", { className: `count-pill${newCount > 0 ? " attention" : ""}` }, newCount > 0 ? `+${newCount}` : String(msgs.length)))
+          el("span", { className: "count-pill" }, String(msgs.length)))
       );
     }
     for (const pair of pairedDMs) {
@@ -566,7 +505,6 @@
           pinEl: document.getElementById("pin-container"),
           mentionsEl: document.getElementById("mentions-artifacts-container"),
           streamEl,
-          newSinceEl: document.getElementById("new-since-banner"),
           titleEl: document.getElementById("active-title"),
           subtitleEl: document.getElementById("active-subtitle"),
           scrollSnapshot,
@@ -599,7 +537,6 @@
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
-    state.lastSeenSeqByTarget = loadLastSeenMap(swarmName);
     writeHashState();
     if (switchedSwarm) {
       state.view = null;
@@ -652,8 +589,6 @@
         state.connectionState = "live";
         state.retryCountdownSec = 0;
         retryDelaySec = 1;
-
-        initializeBaselineSeenIfEmpty(viewData);
 
         try {
           await fetchSwarms();
