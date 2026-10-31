@@ -310,6 +310,8 @@
     if (!mem || mem.swarm !== swarm) {
       mem = { swarm, lastLive: null, frozen: null };
       viewports.set(rootEl, mem);
+      // A drag started in another swarm must not apply its window here.
+      dropDrag(rootEl);
     }
     return mem;
   }
@@ -410,6 +412,8 @@
         startX: ev.clientX,
         base: win,
         original: state.timeWindow || null,
+        originalFollow: state.followLive,
+        swarm: state.view.swarm,
         axis,
         plotW,
         actions,
@@ -421,6 +425,15 @@
       rootEl.setPointerCapture(ev.pointerId);
     });
     svg.appendChild(brush);
+  }
+
+  // dropDrag forgets rootEl's drag, cancelling any frame update it scheduled
+  // so a stale window can never be applied afterwards.
+  function dropDrag(rootEl) {
+    const d = drags.get(rootEl);
+    if (!d) return;
+    drags.delete(rootEl);
+    if (d.frame) cancelAnimationFrame(d.frame);
   }
 
   // installDrag adds the pointer listeners for window drags to rootEl once.
@@ -445,15 +458,23 @@
     const end = (ev, cancelled) => {
       const d = drags.get(rootEl);
       if (!d || ev.pointerId !== d.pointerId) return;
-      drags.delete(rootEl);
-      if (d.frame) cancelAnimationFrame(d.frame);
+      dropDrag(rootEl);
       if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
-      // An interrupted drag puts back the filter that was set before it.
-      if (cancelled) d.actions.setTimeWindow(d.original);
-      else if (d.next) d.actions.setTimeWindow(d.next);
+      if (cancelled) {
+        // An interrupted drag restores exactly what was set before it: the
+        // filter and the follow mode (setTimeWindow also pauses following).
+        d.actions.setTimeWindow(d.original);
+        d.actions.setFollowLive(d.originalFollow);
+      } else if (d.next) {
+        d.actions.setTimeWindow(d.next);
+      }
     };
     rootEl.addEventListener("pointerup", (ev) => end(ev, false));
     rootEl.addEventListener("pointercancel", (ev) => end(ev, true));
+    // Losing the capture (another element took it, or the window lost
+    // focus) ends the drag the same way as a cancel. After a normal
+    // pointerup the drag is already gone, so this does nothing.
+    rootEl.addEventListener("lostpointercapture", (ev) => end(ev, true));
   }
 
   // timeAt inverts axis.pos by binary search over real time.
