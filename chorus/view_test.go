@@ -186,6 +186,31 @@ func TestSwarmListAndUnknownSwarm(t *testing.T) {
 	assert.Empty(t, doc.Inboxes)
 }
 
+// TestUnboundSwarmViewHonorsWait verifies that a conditional request for a
+// swarm no agent is bound to waits for the requested time before answering
+// 304, so a polling page cannot spin, and that it stops waiting when the
+// caller goes away.
+func TestUnboundSwarmViewHonorsWait(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	base := cluster.replicas[0].httpServer.URL
+
+	_, etag := getView(t, base, "nobody-here", "", 0, http.StatusOK)
+	getView(t, base, "nobody-here", etag, 0, http.StatusNotModified)
+	start := time.Now()
+	getView(t, base, "nobody-here", etag, 1, http.StatusNotModified)
+	assert.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/swarms/nobody-here/view?wait=30", nil)
+	require.NoError(t, err)
+	req.Header.Set("If-None-Match", etag)
+	start = time.Now()
+	_, err = http.DefaultClient.Do(req)
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 // TestSwarmViewRejectsForeignHostAndOrigin verifies the DNS-rebinding and
 // cross-site defenses on the dashboard routes.
 func TestSwarmViewRejectsForeignHostAndOrigin(t *testing.T) {

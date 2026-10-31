@@ -207,10 +207,22 @@ func (v *viewService) view(ctx context.Context, p *genview.ViewPayload) (*genvie
 		if err != nil {
 			return nil, err
 		}
-		if res.Etag == known {
-			return nil, errNotModified
+		if res.Etag != known {
+			return res, nil
 		}
-		return res, nil
+		// Nothing is open to subscribe to, so honor the requested wait with a
+		// timer alone. If an agent binds the swarm meanwhile, the caller sees
+		// it on its next request, at most p.Wait seconds later.
+		if p.Wait > 0 {
+			timer := time.NewTimer(time.Duration(p.Wait) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		return nil, errNotModified
 	}
 
 	var notifyCh <-chan rmap.EventKind
