@@ -413,9 +413,15 @@
       const m = bySeq.get(p.read_seq);
       const t = m ? m.sent_at_ms : win.startMs;
       const x = mx(Math.min(win.endMs, Math.max(win.startMs, t)));
-      const mark = el("path", {
+      // A short bar centered on the member's own lane line, so it cannot be
+      // read as belonging to the lane above or below.
+      const mark = el("rect", {
         class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
-        d: `M${x.toFixed(1)},${y - 9} l5,-6 l-10,0 z`,
+        x: (x - 1.5).toFixed(1),
+        y: String(y - LANE_H / 2 + 3),
+        width: "3",
+        height: String(LANE_H - 6),
+        rx: "1.5",
       });
       const title = el("title", {});
       title.textContent = p.behind > 0
