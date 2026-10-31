@@ -16,8 +16,10 @@ import (
 	"time"
 
 	genchorus "github.com/goadesign/chorus/gen/chorus"
+	genviewsrv "github.com/goadesign/chorus/gen/http/view/server"
 	genmcpchorussrv "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/server"
 	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
+	genview "github.com/goadesign/chorus/gen/view"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -148,8 +150,11 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // NewHTTPHandler mounts the generated Goa-AI MCP 2026-07-28 JSON-RPC server for
-// svc at POST /mcp and a liveness probe reporting X-Chorus-Version at
-// GET /healthz, returning the resulting http.Handler.
+// svc at POST /mcp, the read-only dashboard data routes GET /swarms and
+// GET /swarms/{swarm}/view, and a liveness probe reporting X-Chorus-Version at
+// GET /healthz, returning the resulting http.Handler. origins lists the
+// browser Origin values allowed in addition to the dashboard's own loopback
+// origin; the dashboard routes also require a loopback Host header.
 func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	chorusEndpoints := genchorus.NewEndpoints(svc)
 	mcpAdapter := genmcpchorus.NewMCPAdapter(chorusEndpoints, nil)
@@ -164,6 +169,16 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		origins...,
 	)
 	genmcpchorussrv.Mount(mux, srv)
+	viewSrv := genviewsrv.New(
+		genview.NewEndpoints(&viewService{svc: svc}),
+		mux,
+		goahttp.RequestDecoder,
+		goahttp.ResponseEncoder,
+		defaultErrorHandler,
+		nil,
+	)
+	viewSrv.Use(viewGuard(origins))
+	genviewsrv.Mount(mux, viewSrv)
 	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Chorus-Version", genchorus.APIVersion)

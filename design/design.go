@@ -9,7 +9,7 @@
 // structuredContent on the wire.
 //
 // A separate read-only HTTP service ("view") serves the browser dashboard on
-// the same listener: GET /swarms lists swarms that have registered agents, and
+// the same listener: GET /swarms lists swarms that agents joined, and
 // GET /swarms/{swarm}/view returns one swarm's agents, channels, direct-message
 // inboxes, and retained messages as JSON. It never registers a handle, binds a
 // handle to a swarm, or moves a read position, and it is not an MCP tool, so
@@ -388,7 +388,7 @@ var _ = Service("view", func() {
 	})
 
 	Method("swarms", func() {
-		Description("List the swarms that currently have registered agents, sorted by name.")
+		Description("List the swarms that agents joined or called who in, sorted by name. A listed swarm may have no live agents left until its agents' records expire.")
 		Result(func() {
 			Attribute("swarms", ArrayOf(String), "Swarm names, sorted.", func() {
 				Example([]string{"chorus"})

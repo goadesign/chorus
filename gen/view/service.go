@@ -24,7 +24,8 @@ import (
 // Serves the read-only browser dashboard data. Only requests addressed to a
 // loopback host are accepted; it never changes swarm state.
 type Service interface {
-	// List the swarms that currently have registered agents, sorted by name.
+	// List the swarms that agents joined or called who in, sorted by name. A
+	// listed swarm may have no live agents left until its agents' records expire.
 	Swarms(context.Context) (res *SwarmsResult, err error)
 	// Return one swarm's agents, channels, inboxes, and retained messages. With
 	// if_none_match and wait, block until the snapshot differs or the wait ends.
