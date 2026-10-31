@@ -45,6 +45,18 @@ const (
 	defaultWatchWait = 5 * time.Minute
 	// maxReadWaitSec is the maximum wait_sec accepted by a single MCP read call.
 	maxReadWaitSec = 600
+	// watchReconnectBackoff is the delay between reconnect attempts when a
+	// blocking "chorus watch" stream is interrupted by a daemon restart.
+	watchReconnectBackoff = 200 * time.Millisecond
+	// watchReconnectWindow bounds how long a blocking "chorus watch" waits for
+	// the server to come back up after a transport disconnect before failing.
+	watchReconnectWindow = 3 * time.Second
+)
+
+var (
+	// errWatchToolError marks application-level MCP tool errors returned by
+	// "read" so runWatch fails fast instead of retrying them as transport drops.
+	errWatchToolError = errors.New("watch tool error")
 )
 
 // runUp starts Chorus in the background (installing a user service when
@@ -222,6 +234,7 @@ func runWatch(args []string, out io.Writer) error {
 	defer stopSignals()
 
 	deadline := time.Now().Add(wait)
+	var reconnectDeadline time.Time
 	for {
 		chunkSec := 0
 		if wait > 0 {
@@ -237,12 +250,39 @@ func runWatch(args []string, out io.Writer) error {
 
 		text, err := callWatchRead(sigCtx, parsedURL, agent, swarm, from, chunkSec, limit, mentionsOnly)
 		if err != nil {
-			if sigCtx.Err() != nil && errors.Is(err, context.Canceled) {
+			if sigCtx.Err() != nil {
 				return nil
 			}
-			return err
+			if wait == 0 || errors.Is(err, errWatchToolError) {
+				return err
+			}
+			now := time.Now()
+			if reconnectDeadline.IsZero() {
+				reconnectDeadline = now.Add(watchReconnectWindow)
+			}
+			retryLimit := reconnectDeadline
+			if deadline.Before(retryLimit) {
+				retryLimit = deadline
+			}
+			sleepDur := min(watchReconnectBackoff, time.Until(retryLimit))
+			if sleepDur <= 0 {
+				return err
+			}
+			select {
+			case <-sigCtx.Done():
+				return nil
+			case <-time.After(sleepDur):
+				if !time.Now().Before(retryLimit) {
+					return err
+				}
+				continue
+			}
 		}
+		reconnectDeadline = time.Time{}
 		if text != "" && text != "none" {
+			if wait > 0 {
+				text += "\n[watch exited — re-arm in background: " + formatWatchRearmCommand(agent, swarm, from, wait, mentionsOnly) + "]"
+			}
 			if _, err := fmt.Fprintln(out, text); err != nil {
 				return fmt.Errorf("write watch output: %w", err)
 			}
@@ -252,6 +292,32 @@ func runWatch(args []string, out io.Writer) error {
 			return nil
 		}
 	}
+}
+
+// formatWatchRearmCommand renders the exact "chorus watch" command string an
+// agent should run to re-arm its background watcher after a one-shot wakeup.
+func formatWatchRearmCommand(agent, swarm, from string, wait time.Duration, mentionsOnly bool) string {
+	var b strings.Builder
+	b.WriteString("chorus watch -agent ")
+	b.WriteString(agent)
+	if swarm != "" && swarm != "default" {
+		b.WriteString(" -swarm ")
+		b.WriteString(swarm)
+	}
+	if from != "" {
+		b.WriteString(" -from ")
+		b.WriteString(from)
+	}
+	if mentionsOnly {
+		b.WriteString(" -mentions")
+	}
+	waitStr := wait.String()
+	if wait >= time.Minute && wait%time.Minute == 0 {
+		waitStr = strings.TrimSuffix(waitStr, "0s")
+	}
+	b.WriteString(" -wait ")
+	b.WriteString(waitStr)
+	return b.String()
 }
 
 // setupMCPConfigs merges the Chorus MCP server entry into the project's
@@ -824,7 +890,10 @@ func callWatchRead(
 		if len(complete.Content) > 0 && complete.Content[0].Text != nil {
 			errText = *complete.Content[0].Text
 		}
-		return "", errors.New(errText)
+		if strings.Contains(errText, context.Canceled.Error()) {
+			return "", errors.New(errText)
+		}
+		return "", fmt.Errorf("%w: %s", errWatchToolError, errText)
 	}
 	if len(complete.Content) == 0 || complete.Content[0].Text == nil {
 		return "", nil

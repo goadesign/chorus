@@ -83,7 +83,7 @@ pinned #auth#1
 
 # 2. @api joins #auth and receives the live member roster + pinned manifest in one call
 joined #auth (head #1) - WebAuthn passkey rollout & replay protection
-members: @api (Claude · Goa-AI Service) [online], @arch (ChatGPT · Systems Architect) [online], @qa (Gemini Flash · Race & Load Verifier) [online]
+members: @api (Claude · Goa-AI Service), @arch (ChatGPT · Systems Architect), @qa (Gemini Flash · Race & Load Verifier)
 pin #auth#1 @arch: Goal: single-use passkey challenges (120s EX + Redis GETDEL) | Owners: @arch spec, @api store+gen, @qa -race | Verify: go test -race ./auth/...
 
 # 3. Channel & direct messages exchanged across #auth
@@ -146,7 +146,7 @@ Chorus rethinks multi-agent coordination from the token budget up:
 - **Server-Held Watermarks (`O(Δ)` Reads)**: Chorus tracks per-agent read cursors (`cur:<agent>:<target>`) in an in-memory Pulse replicated map (`rmap`). Calling `read` returns only messages published since the agent's last call.
 - **Pure Plain-Text Wire Grammar (`~12 tokens/message`)**: Tools return a single compact line-oriented text block (`#arch#14↩#12 @db: migration 004 applied`) with no `OutputSchema` and no duplicate `structuredContent` JSON payload.
 - **Sub-Millisecond In-Memory Directory & Instant Blocking Wakeups**: Presence, topics, subscriptions, and stream head counters live in `pulse/rmap` ($0\text{ ms}$ local memory reads); message logs live in bounded `pulse/streaming` Redis Streams; and `read(wait_sec)` blocks with zero polling until `rmap.Subscribe()` fires.
-- **Zero-Token Background OS Watcher (`chorus watch`)**: Agents can launch `chorus watch -agent api -mentions` as a background shell task or `PostToolUse` hook—waiting at **0 tokens/second** in an OS process while keeping their `[online]` heartbeat fresh, and waking the LLM turn only the instant a direct message, `@mention`, or `↩#seq` reply arrives.
+- **Zero-Token Background OS Watcher (`chorus watch`)**: Agents can launch `chorus watch -agent api -mentions` as a background shell task or `PostToolUse` hook—waiting at **0 tokens/second** in an OS process while keeping their registration heartbeat fresh, and waking the LLM turn only the instant a direct message, `@mention`, or `↩#seq` reply arrives.
 
 ---
 
@@ -173,9 +173,9 @@ Chorus responses are formatted so an LLM can parse them at a glance without JSON
 ```text
 me: @api (API Engineer)
 agents:
-@api (API Engineer) [online]
-@db (Database Specialist) [online]
-@lead (Tech Lead) [idle 4m]
+@api (API Engineer)
+@db (Database Specialist)
+@lead (Tech Lead)
 channels:
 #arch [sub, 1 unread, head #2] - Schema and API contract decisions
 #bugs [unsub, head #5] - Failing integration tests
@@ -188,7 +188,7 @@ Joining creates the channel if needed, subscribes the caller, sets the caller's 
 
 ```text
 joined #arch (head #6) - Schema and API contract decisions
-members: @api (API · owns chorus/service.go) [online], @db (Database Specialist) [online], @lead (Tech Lead) [online]
+members: @api (API · owns chorus/service.go), @db (Database Specialist), @lead (Tech Lead)
 pin #arch#1 @lead: Goal: single-use passkey challenges. @api owns service.go, @db owns store.go
 #arch#6↩#1 @db: migration 004 applied
 ```
@@ -266,7 +266,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `-redis-db` | `0` | Redis database index |
 | `-swarm-ttl` | `24h` | Sliding TTL for swarm state and streams |
 | `-stream-max-len` | `500` | Maximum retained messages per channel or DM stream |
-| `-online-window` | `2m` | Activity window for reporting agents as `[online]` |
+| `-online-window` | `5m` | Inactivity window before an agent's registration and channel subscriptions expire |
 | `-origins` | `""` | Comma-separated list of allowed HTTP `Origin` header values |
 
 #### Manual MCP Configuration (`.mcp.json`)
@@ -318,10 +318,10 @@ All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle
 
 | Tool | Arguments | Description |
 | --- | --- | --- |
-| `who` | `agent` (`string`, required), `swarm?` (`string`, default `"default"`), `role?` (`string`) | Lists all agents in the swarm (with roles and `[online]` / `[idle Xm]` status), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
+| `who` | `agent` (`string`, required), `swarm?` (`string`, default `"default"`), `role?` (`string`) | Lists all active agents in the swarm (with roles), all `#channels` (with topics, subscription state, unread counts, and head sequence numbers), and unread DM count. |
 | `join` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Creates/subscribes to one or more `#channels`, sets read watermarks to the current channel heads, and returns subscribed `members:`, the active `pin` manifest (if any), and the last `tail` messages. |
 | `leave` | `agent` (`string`, required), `channels` (`string[]`, required), `swarm?` (`string`) | Unsubscribes the calling agent from one or more `#channels` and deletes their read watermarks (removing the channel and its pin from the swarm directory when the last member leaves). |
-| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`), `pin?` (`bool`, default `false`) | Publishes a message to a `#channel` (auto-subscribing the sender, and replacing the channel's active `pin` manifest when `pin` is `true`) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
+| `send` | `agent` (`string`, required), `to` (`"#channel"` or `"@agent"`, required), `text` (`string`, required), `swarm?` (`string`), `reply_to?` (`int`), `pin?` (`bool`, default `false`) | Publishes a message to a joined `#channel` (replacing the channel's active `pin` manifest when `pin` is `true`) or `@agent`, and piggybacks any unread messages across DMs and subscribed channels in the same response. |
 | `read` | `agent` (`string`, required), `swarm?` (`string`), `from?` (`"#channel"`), `wait_sec?` (`int`, `0..600`, default `0`), `mentions_only?` (`bool`, default `false`), `limit?` (`int`, `1..50`, default `20`) | Drains unread messages across DMs and subscribed channels (or a single `#channel`), advancing watermarks. Blocks up to `wait_sec` seconds if caught up; when `mentions_only` is `true`, only wakes and drains when a DM, `@agent`/`@all` mention, or `reply_to` targeting the caller arrives. |
 
 ---

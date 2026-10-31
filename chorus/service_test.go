@@ -180,7 +180,7 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	defaultWho := lead.call("who", map[string]any{
 		"role": "Default Swarm Lead",
 	})
-	if !strings.Contains(defaultWho, "@lead (Default Swarm Lead) [online]") {
+	if !strings.Contains(defaultWho, "@lead (Default Swarm Lead)\n") {
 		t.Fatalf("expected default swarm who output to contain @lead, got:\n%s", defaultWho)
 	}
 
@@ -272,6 +272,74 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	lead.callExpectingError("who", map[string]any{
 		"swarm": "invalid/swarm",
 	})
+
+	// 6. Verify identity, channel membership, and single-active-watch enforcement.
+	lead.call("join", map[string]any{
+		"channels": []string{"#auth"},
+	})
+	ghost := c.newAgent(0, "", "ghost")
+	ghost.callExpectingError("read", map[string]any{})
+	ghost.callExpectingError("send", map[string]any{
+		"to":   "@lead",
+		"text": "unregistered dm",
+	})
+	ghost.callExpectingError("leave", map[string]any{
+		"channels": []string{"#auth"},
+	})
+	lead.callExpectingError("send", map[string]any{
+		"to":   "#unjoined",
+		"text": "must join channel before sending",
+	})
+	lead.callExpectingError("read", map[string]any{
+		"from": "#unjoined",
+	})
+
+	// Start a blocking watch for @lead and verify:
+	//  - a second concurrent watch for @lead is rejected immediately,
+	//  - non-blocking read(wait_sec=0) succeeds, and
+	//  - send by @lead omits the "! no active watch" warning while its watch is active,
+	//    whereas send without an active watch includes the warning.
+	watchStarted := make(chan struct{})
+	watchDone := make(chan string, 1)
+	go func() {
+		close(watchStarted)
+		watchDone <- lead.call("read", map[string]any{
+			"wait_sec": 2,
+		})
+	}()
+	<-watchStarted
+	time.Sleep(40 * time.Millisecond)
+
+	lead.callExpectingError("read", map[string]any{
+		"wait_sec": 5,
+	})
+	if got := lead.call("read", map[string]any{"wait_sec": 0}); got != "none" {
+		t.Fatalf("expected non-blocking read during active watch to return 'none', got %q", got)
+	}
+	activeSendRaw := lead.call("send", map[string]any{
+		"to":   "#auth",
+		"text": "posting while my watch is active",
+	})
+	if strings.Contains(activeSendRaw, "! no active watch") {
+		t.Fatalf("expected send during active watch to omit watch warning, got:\n%s", activeSendRaw)
+	}
+
+	peer := c.newAgent(0, "", "peer")
+	peer.call("join", map[string]any{
+		"channels": []string{"#auth"},
+	})
+	peer.send("#auth", "wake @lead from active watch", 0)
+	if got := <-watchDone; !strings.Contains(got, "wake @lead from active watch") {
+		t.Fatalf("expected active watch to wake on peer message, got %q", got)
+	}
+
+	unarmedSendRaw := lead.call("send", map[string]any{
+		"to":   "#auth",
+		"text": "posting after watch exited without re-arming",
+	})
+	if !strings.Contains(unarmedSendRaw, "! no active watch — run in background: chorus watch -agent lead -mentions -wait 5m") {
+		t.Fatalf("expected send without active watch to include re-arm hint, got:\n%s", unarmedSendRaw)
+	}
 }
 
 // TestHealthzAndPing verifies that Service.Ping and GET /healthz report 200 OK
@@ -441,7 +509,7 @@ func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
 	whoDB := db.call("who", map[string]any{
 		"role": "Database Engineer",
 	})
-	if !strings.Contains(whoDB, "@lead (Tech Lead) [online]") {
+	if !strings.Contains(whoDB, "@lead (Tech Lead)\n") {
 		t.Fatalf("@db on replica 1 did not see @lead from replica 0:\n%s", whoDB)
 	}
 	if !strings.Contains(whoDB, "#arch [unsub, head #1] - Auth v2 architecture and release gate") {
@@ -483,7 +551,7 @@ func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
 	}
 
 	qaJoinMsgs := parseWireMessages(t, qa.call("join", map[string]any{
-		"channels": []string{"#arch"},
+		"channels": []string{"#arch", "#release"},
 		"role":     "QA Engineer",
 	}))
 	if len(qaJoinMsgs) != 2 || qaJoinMsgs[1].seq != 2 {
@@ -547,7 +615,7 @@ func TestEmulatedLLMAgentSwarmWorkflow(t *testing.T) {
 	}()
 	time.Sleep(40 * time.Millisecond)
 
-	// @qa posts sign-off to #release (auto-subscribing @qa to #release).
+	// @qa posts sign-off to #release.
 	qaReleaseSend := qa.send("#release", "QA suite passed 42/42 checks, ship it", 0)
 	if qaReleaseSend.seq != 1 {
 		t.Fatalf("expected #release#1, got #%d", qaReleaseSend.seq)
@@ -588,6 +656,9 @@ func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 
 	// 1. Channel-filtered read(from="#alpha") must not drain DMs or "#beta".
 	reader.call("join", map[string]any{
+		"channels": []string{"#alpha", "#beta"},
+	})
+	writer.call("join", map[string]any{
 		"channels": []string{"#alpha", "#beta"},
 	})
 	writer.send("@reader", "direct ping", 0)
@@ -639,9 +710,9 @@ func TestPaginationFilteringAndRetentionFlows(t *testing.T) {
 		"channels": []string{"#beta"},
 		"tail":     0,
 	})
-	wantJoinZero := "joined #beta (head #6)\nmembers: @late0 [online], @reader [online], @writer [online]"
+	wantJoinZero := "joined #beta (head #6)\nmembers: @late0, @reader, @writer\n! no active watch — run in background: chorus watch -agent late0 -swarm retention -mentions -wait 5m"
 	if joinZero != wantJoinZero {
-		t.Fatalf("expected tail=0 join to return header and members only, got:\n%s", joinZero)
+		t.Fatalf("expected tail=0 join to return header, members, and watch hint only, got:\n%s", joinZero)
 	}
 
 	lateTwo := c.newAgent(0, swarm, "late2")
@@ -720,8 +791,8 @@ func TestConcurrentMultiAgentHammer(t *testing.T) {
 }
 
 // TestMultiSwarmIsolationAndLiveness verifies that distinct swarm namespaces
-// are completely isolated and that agent online/idle transitions reflect the
-// configured online activity window.
+// are completely isolated and that agent registrations and abandoned channels
+// expire after the configured online activity window.
 func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	c := newTestCluster(t, 1, []chorus.Option{
 		chorus.WithOnlineWindow(2 * time.Minute),
@@ -748,15 +819,27 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		t.Fatalf("swarm-beta observed state from swarm-alpha:\n%s", whoBeta)
 	}
 
-	// Advance synthetic clock by 3 hours and verify liveness transitions to [idle 3h].
-	c.advanceClock(3 * time.Hour)
+	// Advance synthetic clock past onlineWindow (2m) and verify @lead's stale
+	// registration and abandoned #arch channel are automatically reaped both when
+	// observed by a peer (swarm-alpha) and when the expired agent itself calls
+	// who (swarm-beta).
+	c.advanceClock(3 * time.Minute)
+	alphaLead.callExpectingError("send", map[string]any{
+		"to":   "#arch",
+		"text": "stale agent must re-join after expiring",
+	})
 	alphaObserver := c.newAgent(0, "swarm-alpha", "observer")
 	whoAlpha := alphaObserver.call("who", map[string]any{"role": "Observer"})
-	if !strings.Contains(whoAlpha, "@lead (Alpha Lead) [idle 3h]") {
-		t.Fatalf("expected @lead to be [idle 3h], got:\n%s", whoAlpha)
+	if strings.Contains(whoAlpha, "@lead") || strings.Contains(whoAlpha, "#arch") {
+		t.Fatalf("expected expired @lead and its abandoned #arch channel to be reaped, got:\n%s", whoAlpha)
 	}
-	if !strings.Contains(whoAlpha, "@observer (Observer) [online]") {
-		t.Fatalf("expected @observer to be [online], got:\n%s", whoAlpha)
+	if !strings.Contains(whoAlpha, "@observer (Observer)\n") {
+		t.Fatalf("expected @observer in directory, got:\n%s", whoAlpha)
+	}
+
+	whoBetaExpiredSelf := betaLead.call("who", map[string]any{"role": "Beta Lead"})
+	if strings.Contains(whoBetaExpiredSelf, "#arch") {
+		t.Fatalf("expected expired @lead calling who to reap its own stale #arch subscription, got:\n%s", whoBetaExpiredSelf)
 	}
 }
 
@@ -875,7 +958,7 @@ func TestMentionsOnlyWakeupAndFullContextDrain(t *testing.T) {
 }
 
 // TestPinnedManifestAndChannelMembersOnJoin verifies that join returns the
-// subscribed channel members (with roles and liveness) and the channel's active
+// subscribed channel members (with roles) and the channel's active
 // pinned collaboration manifest (deduplicated when inside tail, preserved in
 // rmap even after scrolling past tail and streamMaxLen trimming, overwritten in
 // place when a newer message sets pin=true, and waking mentions_only watchers).
@@ -896,7 +979,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		"topic":    "Passkey replay protection",
 		"role":     "Architect · owns design/design.go",
 	})
-	if !strings.Contains(archJoin, "members: @arch (Architect · owns design/design.go) [online]") {
+	if !strings.Contains(archJoin, "members: @arch (Architect · owns design/design.go)") {
 		t.Fatalf("expected @arch in join members, got:\n%s", archJoin)
 	}
 
@@ -915,7 +998,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		"role":     "API · owns chorus/service.go",
 		"tail":     5,
 	})
-	wantMembers := "members: @api (API · owns chorus/service.go) [online], @arch (Architect · owns design/design.go) [online]"
+	wantMembers := "members: @api (API · owns chorus/service.go), @arch (Architect · owns design/design.go)"
 	if !strings.Contains(apiJoinRaw, wantMembers) {
 		t.Fatalf("expected join output to include %q, got:\n%s", wantMembers, apiJoinRaw)
 	}
@@ -1020,8 +1103,11 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		ag.call("leave", map[string]any{"channels": []string{"#auth"}})
 	}
 	whoAfterAllLeft := arch.call("who", map[string]any{})
-	if strings.Contains(whoAfterAllLeft, "#auth") {
-		t.Fatalf("expected #auth to be removed from who directory after last member left, got:\n%s", whoAfterAllLeft)
+	if strings.Contains(whoAfterAllLeft, "#auth") ||
+		strings.Contains(whoAfterAllLeft, "@api") ||
+		strings.Contains(whoAfterAllLeft, "@db") ||
+		strings.Contains(whoAfterAllLeft, "@qa") {
+		t.Fatalf("expected #auth and departed agents (@api, @db, @qa) to be removed from who after leaving their last channel, got:\n%s", whoAfterAllLeft)
 	}
 	recreatedJoin := arch.call("join", map[string]any{
 		"channels": []string{"#auth"},
@@ -1104,7 +1190,10 @@ func parseWireMessages(t *testing.T, raw string) []parsedMessage {
 	var out []parsedMessage
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "joined ") || strings.HasPrefix(line, "members: ") {
+		if line == "" ||
+			strings.HasPrefix(line, "joined ") ||
+			strings.HasPrefix(line, "members: ") ||
+			strings.HasPrefix(line, "! no active watch") {
 			continue
 		}
 		if m := channelMsgRegex.FindStringSubmatch(line); m != nil {
@@ -1409,6 +1498,7 @@ func (a *emulatedAgent) send(to, text string, replyTo int) parsedSendResult {
 	}
 	raw := a.call("send", args)
 	header, unreadBlock, hasUnread := strings.Cut(raw, "\n--- unread ---\n")
+	header, _, _ = strings.Cut(header, "\n")
 	if !strings.HasPrefix(header, "sent ") {
 		a.t.Fatalf("unexpected send header %q in response:\n%s", header, raw)
 	}

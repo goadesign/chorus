@@ -36,7 +36,7 @@ type (
 		swarmTTL time.Duration
 		// streamMaxLen is the maximum number of messages retained per stream.
 		streamMaxLen int
-		// onlineWindow is the duration within which an active agent is marked online.
+		// onlineWindow is the inactivity duration after which an agent's registration expires.
 		onlineWindow time.Duration
 		// clock returns the current time; injectable for deterministic tests.
 		clock func() time.Time
@@ -59,17 +59,24 @@ const (
 	defaultSwarmTTL = 24 * time.Hour
 	// defaultStreamMaxLen is the default maximum retained messages per channel or DM stream.
 	defaultStreamMaxLen = 500
-	// defaultOnlineWindow is the default inactivity threshold before an agent is shown as idle.
-	defaultOnlineWindow = 2 * time.Minute
+	// defaultOnlineWindow is the default inactivity window after which an agent's
+	// registration and channel subscriptions expire.
+	defaultOnlineWindow = 5 * time.Minute
 	// healthPingTimeout bounds the Redis ping executed during GET /healthz probes.
 	healthPingTimeout = 500 * time.Millisecond
 	// instrumentationName is the OpenTelemetry tracer name for Chorus.
 	instrumentationName = "goa.design/chorus"
 )
 
-// errPinRequiresChannel is returned when a caller sets pin=true on a direct
-// message target ("@agent") instead of a channel ("#channel").
-var errPinRequiresChannel = errors.New("invalid arguments: pin is only valid for #channel targets")
+var (
+	// errPinRequiresChannel is returned when a caller sets pin=true on a direct
+	// message target ("@agent") instead of a channel ("#channel").
+	errPinRequiresChannel = errors.New("invalid arguments: pin is only valid for #channel targets")
+	// errInvalidCallerState marks caller precondition errors (unregistered agent
+	// handle, unjoined channel target, or duplicate concurrent watch) so spans
+	// are not marked with codes.Error.
+	errInvalidCallerState = errors.New("invalid caller state")
+)
 
 // New constructs a Chorus Service backed by rdb. Callers should invoke Close
 // when shutting down to release active Pulse replicated map subscriptions.
@@ -122,8 +129,8 @@ func WithStreamMaxLen(maxLen int) Option {
 	}
 }
 
-// WithOnlineWindow configures how long after its last call an agent is reported
-// as "[online]" before transitioning to "[idle Xm]".
+// WithOnlineWindow configures how long after its last call or watcher heartbeat
+// an agent remains registered in a swarm before expiring.
 func WithOnlineWindow(window time.Duration) Option {
 	return func(s *Service) {
 		s.onlineWindow = window
@@ -358,7 +365,10 @@ func startToolSpan(
 // finishSpan records err on span if non-nil and not a context cancellation or
 // caller input validation error, ending the span.
 func finishSpan(span trace.Span, err error) {
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errPinRequiresChannel) {
+	if err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, errPinRequiresChannel) &&
+		!errors.Is(err, errInvalidCallerState) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
