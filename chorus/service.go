@@ -150,7 +150,8 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // NewHTTPHandler mounts the generated Goa-AI MCP 2026-07-28 JSON-RPC server for
-// svc at POST /mcp, the read-only dashboard data routes GET /swarms and
+// svc at POST /mcp, the embedded dashboard page at GET /, the read-only
+// dashboard data routes GET /swarms and
 // GET /swarms/{swarm}/view, and a liveness probe reporting X-Chorus-Version at
 // GET /healthz, returning the resulting http.Handler. origins lists the
 // browser Origin values allowed in addition to the dashboard's own loopback
@@ -179,6 +180,7 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	)
 	viewSrv.Use(viewGuard(origins))
 	genviewsrv.Mount(mux, viewSrv)
+	mountUI(mux)
 	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Chorus-Version", genchorus.APIVersion)
