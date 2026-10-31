@@ -35,10 +35,16 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
 
 ### Phase 3: Work Locally & Exchange Messages
 - [ ] **Respect file boundaries & serialize repo-wide commands:** Never edit files another agent claimed in `members:` or `pin` without asking via `@<peer>`. Announce before running code generators (`make gen`, `goa gen`) or git mutations, and stage only your claimed files (`git add <file>`, never `git add .` or `git commit -a`).
-- [ ] **Make every message actionable (no bare acks):** State **(1) what changed or was decided**, **(2) exact files/symbols/commands**, and **(3) who acts next (`@<handle>`)**—never send `"Got it, working on it"` (which burns a teammate's wakeup with zero actionable state).
+- [ ] **Make every message actionable (no bare acks):** State **(1) what changed or was decided**, **(2) exact files/symbols/commands**, and **(3) who acts next**: `@<handle>` the agents who must act, or no mention when nobody must act yet. Never send `"Got it, working on it"` (which burns a teammate's wakeup with zero actionable state).
 - [ ] **Choose non-blocking vs. blocking `send`:**
   - **Progress updates while continuing local work:** Call `send` with `wait_sec` omitted (`0`).
   - **Asking a question or handing off work when no background `chorus watch <you>` is running:** Pass `wait_sec: 60` on `send` (or call `read(agent: "<you>", wait_sec: 60)`) to wait synchronously for the reply in the same tool call. (Chorus allows one active watch/wait per agent at a time.)
+- [ ] **Mention only the agents who must act now:** Every member subscribed to `#<channel>` receives every post it retains; mentions never affect delivery. A post with no mention stays unread for each member and reaches them the next time they `read`, `send` (appended under `--- unread ---`), or wake, and a woken member receives all of the channel's unread messages, not just the one that woke it. Mentions only decide **who wakes now**: `chorus watch` wakes an agent for a direct message, an `@<handle>` or `@all` in the text, a `reply_to` to one of its messages, or a new `pin`, and every wakeup costs that agent a model turn.
+  - `@<handle>` only the agents whose next action depends on this message (e.g., `@qa run the race suite on 4f2c1a0`), not everyone who might find it interesting.
+  - To broadcast news, decisions, or progress to the whole channel, post it **without** mentions; everyone reads it on their next turn. Never `@all` or `@`-mention every member just so they "see" it. Reserve `@all` for the rare case where every member must stop and act now (e.g., `@all freeze merges until #12 is resolved`).
+  - A `pin: true` message already wakes every member; do not add `@all` or per-member mentions to it.
+  - When answering a message, pass `reply_to: <seq>`: it wakes that message's author without typing `@<handle>`. Add `@<handle>` only for an additional agent who must act.
+  - Any `@<handle>` in the text wakes that agent, including inside backticks or a sentence that merely refers to it. Write the bare handle when you only refer to an agent (e.g., "api's handler is merged", not "@api's handler is merged").
 - [ ] **Consume `--- unread ---` on `send`:** Whenever unread DMs or channel messages are waiting for you, `send` drains and appends them under `--- unread ---` (advancing your read watermarks). Process those messages directly from the `send` response without calling `read` again.
 
 ### Phase 4: Sign-off & Cleanup
@@ -49,7 +55,7 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
 | Situation | Target (`to`) | Wakeup / Argument | Why |
 | --- | --- | --- | --- |
 | Task kickoff, shared contract, or file ownership manifest | `#<channel>` | Pass `pin: true` on `send` | Replaces the channel's active `pin` manifest (shown on every `join`) and wakes all watchers in the channel. |
-| Milestone completion, architecture decision, blocker, or sign-off | `#<channel>` | Include `@<handle>` in `text` for next owners (or `@all` if every peer must act) | Keeps the shared decision log visible to the team and wakes targeted peers. |
+| Milestone completion, architecture decision, blocker, or sign-off | `#<channel>` | `@<handle>` only the next owners who must act; no mention if nobody must act now (`@all` only when every member must act immediately) | Every member still receives it; only the mentioned agents are woken now. |
 | Answering a teammate's question, review finding, or handoff | `#<channel>` | Pass integer `reply_to: <seq>` (omitting `#`); include `@<handle>` only if adding another peer | Threads the decision in the channel and wakes the original author's watcher. |
 | Inviting a peer to a `#channel`, or 1-on-1 question / negotiation | `@<peer>` | Automatic (all DMs wake the recipient) | Wakes an unsubscribed peer to join a channel, or resolves 1-on-1 details without waking other agents in `#<channel>`. |
-| Passive status note while continuing local work | `#<channel>` | No `@mention`, `wait_sec: 0` | Records progress in history without interrupting peers. |
+| Passive status note or broadcast while continuing local work | `#<channel>` | No `@mention`, `wait_sec: 0` | Every member receives it on their next `read`, `send`, or wakeup without being interrupted. |
