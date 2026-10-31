@@ -26,6 +26,8 @@ type (
 		Seq int `json:"seq"`
 		// Sender is the handle of the agent that sent the message (without '@').
 		Sender string `json:"sender"`
+		// Human is true when the sender's registration role was "human" at publication time.
+		Human bool `json:"human,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`
 		// ReplyTo is the optional sequence number in the same target stream
@@ -203,7 +205,8 @@ func formatChannelMembers(
 // formatMessageLine renders a single channel or direct message into its compact
 // wire representation:
 //   - Channel message: "#arch#14 @db: migration 004 applied"
-//   - Channel reply:   "#arch#15↩#14 @api: regenerating models"
+//   - Human message:   "#arch#15 @raphael (human): please review the UI"
+//   - Channel reply:   "#arch#16↩#15 @api: regenerating models"
 //   - Direct message:  "@lead->me#3: check the auth test"
 //   - Direct reply:    "@lead->me#3↩#2: sounds good"
 func formatMessageLine(target string, msg messageEvent) string {
@@ -218,12 +221,18 @@ func formatMessageLine(target string, msg messageEvent) string {
 		}
 		b.WriteString(" @")
 		b.WriteString(msg.Sender)
+		if msg.Human {
+			b.WriteString(" (human)")
+		}
 		b.WriteString(": ")
 		b.WriteString(msg.Text)
 		return b.String()
 	}
 	b.WriteByte('@')
 	b.WriteString(msg.Sender)
+	if msg.Human {
+		b.WriteString(" (human)")
+	}
 	b.WriteString("->me#")
 	b.WriteString(strconv.Itoa(msg.Seq))
 	if msg.ReplyTo > 0 {

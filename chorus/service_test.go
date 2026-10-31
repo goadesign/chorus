@@ -1174,6 +1174,33 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	if freshSend.seq != 1 {
 		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
 	}
+
+	// 7. Participants registered with role "human" (such as from the browser UI)
+	// are annotated with "(human)" on channel and direct-message wire lines so
+	// agents immediately distinguish human steering from peer worker messages.
+	arch.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+	})
+	human := c.newAgent(0, swarm, "raphael")
+	human.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"role":     "human",
+	})
+	human.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "Please prioritize accessibility and contrast",
+	})
+	human.call("send", map[string]any{
+		"to":   "@arch",
+		"text": "Can you check the header spacing?",
+	})
+	archRead := arch.call("read", map[string]any{})
+	if !strings.Contains(archRead, "#ui-review#1 @raphael (human): Please prioritize accessibility and contrast") {
+		t.Fatalf("expected channel message from role=human to carry (human) tag, got:\n%s", archRead)
+	}
+	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
+		t.Fatalf("expected direct message from role=human to carry (human) tag, got:\n%s", archRead)
+	}
 }
 
 // newTestCluster flushes the shared Redis database and starts numReplicas

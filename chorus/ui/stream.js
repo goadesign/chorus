@@ -3,13 +3,19 @@
 (() => {
   "use strict";
 
-  window.ChorusStream = Object.freeze({ render });
+  window.ChorusStream = Object.freeze({
+    render,
+    captureScrollSnapshot,
+    restoreScrollSnapshot,
+  });
 
   // render updates the message surfaces without keeping another copy of swarm
   // data. Disclosure choices and reading position belong to the existing DOM.
   function render(els, state, actions) {
     if (state.view === null) {
-      for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) root.replaceChildren();
+      for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) {
+        root.replaceChildren();
+      }
       delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
       els.subtitleEl.textContent = "Loading swarm…";
@@ -19,13 +25,18 @@
     const entries = retainedMessages(state.view);
     const targetEntries = selectedMessages(entries, state);
     const visible = targetEntries.filter((entry) => matches(entry, state));
-    const scrollSnapshot = captureScrollSnapshot(els.streamEl, els.scrollEl);
+    const scrollSnapshot = els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl);
+
     renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderNewMessages(els.newSinceEl, targetEntries, state, actions);
-    renderMessages(els.streamEl, els.scrollEl, visible, targetEntries, state, actions, scrollSnapshot);
+    const selectionChanged = renderMessages(els.streamEl, visible, targetEntries, state, actions);
     renderSelection(els.detailsEl, state, actions, entries, visible);
+
+    restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot, state);
+    revealSelectedMessage(els.streamEl, state, selectionChanged);
+
     const target = state.selectedTarget;
     els.titleEl.textContent = target?.kind === "channel" ? target.name
       : target?.kind === "dm" ? `@${target.a} ↔ @${target.b}` : "All messages";
@@ -86,8 +97,8 @@
   }
 
   // renderAgents renders each active and historical participant card with their
-  // role, watch state on this server, last call/heartbeat or latest message age,
-  // read position gap in the active channel/inbox, and latest message headline.
+  // 32px circular avatar, role, watch state on this server, last call/heartbeat
+  // or latest message age, compact sequence-position gap badge, and latest message.
   function renderAgents(els, state, actions, entries) {
     const latest = new Map();
     for (const entry of entries) latest.set(entry.message.sender, entry);
@@ -114,7 +125,7 @@
       ];
       const item = {
         handle,
-        role: "",
+        role: isHumanHandle(handle, state) ? "human" : "",
         last_seen_unix: 0,
         last_message_ms: entry.message.sent_at_ms,
         channels: seenChannels,
@@ -129,9 +140,8 @@
       const entry = latest.get(agent.handle);
       const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
       const inbox = inboxByHandle.get(agent.handle) || null;
-      const colorClass = window.ChorusUI?.agentColorClass
-        ? window.ChorusUI.agentColorClass(agent.handle, agent.role)
-        : "";
+      const colorClass = senderColorClass(agent.handle, state);
+      const human = agent.role === "human" || isHumanHandle(agent.handle, state);
 
       const statusText = agent.registered
         ? agent.watching_on_this_server
@@ -149,31 +159,40 @@
       const headerRow = element(
         "span",
         "agent-card-top",
-        element("span", `agent-dot ${colorClass}`),
-        element("strong", "agent-name", `@${agent.handle}`),
+        avatarNode(agent.handle, state),
+        element("strong", `agent-name ${colorClass}`.trim(), `@${agent.handle}`),
+        ...(human ? [element("span", "human-pill", "Human")] : []),
         statusBadge
       );
 
       if (pos && pos.behind > 0) {
-        headerRow.append(
-          element(
-            "span",
-            "agent-behind-pill",
-            `${pos.behind} behind (#${pos.read_seq})${pos.mentioned ? " · @mentioned" : ""}`
-          )
-        );
+        const gapLabel = `Position gap ${pos.behind} · Read through #${pos.read_seq}${pos.mentioned ? " · @mentioned" : ""}`;
+        const pill = element("span", "agent-behind-pill", String(pos.behind));
+        pill.title = gapLabel;
+        pill.setAttribute("aria-label", gapLabel);
+        headerRow.append(pill);
+        if (pos.mentioned) {
+          const atDot = element("span", "agent-mention-dot", "@");
+          atDot.title = `@mentioned after #${pos.read_seq}`;
+          atDot.setAttribute("aria-label", `@mentioned after #${pos.read_seq}`);
+          headerRow.append(atDot);
+        }
       } else if (inbox && inbox.behind > 0) {
-        headerRow.append(
-          element("span", "agent-behind-pill", `DM ${inbox.behind} behind`)
-        );
+        const dmGapLabel = `DM position gap ${inbox.behind} · Read through #${inbox.read_seq}`;
+        const pill = element("span", "agent-behind-pill", `DM ${inbox.behind}`);
+        pill.title = dmGapLabel;
+        pill.setAttribute("aria-label", dmGapLabel);
+        headerRow.append(pill);
       } else if (pos && pos.read_seq > 0) {
-        headerRow.append(
-          element("span", "agent-caught-up-pill", `Read #${pos.read_seq}`)
-        );
+        const readLabel = `Read through #${pos.read_seq}`;
+        const pill = element("span", "agent-caught-up-pill", `#${pos.read_seq}`);
+        pill.title = readLabel;
+        pill.setAttribute("aria-label", readLabel);
+        headerRow.append(pill);
       }
 
       const cardChildren = [headerRow];
-      if (agent.role) {
+      if (agent.role && agent.role !== "human") {
         cardChildren.push(element("span", "agent-role-inline", agent.role));
       }
       cardChildren.push(
@@ -188,7 +207,7 @@
 
       const button = element(
         "button",
-        `agent-summary${agent.registered ? "" : " is-historical"}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
+        `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
         ...cardChildren
       );
       button.type = "button";
@@ -223,8 +242,8 @@
   }
 
   // showAgent describes current registration or historical message facts,
-  // per-channel and DM read watermarks, and 1-click actions to message, filter,
-  // or copy the chorus watch command.
+  // per-channel and DM sequence-position gaps and read watermarks, and 1-click
+  // actions to message, filter, or copy the chorus watch command.
   function showAgent(root, agent, state, actions, latest) {
     const close = actionButton("Close", "close-agent", () => {
       delete root.dataset.agent;
@@ -237,8 +256,8 @@
       if (p) {
         posSummaries.push(
           p.behind > 0
-            ? `${ch.name}: read #${p.read_seq} (${p.behind} behind head #${ch.head_seq}${p.mentioned ? ", @mentioned" : ""})`
-            : `${ch.name}: caught up at #${p.read_seq}`
+            ? `${ch.name}: Position gap ${p.behind} · Read through #${p.read_seq} (head #${ch.head_seq}${p.mentioned ? ", @mentioned" : ""})`
+            : `${ch.name}: Read through #${p.read_seq} (caught up)`
         );
       }
     }
@@ -246,8 +265,8 @@
     if (inbox) {
       posSummaries.push(
         inbox.behind > 0
-          ? `DMs: read #${inbox.read_seq} (${inbox.behind} behind head #${inbox.head_seq})`
-          : `DMs: caught up at #${inbox.read_seq}`
+          ? `DMs: Position gap ${inbox.behind} · Read through #${inbox.read_seq} (head #${inbox.head_seq})`
+          : `DMs: Read through #${inbox.read_seq} (caught up)`
       );
     }
 
@@ -312,7 +331,7 @@
     const newer = channel.messages.filter((message) => message.seq > pin.seq).length;
     const summary = element("summary", "pin-summary",
       element("strong", "pin-title", `Pinned goal (#${pin.seq}): ${headline(pin.text)}`),
-      element("span", "pin-meta", `by @${pin.sender} · ${newer} newer messages · click to expand`));
+      element("span", "pin-meta", `by @${pin.sender} · ${newer} newer messages`));
     summary.dataset.focusKey = `pin:${key}`;
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
@@ -374,13 +393,15 @@
         if (mentionTargets.has(handle.toLowerCase())) mentions.push({ entry, handle });
       }
     }
-    const open = root.querySelector("details")?.open === true;
+    const open = root.querySelector(".mentions-disclosure")?.open === true;
     const disclosure = element("details", "mentions-disclosure");
     disclosure.open = open;
     const last = mentions.at(-1);
-    disclosure.append(element("summary", "mentions-summary", last
+    const mentionsSummary = element("summary", "mentions-summary", last
       ? `Recent mentions: @${last.entry.message.sender} → @${last.handle} (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`
-      : "No mentions in this view"));
+      : "No mentions in this view");
+    mentionsSummary.dataset.focusKey = "mentions-summary";
+    disclosure.append(mentionsSummary);
     const list = element("ul", "mention-list");
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
@@ -398,7 +419,9 @@
     const references = [...new Set(entries.flatMap((entry) => artifacts(entry.message.text)))];
     const filters = element("details", "artifact-disclosure");
     filters.open = root.querySelector(".artifact-disclosure")?.open === true;
-    filters.append(element("summary", "", `Referenced files, commits & PRs (${references.length})`));
+    const artifactSummary = element("summary", "artifact-summary", `Referenced files, commits & PRs (${references.length})`);
+    artifactSummary.dataset.focusKey = "artifact-summary";
+    filters.append(artifactSummary);
     const buttons = element("div", "artifact-filters");
     for (const reference of references) {
       const button = actionButton(reference, `artifact:${reference}`, () => actions.setFilterArtifact(reference === state.filterArtifact ? "" : reference));
@@ -413,6 +436,8 @@
     ]);
   }
 
+  // renderNewMessages separates the retained new-message count from the
+  // "Jump to new" and "Mark seen" actions so jumping never silently marks seen.
   function renderNewMessages(root, entries, state, actions) {
     const fresh = entries.filter((entry) => Object.hasOwn(state.lastSeenSeqByTarget, entry.target)
       && entry.message.seq > state.lastSeenSeqByTarget[entry.target]);
@@ -421,14 +446,21 @@
       return;
     }
     const newest = fresh.at(-1);
-    const button = actionButton(`${fresh.length} new since you looked · Mark seen`, "new-messages", () => {
-      actions.selectMessage(newest.target, newest.message.seq);
-      for (const target of new Set(fresh.map((entry) => entry.target))) {
-        const latest = entries.filter((entry) => entry.target === target).at(-1);
-        actions.markSeen(target, latest.message.seq);
-      }
-    });
-    replaceKeepingFocus(root, [button]);
+    const bar = element(
+      "div",
+      "new-messages-bar",
+      element("span", "new-messages-count", `${fresh.length} new since you looked`),
+      actionButton("Jump to new", "jump-new-messages", () => {
+        actions.selectMessage(newest.target, newest.message.seq);
+      }),
+      actionButton("Mark seen", "new-messages", () => {
+        for (const target of new Set(fresh.map((entry) => entry.target))) {
+          const latest = entries.filter((entry) => entry.target === target).at(-1);
+          actions.markSeen(target, latest.message.seq);
+        }
+      })
+    );
+    replaceKeepingFocus(root, [bar]);
   }
 
   // isVisibleAnchorRow returns true for collapsed thread rows and visible
@@ -461,11 +493,57 @@
     return { oldTop, candidates };
   }
 
+  // restoreScrollSnapshot restores the reader's visible anchor row offset after
+  // all stage sections (participants, timeline, context strips, and stream)
+  // have updated their DOM.
+  function restoreScrollSnapshot(root, scrollEl, snapshot, state) {
+    if (!root || !scrollEl || !snapshot || state.followLive) return;
+    scrollEl.scrollTop = snapshot.oldTop;
+    const afterRows = [...root.querySelectorAll("[data-disclosure-key]")]
+      .filter((node) => isVisibleAnchorRow(node, root));
+    let match = null;
+    for (const cand of snapshot.candidates) {
+      const node = afterRows.find(
+        (row) => row.dataset.disclosureKey === cand.key && (row.dataset.anchorVersion || "") === cand.version
+      );
+      if (node) {
+        match = { cand, node };
+        break;
+      }
+    }
+    if (!match) {
+      for (const cand of snapshot.candidates) {
+        const node = afterRows.find((row) => row.dataset.disclosureKey === cand.key);
+        if (node) {
+          match = { cand, node };
+          break;
+        }
+      }
+    }
+    if (match) {
+      scrollEl.scrollTop += match.node.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - match.cand.offset;
+    }
+  }
+
+  // revealSelectedMessage opens and scrolls to the explicitly selected message
+  // when selection changes.
+  function revealSelectedMessage(root, state, selectionChanged) {
+    const selected = state.selectedMessage;
+    if (!selected || !root) return;
+    const node = [...root.querySelectorAll("[data-message-key]")]
+      .find((item) => item.dataset.messageKey === `${selected.target}:${selected.seq}`);
+    if (node) {
+      node.open = true;
+      const thread = node.closest(".thread-disclosure");
+      if (thread) thread.open = true;
+      if (selectionChanged) node.scrollIntoView({ block: "nearest" });
+    }
+  }
+
   // renderMessages stacks newest threads and newest messages at the top of the
   // feed so the latest conversation is immediately visible below the timeline
-  // without scrolling to the bottom of the page. When paused (followLive=false),
-  // top insertions preserve the reader's visible card offset with zero drift.
-  function renderMessages(root, scrollEl, entries, targetEntries, state, actions, scrollSnapshot) {
+  // without scrolling to the bottom of the page.
+  function renderMessages(root, entries, targetEntries, state, actions) {
     const openKeys = new Set([...root.querySelectorAll("details[open][data-disclosure-key]")]
       .map((node) => node.dataset.disclosureKey));
     const expandAll = state.expandAllMessages === true;
@@ -480,7 +558,6 @@
     }
     const selectionKey = state.selectedMessage ? `${state.selectedMessage.target}:${state.selectedMessage.seq}` : "";
     const selectionChanged = root.dataset.selectedMessage !== selectionKey;
-    const snapshot = scrollSnapshot || captureScrollSnapshot(root, scrollEl);
 
     const byTarget = new Map();
     for (const entry of targetEntries) {
@@ -511,48 +588,9 @@
     }
 
     replaceKeepingFocus(root, nodes);
-
-    if (!state.followLive) {
-      scrollEl.scrollTop = snapshot.oldTop;
-      const afterRows = [...root.querySelectorAll("[data-disclosure-key]")]
-        .filter((node) => isVisibleAnchorRow(node, root));
-      let match = null;
-      for (const cand of snapshot.candidates) {
-        const node = afterRows.find(
-          (row) => row.dataset.disclosureKey === cand.key && (row.dataset.anchorVersion || "") === cand.version
-        );
-        if (node) {
-          match = { cand, node };
-          break;
-        }
-      }
-      if (!match) {
-        for (const cand of snapshot.candidates) {
-          const node = afterRows.find((row) => row.dataset.disclosureKey === cand.key);
-          if (node) {
-            match = { cand, node };
-            break;
-          }
-        }
-      }
-      if (match) {
-        scrollEl.scrollTop += match.node.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - match.cand.offset;
-      }
-    }
-
-    const selected = state.selectedMessage;
-    if (selected) {
-      const node = [...root.querySelectorAll("[data-message-key]")]
-        .find((item) => item.dataset.messageKey === `${selected.target}:${selected.seq}`);
-      if (node) {
-        node.open = true;
-        const thread = node.closest(".thread-disclosure");
-        if (thread) thread.open = true;
-        if (selectionChanged) node.scrollIntoView({ block: "nearest" });
-      }
-    }
     root.dataset.selectedMessage = selectionKey;
     root.dataset.expandAll = String(expandAll);
+    return selectionChanged;
   }
 
   function threadGroups(entries, byTarget) {
@@ -596,105 +634,173 @@
   }
 
   // threadDisclosure keeps the original root headline and the newest reply
-  // visible in the summary, and stacks the thread's messages newest-first when
-  // expanded so the latest replies are immediately at the top.
+  // visible in a consistent M3 list-row layout (32px circular avatar, primary
+  // headline, supporting latest-reply line, and trailing metadata), with the
+  // Reply button placed outside <summary> as a sibling control.
   function threadDisclosure(entries, state, actions, byTarget, openKeys) {
     const first = entries.rootEntry || entries[0];
     const last = entries.at(-1);
     const key = `thread:${coordinate(first)}`;
-    const details = element("details", "thread-disclosure");
+
+    const rootFromHuman = isHumanHandle(first.message.sender, state);
+    const latestReplyToHuman = entries.toReversed().map((e) => humanResponseBadge(e, byTarget, state)).find(Boolean) || "";
+
+    const details = element(
+      "details",
+      `thread-disclosure${rootFromHuman ? " is-human-message" : ""}${latestReplyToHuman ? " is-human-response" : ""}`
+    );
     details.dataset.disclosureKey = key;
     details.dataset.anchorVersion = `${entries.length}:${last.message.seq}`;
     details.open = openKeys.has(key) || entries.some((entry) => selected(entry, state));
 
+    const senderColor = senderColorClass(last.message.sender, state);
     const metaRow = element(
       "span",
       "message-meta",
-      element("strong", "message-sender", `@${last.message.sender}`),
+      element("strong", `message-sender ${senderColor}`.trim(), `@${last.message.sender}`),
+      ...(rootFromHuman ? [element("span", "human-pill", `Human thread (@${first.message.sender})`)] : []),
+      ...(latestReplyToHuman ? [element("span", "human-response-pill", latestReplyToHuman)] : []),
       element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
       element("span", "thread-count-pill", `${entries.length} messages`),
       element("time", "message-time", `${age(last.message.sent_at_ms)} ago · ${clock(last.message.sent_at_ms)}`)
     );
-    if (last.target.startsWith("#")) {
-      const replyButton = actionButton("Reply", `reply-thread:${key}`, (event) => {
-        event.stopPropagation();
-        actions.setReplyTo(last.target, last.message.seq, last.message.sender);
-      });
-      metaRow.append(replyButton);
-    }
 
-    details.append(element("summary", "thread-summary",
+    const contentCol = element(
+      "span",
+      "row-main",
       metaRow,
       element("strong", "thread-title", headline(first.message.text)),
-      element("span", "thread-latest", `Latest (@${last.message.sender} #${last.message.seq}): ${headline(last.message.text)}`)));
+      element("span", "thread-latest", `Latest (@${last.message.sender} #${last.message.seq}): ${headline(last.message.text)}`)
+    );
 
-    const summary = details.querySelector("summary");
+    const summary = element(
+      "summary",
+      "thread-summary",
+      avatarNode(last.message.sender, state),
+      contentCol
+    );
     summary.dataset.focusKey = key;
-    summary.addEventListener("click", (event) => {
-      if (event.target.closest("button")) return;
-      event.preventDefault();
-      const closing = details.open;
-      details.open = !closing;
-      if (closing && entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
-      actions.setFollowLive(false);
+    details.append(summary);
+
+    details.addEventListener("toggle", () => {
+      if (!details.open && entries.some((entry) => selected(entry, state))) {
+        actions.selectMessage(null, 0);
+      }
     });
+
     const body = element("div", "thread-messages");
     // Stack newest replies at the top of the expanded thread.
     for (const entry of entries.toReversed()) {
       body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
     }
     details.append(body);
-    return details;
+
+    const wrapper = element(
+      "div",
+      `disclosure-item${rootFromHuman ? " is-human-message" : ""}${latestReplyToHuman ? " is-human-response" : ""}`,
+      details
+    );
+    if (last.target.startsWith("#")) {
+      const replyButton = actionButton("Reply", `reply-thread:${key}`, () => {
+        actions.setReplyTo(last.target, last.message.seq, last.message.sender);
+      });
+      replyButton.classList.add("row-reply-btn");
+      wrapper.append(replyButton);
+    }
+    return wrapper;
   }
 
+  // messageDisclosure renders a single message row using the same M3 list-row
+  // anatomy as threadDisclosure (leading 32px avatar, primary headline,
+  // supporting preview/meta, trailing chevron, and sibling Reply button).
   function messageDisclosure(entry, state, actions, byTarget, openKeys) {
     const message = entry.message;
     const key = coordinate(entry);
-    const details = element("details", "message-disclosure");
+    const fromHuman = isHumanHandle(message.sender, state);
+    const toHumanBadge = humanResponseBadge(entry, byTarget, state);
+
+    const details = element(
+      "details",
+      `message-disclosure${fromHuman ? " is-human-message" : ""}${toHumanBadge ? " is-human-response" : ""}`
+    );
     details.dataset.messageKey = key;
     details.dataset.disclosureKey = `message:${key}`;
     details.dataset.anchorVersion = `1:${message.seq}`;
     details.open = openKeys.has(`message:${key}`) || selected(entry, state);
     details.classList.toggle("is-selected", selected(entry, state));
-    const meta = element("span", "message-meta",
-      element("strong", "message-sender", `@${message.sender}`),
+
+    const senderColor = senderColorClass(message.sender, state);
+    const meta = element(
+      "span",
+      "message-meta",
+      element("strong", `message-sender ${senderColor}`.trim(), `@${message.sender}`),
+      ...(fromHuman ? [element("span", "human-pill", "Human")] : []),
+      ...(toHumanBadge ? [element("span", "human-response-pill", toHumanBadge)] : []),
       element("span", "message-coordinate", `${entry.target}#${message.seq}`),
-      element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`));
-    if (entry.target.startsWith("#")) {
-      const replyButton = actionButton("Reply", `reply:${key}`, (event) => {
-        event.stopPropagation();
-        actions.setReplyTo(entry.target, message.seq, message.sender);
-      });
-      meta.append(replyButton);
-    }
-    const summary = element("summary", "message-summary",
+      element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`)
+    );
+
+    const second = secondLine(message.text);
+    const contentCol = element(
+      "span",
+      "row-main",
       meta,
-      element("span", "message-headline", headline(message.text)));
+      element("span", "message-headline", headline(message.text)),
+      ...(second ? [element("span", "message-supporting", second)] : [])
+    );
+
+    const summary = element(
+      "summary",
+      "message-summary",
+      avatarNode(message.sender, state),
+      contentCol
+    );
     summary.dataset.focusKey = `message:${key}`;
-    summary.addEventListener("click", (event) => {
-      if (event.target.closest("button")) return;
-      event.preventDefault();
-      details.open = !details.open;
-      if (details.open) {
-        actions.setFollowLive(false);
-        actions.selectMessage(entry.target, message.seq);
-      } else if (!details.open && selected(entry, state)) actions.selectMessage(null, 0);
-    });
     details.append(summary);
+
+    details.addEventListener("toggle", () => {
+      if (!details.open && selected(entry, state)) {
+        actions.selectMessage(null, 0);
+      }
+    });
+
     const body = element("div", "message-body", formattedText(message.text));
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
-      const parent = byTarget.get(entry.target).get(message.reply_to);
-      if (parent) controls.append(actionButton(`In reply to #${parent.message.seq} (@${parent.message.sender})`, `parent:${key}`,
-        () => actions.selectMessage(entry.target, parent.message.seq)));
-      else if (message.reply_to) controls.append(element("span", "message-reference", `In reply to #${message.reply_to} (older than retained history)`));
-    } else if (message.reply_to) controls.append(element("span", "message-reference", `Reply reference #${message.reply_to}`));
+      const parent = byTarget.get(entry.target)?.get(message.reply_to);
+      if (parent) {
+        controls.append(
+          actionButton(
+            `In reply to #${parent.message.seq} (@${parent.message.sender})`,
+            `parent:${key}`,
+            () => actions.selectMessage(entry.target, parent.message.seq)
+          )
+        );
+      } else if (message.reply_to) {
+        controls.append(element("span", "message-reference", `In reply to #${message.reply_to} (older than retained history)`));
+      }
+    } else if (message.reply_to) {
+      controls.append(element("span", "message-reference", `Reply reference #${message.reply_to}`));
+    }
     for (const reference of artifacts(message.text)) {
       controls.append(actionButton(reference, `message-artifact:${key}:${reference}`, () => actions.setFilterArtifact(reference)));
     }
     details.append(body);
     if (controls.childElementCount > 0) details.append(controls);
-    return details;
+
+    const wrapper = element(
+      "div",
+      `disclosure-item${fromHuman ? " is-human-message" : ""}${toHumanBadge ? " is-human-response" : ""}`,
+      details
+    );
+    if (entry.target.startsWith("#")) {
+      const replyButton = actionButton("Reply", `reply:${key}`, () => {
+        actions.setReplyTo(entry.target, message.seq, message.sender);
+      });
+      replyButton.classList.add("row-reply-btn");
+      wrapper.append(replyButton);
+    }
+    return wrapper;
   }
 
   function renderSelection(root, state, actions, entries, visible) {
@@ -720,6 +826,56 @@
     if (entry.target.startsWith("#")) nodes.push(actionButton("Reply", "reply-selected",
       () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender)));
     replaceKeepingFocus(root, nodes);
+  }
+
+  // isHumanHandle reports whether handle is registered with role "human" in the
+  // current swarm view or matches the human user's handle in the UI composer
+  // (when not registered as a non-human agent).
+  function isHumanHandle(handle, state) {
+    if (!handle) return false;
+    const agent = (state.view?.agents || []).find((a) => a.handle === handle);
+    if (agent) return agent.role === "human";
+    const uiInput = typeof document !== "undefined" ? document.getElementById("send-handle") : null;
+    const uiHandle = (uiInput?.value || "").trim().replace(/^@/, "");
+    return Boolean(uiHandle) && handle === uiHandle;
+  }
+
+  // humanResponseBadge returns a concise callout label when an agent message
+  // replies to a human's message, sends a direct message to a human, or
+  // @mentions a human participant.
+  function humanResponseBadge(entry, byTarget, state) {
+    const msg = entry.message;
+    if (isHumanHandle(msg.sender, state)) return "";
+    if (entry.target.startsWith("#") && msg.reply_to > 0) {
+      const parent = byTarget.get(entry.target)?.get(msg.reply_to);
+      if (parent && isHumanHandle(parent.message.sender, state)) {
+        return `↩ Reply to @${parent.message.sender} (#${parent.message.seq})`;
+      }
+    }
+    if (entry.target.startsWith("@")) {
+      const recipient = entry.target.slice(1);
+      if (isHumanHandle(recipient, state)) {
+        return `Direct to @${recipient}`;
+      }
+    }
+    if (entry.target.startsWith("#")) {
+      for (const h of mentionedHandles(msg.text)) {
+        if (isHumanHandle(h, state)) {
+          return `Response to @${h}`;
+        }
+      }
+    }
+    return "";
+  }
+
+  // avatarNode renders a 32px circular avatar in the participant's SVG color
+  // with their exact-case 2-character handle monogram.
+  function avatarNode(handle, state) {
+    const colorClass = senderColorClass(handle, state);
+    const label = String(handle || "?").slice(0, 2);
+    const node = element("span", `agent-avatar ${colorClass}`.trim(), label);
+    node.setAttribute("aria-hidden", "true");
+    return node;
   }
 
   function mentionedHandles(text) {
@@ -758,8 +914,18 @@
     return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || "Empty message";
   }
 
+  function secondLine(text) {
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+    return lines.length > 1 ? lines[1] : "";
+  }
+
   function coordinate(entry) {
     return `${entry.target}:${entry.message.seq}`;
+  }
+
+  function senderColorClass(handle, state) {
+    if (!window.ChorusUI?.agentColorClass) return "";
+    return window.ChorusUI.agentColorClass(handle, isHumanHandle(handle, state) ? "human" : "");
   }
 
   function selected(entry, state) {

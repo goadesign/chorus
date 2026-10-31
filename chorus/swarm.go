@@ -680,9 +680,12 @@ func (s *swarmHandle) appendUnderSemaphore(
 		}
 	}
 
+	rawSender, _ := s.state.Get(agentMapKey(sender))
+	senderRec, _ := parseAgentRecord(rawSender)
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
+		Human:   strings.EqualFold(strings.TrimSpace(senderRec.Role), "human"),
 		Text:    text,
 		ReplyTo: replyTo,
 	})

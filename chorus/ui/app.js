@@ -219,7 +219,8 @@
   }
 
   function reconcileSelectedTarget(view, pairedDMs) {
-    const channels = view?.channels || [];
+    if (!view) return;
+    const channels = view.channels || [];
     if (state.selectedTarget) {
       if (state.selectedTarget.kind === "all") return;
       if (state.selectedTarget.kind === "channel") {
@@ -607,6 +608,13 @@
     reconcileSelectedTarget(state.view, state.pairedDMs);
     renderHeaderAndTabs();
 
+    const stageEl = document.getElementById("stage-container");
+    const streamEl = document.getElementById("message-stream");
+    const scrollSnapshot =
+      window.ChorusStream && typeof window.ChorusStream.captureScrollSnapshot === "function"
+        ? window.ChorusStream.captureScrollSnapshot(streamEl, stageEl)
+        : null;
+
     const timelineRoot = document.getElementById("timeline-root");
     if (timelineRoot && window.ChorusTimeline && typeof window.ChorusTimeline.render === "function") {
       window.ChorusTimeline.render(timelineRoot, state, actions);
@@ -615,15 +623,16 @@
     if (window.ChorusStream && typeof window.ChorusStream.render === "function") {
       window.ChorusStream.render(
         {
-          scrollEl: document.getElementById("stage-container"),
+          scrollEl: stageEl,
           agentStripEl: document.getElementById("agent-strip"),
           detailsEl: document.getElementById("agent-details"),
           pinEl: document.getElementById("pin-container"),
           mentionsEl: document.getElementById("mentions-artifacts-container"),
-          streamEl: document.getElementById("message-stream"),
+          streamEl,
           newSinceEl: document.getElementById("new-since-banner"),
           titleEl: document.getElementById("active-title"),
           subtitleEl: document.getElementById("active-subtitle"),
+          scrollSnapshot,
         },
         state,
         actions
@@ -648,9 +657,7 @@
     const abortCtrl = new AbortController();
     state.pollAbort = abortCtrl;
     const prevSwarm = state.activeSwarm;
-    const switchedSwarm =
-      (Boolean(prevSwarm) && prevSwarm !== swarmName) ||
-      Boolean(state.view && state.view.swarm && state.view.swarm !== swarmName);
+    const switchedSwarm = Boolean(prevSwarm) && prevSwarm !== swarmName;
     state.activeSwarm = swarmName;
     state.etag = "";
     state.connectionState = "connecting";
@@ -867,7 +874,9 @@
       renderReplyChip();
       setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
 
-      startSwarmLoop(swarm);
+      if (state.activeSwarm === swarm) {
+        startSwarmLoop(swarm);
+      }
     } catch (err) {
       setComposerFeedback(err.message || "Failed to send message.", "error");
     } finally {
@@ -1008,21 +1017,6 @@
         },
         { passive: true }
       );
-      const onScrollKey = (e) => {
-        if (!state.followLive) return;
-        const tag = e.target?.tagName || "";
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return;
-        if (
-          e.key === "ArrowDown" ||
-          e.key === "PageDown" ||
-          e.key === "End" ||
-          (e.key === " " && !e.shiftKey)
-        ) {
-          actions.setFollowLive(false);
-        }
-      };
-      stageEl.addEventListener("keydown", onScrollKey);
-      window.addEventListener("keydown", onScrollKey);
     }
 
     window.addEventListener("resize", () => {

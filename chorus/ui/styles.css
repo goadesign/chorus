@@ -30,7 +30,7 @@
   --border-strong-light: #cbd5e1;
   --border-strong-dark: #334155;
 
-  --accent-light: #2563eb;
+  --accent-light: #1d4ed8;
   --accent-dark: #3b82f6;
   --accent-soft-light: #eff6ff;
   --accent-soft-dark: rgba(59, 130, 246, 0.16);
@@ -257,6 +257,23 @@ button, input, select, textarea {
   display: inline-block;
 }
 
+.agent-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--agent-color, var(--accent)) 16%, var(--bg-surface));
+  color: var(--agent-color, var(--accent));
+  border: 1.5px solid color-mix(in srgb, var(--agent-color, var(--accent)) 45%, transparent);
+  flex-shrink: 0;
+  user-select: none;
+}
+
 /* 1. Single Clean Header Bar */
 .top-bar {
   min-height: 60px;
@@ -335,12 +352,23 @@ button, input, select, textarea {
 .btn-icon {
   background: transparent;
   border: none;
-  border-radius: 6px;
-  padding: 2px 7px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   cursor: pointer;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
+}
+
+#btn-custom-swarm {
+  min-width: 48px;
+  min-height: 48px;
+  margin: -6px -6px -6px 0;
 }
 
 .btn-icon:hover {
@@ -513,16 +541,18 @@ button, input, select, textarea {
 }
 
 .btn-primary {
-  background: var(--accent);
+  background: #1d4ed8;
   color: #ffffff;
   border: none;
   border-radius: 10px;
+  min-height: 44px;
   padding: 8px 18px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   white-space: nowrap;
 }
@@ -543,38 +573,46 @@ button, input, select, textarea {
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
-  padding: 18px 24px 32px;
+  padding: 12px 24px 28px;
 }
 
 .stage-inner {
   width: 100%;
-  max-width: 1440px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* 2. Participants Strip */
 .agent-strip-section {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
 }
 
 .agent-summary {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
   transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+.agent-summary.is-historical {
+  opacity: 0.86;
+}
+
+.agent-summary.is-human-agent {
+  border-left: 3px solid var(--brand-coral);
 }
 
 .agent-summary:hover {
@@ -598,17 +636,17 @@ button, input, select, textarea {
 .agent-name {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 15px;
-  color: var(--text-primary);
+  font-size: 14px;
+  color: var(--agent-color, var(--text-primary));
 }
 
 .agent-status {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 999px;
 }
 
@@ -625,21 +663,32 @@ button, input, select, textarea {
   color: var(--amber);
   border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.agent-mention-dot {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border: 1px solid color-mix(in srgb, var(--coral) 35%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 6px;
   border-radius: 999px;
 }
 
 .agent-caught-up-pill {
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .agent-role-inline {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -910,21 +959,21 @@ button, input, select, textarea {
   text-align: center;
 }
 
-/* 4. Context Strips & Newest-First Stream (Readable 960px measure) */
+/* 4. Context Strips & Newest-First Stream */
 .context-strips,
 .stream-section {
   width: 100%;
-  max-width: 960px;
+  max-width: 1200px;
   min-width: 0;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 #mentions-artifacts-container {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 8px;
 }
 
@@ -1007,12 +1056,45 @@ button, input, select, textarea {
   font-weight: 600;
 }
 
+.new-messages-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--amber-soft);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+  border-radius: 10px;
+}
+
+.new-messages-count {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--amber);
+  margin-right: auto;
+}
+
 .message-stream {
   width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+}
+
+.disclosure-item {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.row-reply-btn {
+  position: absolute;
+  top: 12px;
+  right: 44px;
+  z-index: 2;
+  padding: 4px 12px;
+  font-size: 12.5px;
 }
 
 .pin-disclosure,
@@ -1027,6 +1109,62 @@ button, input, select, textarea {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pin-disclosure[open],
+.mentions-disclosure[open],
+.artifact-disclosure[open],
+.message-disclosure[open],
+.thread-disclosure[open] {
+  border-color: var(--border-strong);
+}
+
+.pin-disclosure[open] > summary,
+.mentions-disclosure[open] > summary,
+.artifact-disclosure[open] > summary,
+.message-disclosure[open] > summary,
+.thread-disclosure[open] > summary {
+  background: color-mix(in srgb, var(--bg-elevated) 60%, var(--bg-surface));
+}
+
+.message-disclosure.is-human-message,
+.thread-disclosure.is-human-message {
+  border-left: 4px solid var(--brand-coral);
+  background: color-mix(in srgb, var(--coral-soft) 28%, var(--bg-surface));
+}
+
+.message-disclosure.is-human-response,
+.thread-disclosure.is-human-response {
+  border-left: 4px solid var(--brand-teal);
+  background: color-mix(in srgb, var(--teal-soft) 36%, var(--bg-surface));
+}
+
+.human-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--coral-soft);
+  color: var(--coral);
+  border: 1px solid color-mix(in srgb, var(--coral) 35%, transparent);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+}
+
+.human-response-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--teal-soft);
+  color: var(--teal);
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 9px;
+  border-radius: 999px;
 }
 
 .pin-disclosure > summary:hover,
@@ -1041,50 +1179,81 @@ button, input, select, textarea {
 .mentions-disclosure > summary,
 .artifact-disclosure > summary,
 .pin-summary,
-.mentions-summary {
+.mentions-summary,
+.artifact-summary {
+  position: relative;
   list-style: none;
   cursor: pointer;
-  padding: 12px 18px;
+  padding: 10px 42px 10px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 
 .thread-disclosure > summary,
-.thread-summary {
+.thread-summary,
+.message-disclosure > summary,
+.message-summary {
+  position: relative;
   list-style: none;
   cursor: pointer;
-  padding: 14px 18px;
+  padding: 12px 112px 12px 16px;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
 }
 
-.message-disclosure > summary,
-.message-summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 12px 18px;
+.row-main {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
-  width: 100%;
-  max-width: 100%;
+  align-items: flex-start;
+  gap: 4px;
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
+}
+
+.pin-disclosure > summary::after,
+.mentions-disclosure > summary::after,
+.artifact-disclosure > summary::after,
+.thread-disclosure > summary::after,
+.message-disclosure > summary::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 0.16s ease, border-color 0.16s ease;
+  pointer-events: none;
+}
+
+.thread-disclosure > summary::after,
+.message-disclosure > summary::after {
+  top: 24px;
+}
+
+.pin-disclosure[open] > summary::after,
+.mentions-disclosure[open] > summary::after,
+.artifact-disclosure[open] > summary::after,
+.thread-disclosure[open] > summary::after,
+.message-disclosure[open] > summary::after {
+  transform: translateY(-25%) rotate(-135deg);
+  border-color: var(--text-primary);
 }
 
 .pin-disclosure > summary::-webkit-details-marker,
@@ -1098,7 +1267,7 @@ button, input, select, textarea {
 .pin-title {
   font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1106,15 +1275,16 @@ button, input, select, textarea {
   flex: 1;
 }
 
-.thread-title {
+.thread-title,
+.message-headline {
   display: block;
   width: 100%;
-  max-width: 100%;
+  max-width: 75ch;
   min-width: 0;
   font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 16px;
-  line-height: 23px;
+  font-size: 15.5px;
+  line-height: 22px;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1126,7 +1296,7 @@ button, input, select, textarea {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -1134,16 +1304,11 @@ button, input, select, textarea {
 .message-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   width: 100%;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text-muted);
-}
-
-.message-meta .stream-action {
-  margin-left: auto;
-  padding: 3px 10px;
-  font-size: 12.5px;
 }
 
 .thread-count-pill {
@@ -1249,36 +1414,27 @@ button, input, select, textarea {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: 14px;
-  color: var(--text-primary);
+  color: var(--agent-color, var(--text-primary));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .message-coordinate,
 .message-time,
 .message-reference {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
 
-.message-headline {
+.thread-latest,
+.message-supporting {
   display: block;
   width: 100%;
-  max-width: 100%;
+  max-width: 75ch;
   min-width: 0;
-  font-size: 15.5px;
-  line-height: 23px;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-latest {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 20px;
   color: var(--text-secondary);
   overflow: hidden;
@@ -1287,9 +1443,10 @@ button, input, select, textarea {
 }
 
 .message-body {
-  padding: 10px 18px 16px;
+  padding: 12px 18px 16px 60px;
+  max-width: calc(75ch + 78px);
   border-top: 1px solid var(--border);
-  font-size: 15.5px;
+  font-size: 15px;
   line-height: 24px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1309,7 +1466,7 @@ button, input, select, textarea {
   background: var(--bg-elevated);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .empty-state {
@@ -1331,13 +1488,13 @@ button, input, select, textarea {
 .composer-dock {
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
-  padding: 12px 24px;
+  padding: 10px 24px;
   flex-shrink: 0;
 }
 
 .composer-card {
   width: 100%;
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -1346,13 +1503,13 @@ button, input, select, textarea {
 
 .composer-box {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   transition: border-color 0.15s;
 }
 
@@ -1419,6 +1576,8 @@ button, input, select, textarea {
 }
 
 .pin-check-label {
+  min-height: 48px;
+  padding: 6px 14px;
   cursor: pointer;
   user-select: none;
 }
