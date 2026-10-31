@@ -128,6 +128,18 @@
       "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Page Up and Page Down move the view, Enter opens, F toggles Follow live.`,
     });
 
+    // Input gate: app.js may switch swarms before this SVG is redrawn. Until
+    // then the chart still shows view.swarm, so every click, key, and pointer
+    // press on it is stopped here, before any handler can act on the newly
+    // active swarm with this chart's messages, targets, or interval.
+    for (const type of ["click", "keydown", "pointerdown"]) {
+      svg.addEventListener(type, (ev) => {
+        if (state.activeSwarm === view.swarm) return;
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+      }, true);
+    }
+
     // Scales: overview maps the whole compressed axis; the main plot maps the
     // selected window.
     const ox = (t) => PLOT_X0 + (axis.pos(t) / axis.total) * plotW;
@@ -376,7 +388,8 @@
 
   // drawOverview draws the whole-history strip and the draggable window.
   // renderedSwarm is the swarm this SVG was drawn from; a drag belongs to it,
-  // not to whatever swarm app.js may have switched to since.
+  // not to whatever swarm app.js may have switched to since. (render's input
+  // gate stops a drag from starting on a stale SVG.)
   function drawOverview(svg, rootEl, renderedSwarm, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
     const strip = el("rect", { class: "tl-overview", x: String(PLOT_X0), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
@@ -413,8 +426,6 @@
     brush.appendChild(t);
     brush.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
-      // app.js already switched to another swarm and this SVG is stale.
-      if (state.activeSwarm !== renderedSwarm) return;
       drags.set(rootEl, {
         pointerId: ev.pointerId,
         startX: ev.clientX,
