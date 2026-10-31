@@ -13,17 +13,24 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
 
 ## Workflow
 
-### Phase 1: Join Swarm & Arm Background Watcher
-- [ ] **Determine the `swarm` name:** Use the current git repository or workspace directory basename (e.g., `"chorus"`) unless the user explicitly specifies a different swarm name.
-- [ ] **Discover or enter `#channels`:** If you were not given a `#channel` name, call `who(agent: "<you>", swarm: "<swarm>", role: "...")` to see active channels and peers. Call `join(agent: "<you>", swarm: "<swarm>", channels: ["#<channel>"], role: "...")` before calling `send`, `read`, `leave`, or `chorus watch`. Calling `join` or `who` binds `<you>` to `<swarm>`—subsequent calls only take `agent`.
+### Phase 1: Join Swarm & Arm Background Watcher (`/chorus` or `$chorus`)
+- [ ] **Resolve `swarm`, `channels`, and `agent`:**
+  - **`swarm`:** Use the user's or lead's explicit swarm name; otherwise use the base repository name (e.g., `"chorus"`—when working in a task clone or worktree like `chorus-<task>`, keep the base repo's swarm `"chorus"` so panes stay in one swarm).
+  - **`channels`:** Use the `#channel`(s) named by the user; if none were given, default to `["#<swarm>"]` (e.g., `["#chorus"]`).
+  - **`agent` (`<you>`):** Use the handle named by the user; if none was given, pick a short model or role handle (`opus`, `sonnet`, `claude`, `codex`, `gpt`, `gemini`, `agy`).
+- [ ] **Enter in one `join` call (do not probe with `who` first):** Call `join(agent: "<you>", swarm: "<swarm>", channels: ["#<channel>"], role: "<client/model + scope>")` directly. Never call `who` to test whether a swarm exists (`who` binds `<you>` to that swarm without joining a channel); only call `who` after `join` when you need to discover other active `#channels` in the swarm. Calling `join` binds `<you>` to `<swarm>`—subsequent `send`, `read`, `leave`, and `chorus watch` calls take only `agent`.
+- [ ] **Ensure a distinct handle per pane:** If `join` rejects `<you>` as registered in another swarm, or if `chorus watch <you>` fails with `already has an active watch` (meaning another pane in the same swarm already holds `<you>`), immediately pick a distinct handle (`opus-2`, `claude-2`, `codex-2`, `gemini-2`) and call `join` with the new handle. **Never call `leave` on the collided handle**, as that unsubscribes the other pane.
 - [ ] **Start the zero-token background watcher (`chorus watch <you>`):** Immediately after `join` (before reading files, editing code, or running tests), start **one** background/async shell command using your exact `agent` handle:
   ```bash
   chorus watch <you>
   ```
 - [ ] **Keep the watcher armed until `leave`:** `chorus watch <you>` blocks at 0 LLM tokens/sec, prints incoming messages plus `! watch: chorus watch <you>`, and exits `0` to wake your turn. Whenever `! watch: chorus watch <you>` appears in a tool or command output and you are staying in the swarm, start `chorus watch <you>` in the background again.
+- [ ] **Act on existing channel state or stand by:**
+  - **If `join` returned an active `pin` manifest or unread task:** Follow the pinned plan and file ownership immediately (or claim an unclaimed slice in `#<channel>`)—never re-claim lead when a `pin` already exists.
+  - **If invoked with no task (`/chorus` or `$chorus`) and `#<channel>` has no `pin` yet:** Briefly report your `@<you>` handle, `#<channel>`, current `members:`, and that `chorus watch <you>` is armed, and tell the user they only need to give the goal to **one** pane (which will pin the plan in `#<channel>` and wake all watching peers).
 
 ### Phase 2: Partition Files & Pin Manifest
-- [ ] **Pin the collaboration manifest (`pin: true`):** Peer agents often share the **same repository working tree**. The task lead (or channel creator) publishes the goal, disjoint file/package ownership, and verification command with `send(agent: "<you>", to: "#<channel>", text: "Goal: ... | Owners: @arch design/+gen/, @api chorus/service.go, @qa chorus/service_test.go | Verify: go test -race ./...", pin: true)`. Resend the full manifest with `pin: true` whenever ownership or shared contracts change.
+- [ ] **Pin the collaboration manifest (`pin: true`):** Peer agents often share the **same repository working tree**. The task lead (the pane given the goal when no `pin` exists) publishes the goal, disjoint file/package ownership, and verification command with `send(agent: "<you>", to: "#<channel>", text: "Goal: ... | Owners: @arch design/+gen/, @api chorus/service.go, @qa chorus/service_test.go | Verify: go test -race ./...", pin: true)`. Resend the full manifest with `pin: true` whenever ownership or shared contracts change.
 - [ ] **Invite unsubscribed peers:** Agents only receive messages from channels they have joined. Invite a peer via direct message (`send(agent: "<you>", to: "@db", text: "Join #db-migration — need your input on 004")`) or `@mention` them in a shared channel they already joined.
 
 ### Phase 3: Work Locally & Exchange Messages
