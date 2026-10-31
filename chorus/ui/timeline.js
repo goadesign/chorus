@@ -542,12 +542,12 @@
   function drawMentions(svg, e, mx, laneY, colors) {
     const x = mx(e.t).toFixed(1);
     const y0 = laneY.get(e.sender);
-    // The server compares handles case-insensitively; so does this lookup.
-    const byLower = new Map([...laneY].map(([h, y]) => [h.toLowerCase(), y]));
-    for (const handle of mentionedHandles(e.text)) {
-      if (handle === e.sender.toLowerCase()) continue;
-      const y1 = byLower.get(handle);
-      if (y1 == null) continue;
+    // The server matches mentions case-insensitively, so @api reaches both
+    // @API and @api when both exist; every lane whose handle matches gets a
+    // connector, except the sender's own.
+    const mentioned = new Set(mentionedHandles(e.text));
+    for (const [handle, y1] of laneY) {
+      if (handle === e.sender || !mentioned.has(handle.toLowerCase())) continue;
       svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
       svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
     }
