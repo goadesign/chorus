@@ -279,6 +279,32 @@ func TestLocalBaseURL(t *testing.T) {
 	}
 }
 
+// TestDefaultListenAddrIsLoopback verifies that chorus serve and chorus up
+// listen only on the loopback interface unless -addr is passed, and that the
+// background service is started with that loopback address.
+func TestDefaultListenAddrIsLoopback(t *testing.T) {
+	cfg, err := parseServerFlags(nil)
+	if err != nil {
+		t.Fatalf("parseServerFlags failed: %v", err)
+	}
+	if cfg.addr != "127.0.0.1:9440" {
+		t.Fatalf("default addr = %q, want 127.0.0.1:9440", cfg.addr)
+	}
+	args := buildServeArgs(cfg)
+	found := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-addr" && args[i+1] == "127.0.0.1:9440" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("buildServeArgs(default) does not pass -addr 127.0.0.1:9440: %v", args)
+	}
+	if got := localBaseURL(cfg.addr); got != "http://localhost:9440" {
+		t.Fatalf("localBaseURL(default) = %q, want http://localhost:9440", got)
+	}
+}
+
 // TestBuildServeArgs verifies that buildServeArgs forwards all non-secret
 // serverConfig fields and never leaks redisPassword onto the command line.
 func TestBuildServeArgs(t *testing.T) {
