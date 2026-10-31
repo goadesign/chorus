@@ -892,6 +892,7 @@ details.pin-panel > summary:hover {
 .stream-section {
   width: 100%;
   max-width: 88ch;
+  min-width: 0;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -967,6 +968,8 @@ details.pin-panel > summary:hover {
 }
 
 .message-stream {
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -975,6 +978,10 @@ details.pin-panel > summary:hover {
 /* Thread & Message Progressive Disclosure Cards */
 details.thread-disclosure,
 details.msg-disclosure {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1356,6 +1363,7 @@ details.msg-disclosure > summary:hover {
   stroke: var(--accent);
   stroke-width: 1.5;
   cursor: grab;
+  touch-action: none;
 }
 
 .tl-window:active {
@@ -1432,6 +1440,30 @@ details.msg-disclosure > summary:hover {
 
 .tl-read.is-behind {
   fill: var(--amber);
+}
+
+.tl-read-edge {
+  fill: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.tl-read-edge.is-behind {
+  fill: var(--amber);
+}
+
+.tl-mention {
+  fill: none;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.tl-mention-end {
+  fill: none;
+  stroke-width: 1.25;
+  pointer-events: none;
 }
 
 .tl-dot {
@@ -1540,6 +1572,10 @@ details.msg-disclosure > summary:hover {
 .mentions-disclosure,
 .artifact-disclosure,
 .message-disclosure {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1557,6 +1593,10 @@ details.msg-disclosure > summary:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .thread-disclosure > summary,
@@ -1568,7 +1608,10 @@ details.msg-disclosure > summary:hover {
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .message-disclosure > summary,
@@ -1580,7 +1623,10 @@ details.msg-disclosure > summary:hover {
   flex-direction: column;
   align-items: stretch;
   gap: 3px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .pin-disclosure > summary::-webkit-details-marker,
