@@ -53,10 +53,6 @@
   const LABEL_W = 112;
   const PAD = 8;
 
-  // Agent colors follow the Chorus logo, assigned by sorted handle so a given
-  // agent keeps its color across renders of the same swarm.
-  const PALETTE = ["#F59E0B", "#14B8A6", "#3B82F6", "#F43F5E", "#8B5CF6", "#22C55E", "#EC4899", "#64748B"];
-
   // Per-root viewport memory. It is interaction state, never swarm data:
   // lastLive is the interval most recently shown while following live, and
   // frozen is the interval shown while paused without an explicit filter.
@@ -195,20 +191,23 @@
   }
 
   // toEvent tags a message with where it lives: a channel name, or for a
-  // direct message the recipient's inbox ("@handle") plus the sorted pair
-  // (a, b) that app.js uses to select a DM conversation.
+  // direct message the recipient's inbox ("@handle") plus the conversation
+  // key app.js uses to select it (lowercased handles, sorted, joined by ↔).
   function toEvent(target, m) {
     const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to };
     if (target.startsWith("@")) {
-      const [a, b] = [m.sender, target.slice(1)].sort();
+      const s = m.sender.toLowerCase();
+      const r = target.slice(1).toLowerCase();
+      const [a, b] = s <= r ? [s, r] : [r, s];
       e.pair = { a, b, pairKey: a + "↔" + b };
     }
     return e;
   }
 
-  // sameTarget reports whether event e belongs to the selected channel or DM
-  // conversation.
+  // sameTarget reports whether event e belongs to the selected view: every
+  // message for "all", one channel, or one DM conversation.
   function sameTarget(sel, e) {
+    if (sel.kind === "all") return true;
     return sel.kind === "channel" ? e.target === sel.name : !!e.pair && e.pair.pairKey === sel.pairKey;
   }
 
@@ -240,9 +239,11 @@
     return lanes;
   }
 
+  // colorMap uses app.js's agentColorHex so each agent has the same color
+  // in the timeline and the message list, stable as agents come and go.
+  // app.js defines window.ChorusUI before it first calls render.
   function colorMap(lanes) {
-    const sorted = lanes.map((l) => l.handle).sort();
-    return new Map(sorted.map((h, i) => [h, PALETTE[i % PALETTE.length]]));
+    return new Map(lanes.map((l) => [l.handle, window.ChorusUI.agentColorHex(l.handle, l.human ? "human" : "")]));
   }
 
   // buildAxis maps real time to a compressed position: time inside active
