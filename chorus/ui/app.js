@@ -333,8 +333,7 @@
 
     setFilterAgent(handle) {
       const clean = String(handle || "").replace(/^@/, "");
-      state.filterAgent =
-        state.filterAgent.toLowerCase() === clean.toLowerCase() ? "" : clean;
+      state.filterAgent = state.filterAgent === clean ? "" : clean;
       renderAll();
     },
 
@@ -820,9 +819,8 @@
       return;
     }
 
-    const agentLower = agent.toLowerCase();
     const existingAgent = (state.view?.agents || []).find(
-      (a) => a.handle.toLowerCase() === agentLower
+      (a) => a.handle === agent
     );
     if (existingAgent && existingAgent.role !== "human") {
       setComposerFeedback(
@@ -841,7 +839,7 @@
         const alreadyMember =
           Boolean(existingAgent) &&
           Boolean(ch) &&
-          (ch.positions || []).some((p) => p.handle.toLowerCase() === agentLower);
+          (ch.positions || []).some((p) => p.handle === agent);
         if (!alreadyMember) {
           await callMCPTool("join", {
             swarm,
@@ -907,6 +905,7 @@
         state.selectedTarget = null;
         state.selectedMessage = null;
         state.timeWindow = null;
+        state.followLive = true;
         startSwarmLoop(next);
       }
     });
@@ -921,6 +920,9 @@
       }
       if (!state.swarms.includes(clean)) state.swarms.push(clean);
       state.selectedTarget = null;
+      state.selectedMessage = null;
+      state.timeWindow = null;
+      state.followLive = true;
       startSwarmLoop(clean);
     });
 

@@ -21,7 +21,7 @@
     const visible = targetEntries.filter((entry) => matches(entry, state));
     renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
-    renderMentions(els.mentionsEl, targetEntries, state, actions);
+    renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderNewMessages(els.newSinceEl, targetEntries, state, actions);
     renderMessages(els.streamEl, els.scrollEl, visible, targetEntries, state, actions);
     renderSelection(els.detailsEl, state, actions, entries, visible);
@@ -53,8 +53,8 @@
     if (target?.kind !== "dm") return entries;
     return entries.filter((entry) => {
       if (!entry.target.startsWith("@")) return false;
-      const sender = entry.message.sender.toLowerCase();
-      const recipient = entry.target.slice(1).toLowerCase();
+      const sender = entry.message.sender;
+      const recipient = entry.target.slice(1);
       return (sender === target.a && recipient === target.b)
         || (sender === target.b && recipient === target.a);
     });
@@ -73,10 +73,10 @@
     if (state.timeWindow && (message.sent_at_ms < state.timeWindow.startMs
       || message.sent_at_ms > state.timeWindow.endMs)) return false;
     if (state.filterAgent) {
-      const handle = state.filterAgent.toLowerCase();
-      if (message.sender.toLowerCase() !== handle
-        && entry.target.toLowerCase() !== `@${handle}`
-        && !mentionedHandles(message.text).some((mention) => mention.toLowerCase() === handle)) return false;
+      const handle = state.filterAgent;
+      if (message.sender !== handle
+        && entry.target !== `@${handle}`
+        && !mentionedHandles(message.text).some((mention) => mention.toLowerCase() === handle.toLowerCase())) return false;
     }
     if (state.filterArtifact && !artifacts(message.text).includes(state.filterArtifact)) return false;
     const query = state.searchQuery.toLowerCase();
@@ -213,12 +213,20 @@
     return clauses;
   }
 
-  // renderMentions shows explicit mentions, never inferred requests, waiting
-  // states, or work completion. Replies are linked only inside their channel.
-  function renderMentions(root, entries, state, actions) {
+  // renderMentions shows written mentions of known people and the reserved
+  // @all audience, never inferred requests or work states. Other tokens remain
+  // in the original messages. Replies are linked only inside their channel.
+  function renderMentions(root, entries, state, actions, allEntries) {
+    const mentionTargets = new Set(["all", ...state.view.agents.map((agent) => agent.handle.toLowerCase())]);
+    for (const entry of allEntries) {
+      mentionTargets.add(entry.message.sender.toLowerCase());
+      if (entry.target.startsWith("@")) mentionTargets.add(entry.target.slice(1).toLowerCase());
+    }
     const mentions = [];
     for (const entry of entries) {
-      for (const handle of mentionedHandles(entry.message.text)) mentions.push({ entry, handle });
+      for (const handle of mentionedHandles(entry.message.text)) {
+        if (mentionTargets.has(handle.toLowerCase())) mentions.push({ entry, handle });
+      }
     }
     const open = root.querySelector("details")?.open === true;
     const disclosure = element("details", "mentions-disclosure");
@@ -226,7 +234,7 @@
     const last = mentions.at(-1);
     disclosure.append(element("summary", "mentions-summary", last
       ? `@${last.entry.message.sender} mentioned @${last.handle} · ${age(last.entry.message.sent_at_ms)} ago`
-      : "No mentions in these retained messages"));
+      : "No mentions of known participants"));
     const list = element("ul", "mention-list");
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
@@ -320,14 +328,6 @@
       }
     } else {
       for (const entry of entries) nodes.push(messageDisclosure(entry, state, actions, byTarget, openKeys));
-    }
-    const firstNew = entries.find((entry) => Object.hasOwn(state.lastSeenSeqByTarget, entry.target)
-      && entry.message.seq > state.lastSeenSeqByTarget[entry.target]);
-    if (firstNew) {
-      const divider = element("div", "new-messages-divider", "New since you looked");
-      const index = nodes.findIndex((node) => node.dataset.messageKey === coordinate(firstNew)
-        || node.querySelector(`[data-message-key="${coordinate(firstNew)}"]`));
-      if (index >= 0) nodes.splice(index, 0, divider);
     }
     replaceKeepingFocus(root, nodes);
     if (state.followLive && !state.selectedMessage) scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -433,6 +433,15 @@
         element("time", "message-time", clock(message.sent_at_ms))),
       element("span", "message-headline", headline(message.text)));
     summary.dataset.focusKey = `message:${key}`;
+    if (entry.target.startsWith("#")) {
+      const reply = actionButton("Reply", `reply:${key}`, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        actions.setReplyTo(entry.target, message.seq, message.sender);
+      });
+      reply.classList.add("message-reply");
+      summary.querySelector(".message-meta").append(reply);
+    }
     summary.addEventListener("click", (event) => {
       event.preventDefault();
       details.open = !details.open;
@@ -445,8 +454,6 @@
     const body = element("div", "message-body", formattedText(message.text));
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
-      controls.append(actionButton("Reply", `reply:${key}`,
-        () => actions.setReplyTo(entry.target, message.seq, message.sender)));
       const parent = byTarget.get(entry.target).get(message.reply_to);
       if (parent) controls.append(actionButton(`Reply to #${parent.message.seq}`, `parent:${key}`,
         () => actions.selectMessage(entry.target, parent.message.seq)));
