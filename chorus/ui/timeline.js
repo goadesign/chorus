@@ -92,6 +92,12 @@
     const hadFocus = rootEl.contains(document.activeElement);
     clear(rootEl);
     if (!view) {
+      // app.js clears the view when it switches swarms, before loading the
+      // new one. The old chart is gone, so a drag on it ends here without
+      // applying or restoring anything, and its pointer capture is released.
+      const d = drags.get(rootEl);
+      dropDrag(rootEl);
+      if (d && rootEl.hasPointerCapture(d.pointerId)) rootEl.releasePointerCapture(d.pointerId);
       rootEl.appendChild(note("Loading swarm…"));
       return;
     }
