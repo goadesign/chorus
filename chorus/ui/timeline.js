@@ -47,11 +47,18 @@
   // letter or digit, then up to 31 more letters, digits, '_' or '-'.
   const MENTION_RE = /(^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?![A-Za-z0-9_-])/g;
   // Layout constants in px.
-  const OVERVIEW_H = 28;
-  const AXIS_H = 18;
-  const LANE_H = 26;
-  const LABEL_W = 112;
+  const OVERVIEW_H = 34;
+  const AXIS_H = 26;
+  const LANE_H = 38;
+  const LABEL_W = 160;
   const PAD = 8;
+  // Horizontal space between the label gutter (and the right edge) and the
+  // plot, so the first and last dots never touch a label or the border.
+  const PLOT_PAD = 18;
+  const PLOT_X0 = LABEL_W + PLOT_PAD;
+  // Dot radius, and radius of the selected dot.
+  const DOT_R = 6;
+  const DOT_R_SELECTED = 8;
 
   // Per-root viewport memory. It is interaction state, never swarm data:
   // swarm is the swarm it belongs to (memory is reset when the swarm
@@ -59,6 +66,13 @@
   // is the interval most recently shown while following live, and frozen is
   // the interval shown while paused without an explicit filter.
   const viewports = new WeakMap();
+
+  // Per-root drag state while the overview window is being dragged. The
+  // pointer is captured on rootEl, which survives re-renders, so a drag keeps
+  // working while setTimeWindow redraws the SVG on every frame.
+  const drags = new WeakMap();
+  // Roots whose drag listeners are installed (once per root element).
+  const dragRoots = new WeakSet();
 
   /**
    * render draws the timeline into rootEl.
@@ -91,11 +105,14 @@
     }
 
     const width = Math.max(320, rootEl.clientWidth || 960);
-    const lanes = laneList(view, events);
-    const colors = colorMap(lanes);
+    const sel = state.selectedTarget || null;
+    const picked = state.selectedMessage || null;
     const axis = buildAxis(events);
     const win = viewport(mem, state, axis);
-    const plotW = width - LABEL_W - PAD * 2;
+    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
+    const lanes = laneList(view, events, inWindow, picked);
+    const colors = colorMap(lanes);
+    const plotW = width - PLOT_X0 - PLOT_PAD;
     // While reviewing earlier messages, one extra row under the lanes holds
     // the notice, so it never overlaps the axis labels.
     const noticeH = state.followLive ? 0 : 18;
@@ -113,19 +130,18 @@
 
     // Scales: overview maps the whole compressed axis; the main plot maps the
     // selected window.
-    const ox = (t) => LABEL_W + PAD + (axis.pos(t) / axis.total) * plotW;
+    const ox = (t) => PLOT_X0 + (axis.pos(t) / axis.total) * plotW;
     const w0 = axis.pos(win.startMs);
     const w1 = Math.max(w0 + 1, axis.pos(win.endMs));
-    const mx = (t) => LABEL_W + PAD + ((axis.pos(t) - w0) / (w1 - w0)) * plotW;
-    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
+    const mx = (t) => PLOT_X0 + ((axis.pos(t) - w0) / (w1 - w0)) * plotW;
 
     const match = matcher(state);
-    const sel = state.selectedTarget || null;
-    const picked = state.selectedMessage || null;
     const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
     const pan = (next) => panTo(rootEl, state, actions, next);
-    drawOverview(svg, events, axis, ox, win, colors, plotW, actions, pan);
+    installDrag(rootEl);
+    drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
+    svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
     drawAxis(svg, axis, w0, w1, mx, top, plotW, height);
     const laneTop = top + AXIS_H;
@@ -142,10 +158,10 @@
     if (channel) {
       drawPin(svg, channel, mx, inWindow, laneTop, lanes.length);
       drawReplies(svg, channel, mx, inWindow, laneY, colors);
-      drawReadPositions(svg, channel, mx, inWindow, win, laneY, plotW);
+      drawReadPositions(svg, channel, mx, inWindow, laneY);
     }
 
-    const order = events.filter((e) => laneY.has(e.sender));
+    const order = events;
     for (const e of order) {
       if (!inWindow(e.t)) continue;
       const y = laneY.get(e.sender);
@@ -156,7 +172,7 @@
         class: "tl-dot" + (isSel ? " is-selected" : "") + (dim ? " is-dim" : "") + (sel && sameTarget(sel, e) ? " is-target" : ""),
         cx: mx(e.t).toFixed(1),
         cy: String(y),
-        r: isSel ? "6" : "4",
+        r: String(isSel ? DOT_R_SELECTED : DOT_R),
         fill: colors.get(e.sender),
       });
       const title = el("title", {});
@@ -170,7 +186,7 @@
     if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
 
     if (!state.followLive) {
-      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(height - PAD), "text-anchor": "end" });
+      const back = el("text", { class: "tl-review", x: String(width - PLOT_PAD), y: String(height - PAD), "text-anchor": "end" });
       back.textContent = "Reviewing earlier messages · press F to follow live";
       svg.appendChild(back);
     }
@@ -227,15 +243,19 @@
     actions.selectMessage(e.target, e.seq);
   }
 
-  // laneList returns one lane per sender seen in retained messages plus every
-  // registered agent, sorted with humans first and then by handle. A sender
-  // with no current registration is marked "not registered": it may have
-  // left, expired, or disconnected, which the data cannot tell apart. The
-  // human mark reflects the agent's current role only.
-  function laneList(view, events) {
+  // laneList returns the lanes to draw: every registered agent, every sender
+  // with a message inside the visible window, and the sender of the selected
+  // message (so keyboard selection never lands on a missing lane). Humans
+  // come first, then handles in order. A sender with no current registration
+  // keeps its messages but is drawn muted; the data cannot tell whether it
+  // left, expired, or disconnected, so the lane makes no claim about why.
+  // The human mark reflects the agent's current role only.
+  function laneList(view, events, inWindow, picked) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
-    const handles = new Set(events.map((e) => e.sender));
-    for (const h of live.keys()) handles.add(h);
+    const handles = new Set(live.keys());
+    for (const e of events) {
+      if (inWindow(e.t) || (picked && picked.target === e.target && picked.seq === e.seq)) handles.add(e.sender);
+    }
     const lanes = [...handles].map((h) => {
       const a = live.get(h);
       return { handle: h, human: !!(a && a.role === "human"), unregistered: !a };
@@ -349,13 +369,13 @@
       (!art || e.text.includes(art));
   }
 
-  function drawOverview(svg, events, axis, ox, win, colors, plotW, actions, pan) {
+  function drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
-    const strip = el("rect", { class: "tl-overview", x: String(LABEL_W + PAD), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
+    const strip = el("rect", { class: "tl-overview", x: String(PLOT_X0), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
     // Clicking the strip outside the window centers the view there.
     strip.addEventListener("click", (ev) => {
       const box = svg.getBoundingClientRect();
-      const frac = (ev.clientX - box.left - LABEL_W - PAD) / plotW;
+      const frac = (ev.clientX - box.left - PLOT_X0) / plotW;
       pan(centerWindow(axis, win, timeAt(axis, Math.min(1, Math.max(0, frac)) * axis.total)));
     });
     svg.appendChild(strip);
@@ -363,16 +383,17 @@
       svg.appendChild(el("line", {
         class: "tl-tick",
         x1: ox(e.t).toFixed(1), x2: ox(e.t).toFixed(1),
-        y1: String(y0 + 4), y2: String(y0 + OVERVIEW_H - 12),
+        y1: String(y0 + 5), y2: String(y0 + OVERVIEW_H - 13),
         stroke: colors.get(e.sender),
       }));
     }
-    const label = el("text", { class: "tl-label", x: String(PAD), y: String(y0 + 14) });
+    const label = el("text", { class: "tl-label", x: String(PAD), y: String(y0 + 17) });
     label.textContent = "Whole history";
     svg.appendChild(label);
 
-    // The window rectangle can be dragged; dropping it stops Follow live and
-    // stores the new range through actions.setTimeWindow.
+    // The window rectangle can be dragged. While it moves, the new range is
+    // sent to app.js on every animation frame, so the plot and the message
+    // list follow the drag live.
     const x0 = ox(win.startMs);
     const x1 = Math.max(x0 + 6, ox(win.endMs));
     const brush = el("rect", {
@@ -382,47 +403,55 @@
     const t = el("title", {});
     t.textContent = "Drag, or click the strip, to look at another part of the history";
     brush.appendChild(t);
-    // Stop the browser from scrolling or zooming while a touch drags it.
-    brush.style.touchAction = "none";
-    brush.addEventListener("pointerdown", (ev) => startDrag(ev, svg, brush, axis, ox, win, plotW, actions));
+    brush.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      rootEl.setPointerCapture(ev.pointerId);
+      drags.set(rootEl, {
+        pointerId: ev.pointerId,
+        startX: ev.clientX,
+        base: win,
+        original: state.timeWindow || null,
+        axis,
+        plotW,
+        actions,
+        frame: 0,
+        next: null,
+      });
+    });
     svg.appendChild(brush);
   }
 
-  function startDrag(ev, svg, brush, axis, ox, win, plotW, actions) {
-    ev.preventDefault();
-    brush.setPointerCapture(ev.pointerId);
-    const startX = ev.clientX;
-    const baseX = Number(brush.getAttribute("x"));
-    const w = Number(brush.getAttribute("width"));
-    const minX = LABEL_W + PAD;
-    const maxX = LABEL_W + PAD + plotW - w;
-    let x = baseX;
-    const move = (e) => {
-      x = Math.min(maxX, Math.max(minX, baseX + (e.clientX - startX)));
-      brush.setAttribute("x", x.toFixed(1));
+  // installDrag adds the pointer listeners for window drags to rootEl once.
+  // They read the drag state stored by the brush's pointerdown.
+  function installDrag(rootEl) {
+    if (dragRoots.has(rootEl)) return;
+    dragRoots.add(rootEl);
+    // Stop the browser from scrolling or zooming while a touch drags.
+    rootEl.style.touchAction = "pan-y";
+    rootEl.addEventListener("pointermove", (ev) => {
+      const d = drags.get(rootEl);
+      if (!d || ev.pointerId !== d.pointerId) return;
+      const delta = ((ev.clientX - d.startX) / d.plotW) * d.axis.total;
+      d.next = shiftWindow(d.axis, d.base, delta);
+      if (!d.frame) {
+        d.frame = requestAnimationFrame(() => {
+          d.frame = 0;
+          if (drags.get(rootEl) === d && d.next) d.actions.setTimeWindow(d.next);
+        });
+      }
+    });
+    const end = (ev, cancelled) => {
+      const d = drags.get(rootEl);
+      if (!d || ev.pointerId !== d.pointerId) return;
+      drags.delete(rootEl);
+      if (d.frame) cancelAnimationFrame(d.frame);
+      if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
+      // An interrupted drag puts back the filter that was set before it.
+      if (cancelled) d.actions.setTimeWindow(d.original);
+      else if (d.next) d.actions.setTimeWindow(d.next);
     };
-    const stop = () => {
-      brush.removeEventListener("pointermove", move);
-      brush.removeEventListener("pointerup", up);
-      brush.removeEventListener("pointercancel", cancel);
-    };
-    // An interrupted drag (pointercancel) puts the window back unchanged.
-    const cancel = () => {
-      stop();
-      brush.setAttribute("x", baseX.toFixed(1));
-    };
-    const up = () => {
-      stop();
-      // Convert the dragged pixel offset back to a time range of the same
-      // compressed length.
-      const frac0 = (x - minX) / plotW;
-      const frac1 = (x + w - minX) / plotW;
-      actions.setFollowLive(false);
-      actions.setTimeWindow({ startMs: timeAt(axis, frac0 * axis.total), endMs: timeAt(axis, frac1 * axis.total) });
-    };
-    brush.addEventListener("pointermove", move);
-    brush.addEventListener("pointerup", up);
-    brush.addEventListener("pointercancel", cancel);
+    rootEl.addEventListener("pointerup", (ev) => end(ev, false));
+    rootEl.addEventListener("pointercancel", (ev) => end(ev, true));
   }
 
   // timeAt inverts axis.pos by binary search over real time.
@@ -437,8 +466,10 @@
     return Math.round(hi);
   }
 
+  // drawAxis draws the quiet breaks and the clock labels at both window edges
+  // on the upper line of the axis row; the pin badge uses the lower line.
   function drawAxis(svg, axis, w0, w1, mx, top, plotW, height) {
-    const y = top + AXIS_H - 6;
+    const y = top + 11;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
@@ -449,23 +480,41 @@
       svg.appendChild(lbl);
     }
     // Clock labels at both window edges.
-    const left = el("text", { class: "tl-axis", x: String(LABEL_W + PAD), y: String(y) });
+    const left = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(y) });
     left.textContent = clock(timeAt(axis, w0));
-    const right = el("text", { class: "tl-axis", x: String(LABEL_W + PAD + plotW), y: String(y), "text-anchor": "end" });
+    const right = el("text", { class: "tl-axis", x: String(PLOT_X0 + plotW), y: String(y), "text-anchor": "end" });
     right.textContent = clock(timeAt(axis, w1));
     svg.appendChild(left);
     svg.appendChild(right);
   }
 
+  // drawLane draws a lane line and its @handle label, clipped to the label
+  // gutter so a long handle never runs into the plot. Details go in the
+  // label's tooltip rather than on the line.
   function drawLane(svg, lane, y, width, colors) {
     svg.appendChild(el("line", {
       class: "tl-lane" + (lane.human ? " is-human" : "") + (lane.unregistered ? " is-left" : ""),
-      x1: String(LABEL_W), x2: String(width - PAD), y1: String(y), y2: String(y),
+      x1: String(LABEL_W), x2: String(width - PLOT_PAD), y1: String(y), y2: String(y),
     }));
-    const label = el("text", { class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""), x: String(PAD), y: String(y + 4) });
-    label.textContent = "@" + lane.handle + (lane.human ? " · human" : "") + (lane.unregistered ? " · not registered" : "");
+    const label = el("text", {
+      class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""),
+      x: String(PAD), y: String(y + 4), "clip-path": "url(#tl-gutter)",
+    });
+    label.textContent = "@" + lane.handle;
     label.setAttribute("fill", colors.get(lane.handle));
+    const title = el("title", {});
+    title.textContent = "@" + lane.handle + (lane.human ? " · human" : "") +
+      (lane.unregistered ? " · no current registration (messages kept)" : "");
+    label.appendChild(title);
     svg.appendChild(label);
+  }
+
+  // gutterClip returns the clipPath (id tl-gutter) that keeps lane labels
+  // inside the label column of the given width.
+  function gutterClip(width) {
+    const clip = el("clipPath", { id: "tl-gutter" });
+    clip.appendChild(el("rect", { x: "0", y: "0", width: String(width), height: "100000" }));
+    return clip;
   }
 
   // drawPin places the single current-pin landmark at the pinned message's
@@ -476,7 +525,7 @@
     if (!msg || !inWindow(msg.sent_at_ms)) return;
     const x = mx(msg.sent_at_ms).toFixed(1);
     svg.appendChild(el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) }));
-    const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 6), "text-anchor": "middle" });
+    const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
     lbl.textContent = `Pin #${channel.pin.seq}`;
     svg.appendChild(lbl);
   }
@@ -503,47 +552,31 @@
     }
   }
 
-  // drawReadPositions shows where each member of the channel last read, sent,
-  // or joined. A bar on the member's own lane marks that message when it is
-  // retained and inside the view. Otherwise a short note at the edge of the
-  // lane says where it is instead of placing it at a time it does not have:
-  // earlier or later than the view, or older than the kept history.
-  function drawReadPositions(svg, channel, mx, inWindow, win, laneY, plotW) {
+  // drawReadPositions marks, on each member's own lane, the message that
+  // member last read, sent, or joined at in this channel, when that message
+  // is retained and inside the view. Positions elsewhere are not drawn; the
+  // participant cards report every member's read state.
+  function drawReadPositions(svg, channel, mx, inWindow, laneY) {
     const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
     for (const p of channel.positions || []) {
       const y = laneY.get(p.handle);
-      if (y == null || p.read_seq === 0) continue;
       const m = bySeq.get(p.read_seq);
-      const summary = p.behind > 0
+      if (y == null || !m || !inWindow(m.sent_at_ms)) continue;
+      // A short bar centered on the member's own lane line, so it cannot be
+      // read as belonging to the lane above or below.
+      const x = mx(m.sent_at_ms);
+      const mark = el("rect", {
+        class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
+        x: (x - 1.5).toFixed(1),
+        y: String(y - LANE_H / 2 + 6),
+        width: "3",
+        height: String(LANE_H - 12),
+        rx: "1.5",
+      });
+      const title = el("title", {});
+      title.textContent = p.behind > 0
         ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
         : `@${p.handle} is caught up to #${p.read_seq}`;
-      let mark;
-      if (m && inWindow(m.sent_at_ms)) {
-        // A short bar centered on the member's own lane line, so it cannot
-        // be read as belonging to the lane above or below.
-        const x = mx(m.sent_at_ms);
-        mark = el("rect", {
-          class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
-          x: (x - 1.5).toFixed(1),
-          y: String(y - LANE_H / 2 + 3),
-          width: "3",
-          height: String(LANE_H - 6),
-          rx: "1.5",
-        });
-      } else {
-        const later = m && m.sent_at_ms > win.endMs;
-        mark = el("text", {
-          class: "tl-read-edge" + (p.behind > 0 ? " is-behind" : ""),
-          x: String(later ? LABEL_W + PAD + plotW : LABEL_W + PAD),
-          y: String(y - 4),
-          "text-anchor": later ? "end" : "start",
-        });
-        mark.textContent = !m
-          ? `◂ read #${p.read_seq} (older than kept history)`
-          : later ? `read #${p.read_seq} ▸` : `◂ read #${p.read_seq}`;
-      }
-      const title = el("title", {});
-      title.textContent = summary;
       mark.appendChild(title);
       svg.appendChild(mark);
     }
