@@ -52,6 +52,9 @@ type JoinPayloadTransport struct {
 	Topic *string `json:"topic,omitempty"`
 	// Optional role description to advertise for the calling agent.
 	Role *string `json:"role,omitempty"`
+	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
+	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	Model *string `json:"model"`
 	// Maximum recent messages to return per joined channel.
 	Tail *JoinPayloadIntTransport `json:"tail,omitempty"`
 }
@@ -69,6 +72,9 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 	}
 	if value.Channels == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
+	}
+	if value.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
 	}
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
@@ -93,6 +99,15 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 	if value.Role != nil {
 		if utf8.RuneCountInString(*value.Role) > 120 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 120, false))
+		}
+	}
+	if value.Model != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		if utf8.RuneCountInString(*value.Model) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
+		}
+		if utf8.RuneCountInString(*value.Model) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 64, false))
 		}
 	}
 	if value.Tail != nil {
@@ -625,6 +640,9 @@ type WhoPayloadTransport struct {
 	Swarm *string `json:"swarm"`
 	// Optional role description to advertise to peers in this swarm.
 	Role *string `json:"role,omitempty"`
+	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
+	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	Model *string `json:"model"`
 }
 
 // ValidateWhoPayloadTransport checks decoded JSON before it becomes a service value.
@@ -638,6 +656,9 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 	if value.Swarm == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
 	}
+	if value.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
+	}
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
 	}
@@ -647,6 +668,15 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 	if value.Role != nil {
 		if utf8.RuneCountInString(*value.Role) > 120 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *value.Role, utf8.RuneCountInString(*value.Role), 120, false))
+		}
+	}
+	if value.Model != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *value.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		if utf8.RuneCountInString(*value.Model) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
+		}
+		if utf8.RuneCountInString(*value.Model) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 64, false))
 		}
 	}
 	return err
@@ -1016,6 +1046,7 @@ func DecodeJoinPayload(data []byte) (out *chorus.JoinPayload, err error) {
 			Swarm: *body.Swarm,
 			Topic: body.Topic,
 			Role:  body.Role,
+			Model: *body.Model,
 		}
 		if body.Tail != nil {
 			out.Tail = int(*body.Tail)
@@ -1273,6 +1304,7 @@ func DecodeWhoPayload(data []byte) (out *chorus.WhoPayload, err error) {
 			Agent: *body.Agent,
 			Swarm: *body.Swarm,
 			Role:  body.Role,
+			Model: *body.Model,
 		}
 	}
 	return out, nil

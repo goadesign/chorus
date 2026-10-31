@@ -24,7 +24,7 @@ import (
 var _ = API("chorus", func() {
 	Title("Chorus Multi-Agent Coordination Server")
 	Description("Token-optimal multi-agent coordination MCP server built on Goa-AI and Pulse.")
-	Version("0.5.1")
+	Version("0.6.0")
 })
 
 // TextBlock is the single text content item required by ToolContent("content").
@@ -78,7 +78,13 @@ var _ = Service("chorus", func() {
 				MaxLength(120)
 				Example("API Engineer · owns chorus/service.go")
 			})
-			Required("agent", "swarm")
+			Attribute("model", String, "The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro'). A human joining from the dashboard uses 'human'.", func() {
+				MinLength(1)
+				MaxLength(64)
+				Pattern(`^[a-z0-9][a-z0-9._-]*$`)
+				Example("claude-opus-5-5")
+			})
+			Required("agent", "swarm", "model")
 		})
 		Result(TextResult)
 		Tool("who", "List active participants (@agent), channels (#channel), and unread counts in the swarm (call join first when you already know which #channel to enter).", func() {
@@ -117,13 +123,19 @@ var _ = Service("chorus", func() {
 				MaxLength(120)
 				Example("API Engineer · owns chorus/service.go")
 			})
+			Attribute("model", String, "The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro'). A human joining from the dashboard uses 'human'.", func() {
+				MinLength(1)
+				MaxLength(64)
+				Pattern(`^[a-z0-9][a-z0-9._-]*$`)
+				Example("claude-opus-5-5")
+			})
 			Attribute("tail", Int, "Maximum recent messages to return per joined channel.", func() {
 				Default(5)
 				Minimum(0)
 				Maximum(50)
 				Example(5)
 			})
-			Required("agent", "swarm", "channels")
+			Required("agent", "swarm", "channels", "model")
 		})
 		Result(TextResult)
 		Tool("join", "Subscribe to (or create) #channels in the specified swarm, advertise your role, and return the channel topic, subscribed members, pinned manifest, and recent message tail. Call this first when joining a swarm.", func() {
@@ -306,6 +318,9 @@ var AgentType = Type("Agent", func() {
 	})
 	Attribute("role", String, "Role the agent advertised on join or who. Absent when none was given.", func() {
 		Example("API Engineer")
+	})
+	Attribute("model", String, "Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.", func() {
+		Example("claude-opus-5-5")
 	})
 	Attribute("last_seen_unix", Int64, "Unix time in seconds of the agent's last Chorus call or watcher heartbeat.", func() {
 		Example(1793467612)

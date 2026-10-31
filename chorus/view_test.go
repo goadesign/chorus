@@ -26,6 +26,7 @@ type (
 		Agents []struct {
 			Handle   string   `json:"handle"`
 			Role     *string  `json:"role"`
+			Model    *string  `json:"model"`
 			Channels []string `json:"channels"`
 		} `json:"agents"`
 		// Channels lists channels sorted by name.
@@ -130,6 +131,33 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	assert.Equal(t, 0, doc2.Channels[0].Positions[0].Behind)
 	assert.False(t, doc2.Channels[0].Positions[0].Mentioned)
 	assert.Equal(t, 0, doc2.Inboxes[0].Behind)
+}
+
+// TestJoinRequiresDeclaredModel verifies that who and join reject a missing
+// or malformed model, that the declared model is stored with the agent and
+// returned by the view, that ordinary calls keep it, and that a later join
+// with another model replaces it.
+func TestJoinRequiresDeclaredModel(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	api := cluster.newAgent(0, "models", "api")
+	base := cluster.replicas[0].httpServer.URL
+
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": nil})
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": "Claude Opus"})
+	api.callExpectingError("who", map[string]any{"model": nil})
+
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": "claude-opus-5-5"})
+	api.send("#m", "hello", 0)
+	api.call("read", map[string]any{"wait_sec": 0})
+	doc, _ := getView(t, base, "models", "", 0, http.StatusOK)
+	require.Len(t, doc.Agents, 1)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, "claude-opus-5-5", *doc.Agents[0].Model)
+
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": "gpt-5-codex"})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, "gpt-5-codex", *doc.Agents[0].Model)
 }
 
 // TestSwarmViewWaitsForChanges verifies the If-None-Match wait: it returns

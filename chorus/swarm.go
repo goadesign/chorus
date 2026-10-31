@@ -229,20 +229,27 @@ func (s *swarmHandle) hasActiveWatch(agent string) bool {
 }
 
 // touchAgent ensures the calling agent is registered in the swarm's replicated
-// map and refreshes its role and LastSeenUnix timestamp when needed. When forceSync
-// is true or the agent record is newly created or changes role, touchAgent waits
-// for the local rmap replica to observe the committed revision.
-func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now time.Time, forceSync bool) error {
+// map and refreshes its role, declared model, and LastSeenUnix timestamp when
+// needed. who and join pass the role and model; every other caller passes ""
+// for both, which keeps the stored values. When forceSync is true or the agent
+// record is newly created or its role or model changes, touchAgent waits for
+// the local rmap replica to observe the committed revision.
+func (s *swarmHandle) touchAgent(ctx context.Context, agent, role, model string, now time.Time, forceSync bool) error {
 	key := agentMapKey(agent)
 	raw, ok := s.state.Get(key)
 	rec, valid := parseAgentRecord(raw)
 
-	roleChanged := role != "" && role != rec.Role
+	// who and join pass the declared role and model; every other call passes
+	// "" for both and only refreshes presence, keeping the stored values.
+	changed := (role != "" && role != rec.Role) || (model != "" && model != rec.Model)
 	if role != "" {
 		rec.Role = role
 	}
+	if model != "" {
+		rec.Model = model
+	}
 	stale := now.Unix()-rec.LastSeenUnix >= int64(touchInterval.Seconds())
-	if ok && valid && !roleChanged && !stale && !forceSync {
+	if ok && valid && !changed && !stale && !forceSync {
 		return nil
 	}
 
@@ -251,7 +258,7 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now ti
 	if err != nil {
 		return err
 	}
-	if !ok || !valid || roleChanged || forceSync {
+	if !ok || !valid || changed || forceSync {
 		if _, err := s.state.SetAndWait(ctx, key, encoded); err != nil {
 			return fmt.Errorf("sync agent %q presence: %w", agent, err)
 		}
@@ -265,13 +272,13 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now ti
 
 // directory returns the formatted swarm snapshot for caller after reaping any
 // expired agents and refreshing caller's presence and optional role.
-func (s *swarmHandle) directory(ctx context.Context, caller, role string) (string, error) {
+func (s *swarmHandle) directory(ctx context.Context, caller, role, model string) (string, error) {
 	now := s.clock()
 	reaped, err := s.reapExpiredAgents(ctx, now)
 	if err != nil {
 		return "", err
 	}
-	if err := s.touchAgent(ctx, caller, role, now, reaped); err != nil {
+	if err := s.touchAgent(ctx, caller, role, model, now, reaped); err != nil {
 		return "", err
 	}
 	snap := s.state.Map()
@@ -289,6 +296,7 @@ func (s *swarmHandle) joinChannels(
 	channels []string,
 	topic string,
 	role string,
+	model string,
 	tail int,
 ) (string, error) {
 	now := s.clock()
@@ -334,7 +342,7 @@ func (s *swarmHandle) joinChannels(
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, role, now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, role, model, now, true); err != nil {
 		return "", err
 	}
 
@@ -498,7 +506,7 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, "", "", now, true); err != nil {
 		return "", err
 	}
 	return "left " + strings.Join(unique, ", "), nil
@@ -585,7 +593,7 @@ func (s *swarmHandle) publish(
 		}
 		defer s.releaseWatch(sender)
 	}
-	if err := s.touchAgent(ctx, sender, "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, sender, "", "", s.clock(), false); err != nil {
 		return "", err
 	}
 
@@ -789,7 +797,7 @@ func (s *swarmHandle) readUnread(
 		}
 		defer s.releaseWatch(agent)
 	}
-	if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, agent, "", "", s.clock(), false); err != nil {
 		return "", err
 	}
 	if limit <= 0 {
@@ -854,7 +862,7 @@ func (s *swarmHandle) waitForUnread(
 			if !s.isLiveAgent(agent) {
 				return nil, nil
 			}
-			if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
+			if err := s.touchAgent(ctx, agent, "", "", s.clock(), false); err != nil {
 				return nil, err
 			}
 		case _, ok := <-notifyCh:

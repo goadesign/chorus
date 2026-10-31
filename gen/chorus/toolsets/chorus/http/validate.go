@@ -24,6 +24,9 @@ func ValidateJoinPayloadTransport(body *JoinPayloadTransport) (err error) {
 	if body.Channels == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
 	}
+	if body.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
+	}
 	if body.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *body.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
 	}
@@ -47,6 +50,15 @@ func ValidateJoinPayloadTransport(body *JoinPayloadTransport) (err error) {
 	if body.Role != nil {
 		if utf8.RuneCountInString(*body.Role) > 120 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
+		}
+	}
+	if body.Model != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		if utf8.RuneCountInString(*body.Model) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Model) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 64, false))
 		}
 	}
 	if body.Tail != nil {
@@ -162,6 +174,9 @@ func ValidateWhoPayloadTransport(body *WhoPayloadTransport) (err error) {
 	if body.Swarm == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
 	}
+	if body.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
+	}
 	if body.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *body.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
 	}
@@ -171,6 +186,15 @@ func ValidateWhoPayloadTransport(body *WhoPayloadTransport) (err error) {
 	if body.Role != nil {
 		if utf8.RuneCountInString(*body.Role) > 120 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
+		}
+	}
+	if body.Model != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", *body.Model, "^[a-z0-9][a-z0-9._-]*$"))
+		if utf8.RuneCountInString(*body.Model) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Model) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *body.Model, utf8.RuneCountInString(*body.Model), 64, false))
 		}
 	}
 	return

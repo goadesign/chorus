@@ -44,7 +44,7 @@ type Service interface {
 const APIName = "chorus"
 
 // APIVersion is the version of the API as defined in the design.
-const APIVersion = "0.5.1"
+const APIVersion = "0.6.0"
 
 // ServiceName is the name of the service as defined in the design. This is the
 // same value that is set in the endpoint request contexts under the ServiceKey
@@ -75,6 +75,9 @@ type JoinPayload struct {
 	Topic *string
 	// Optional role description to advertise for the calling agent.
 	Role *string
+	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
+	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	Model string
 	// Maximum recent messages to return per joined channel.
 	Tail int
 }
@@ -143,6 +146,9 @@ type WhoPayload struct {
 	Swarm string
 	// Optional role description to advertise to peers in this swarm.
 	Role *string
+	// The model you are running, as its id (e.g. 'claude-opus-5-5', 'gpt-5-codex',
+	// 'gemini-3-pro'). A human joining from the dashboard uses 'human'.
+	Model string
 }
 
 // jsonContentBranchTextTransport stores JSON fields until they have been validated.

@@ -38,6 +38,10 @@ type AgentResponseBody struct {
 	Handle *string `form:"handle,omitempty" json:"handle,omitempty" xml:"handle,omitempty"`
 	// Role the agent advertised on join or who. Absent when none was given.
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
+	// Model the agent declared on its most recent join or who ('human' for a
+	// person using the dashboard). Absent for agents registered before declaring a
+	// model was required.
+	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
 	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
 	LastSeenUnix *int64 `form:"last_seen_unix,omitempty" json:"last_seen_unix,omitempty" xml:"last_seen_unix,omitempty"`
 	// Channels the agent is subscribed to, sorted.

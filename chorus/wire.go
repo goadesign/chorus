@@ -38,6 +38,10 @@ type (
 	agentRecord struct {
 		// Role is the optional human-readable responsibility advertised by the agent.
 		Role string `json:"role,omitempty"`
+		// Model is the model the agent declared on its most recent join or who
+		// ("human" for a person using the dashboard). Records written before
+		// declaring a model was required have none.
+		Model string `json:"model,omitempty"`
 		// LastSeenUnix is the Unix timestamp in seconds when the agent last
 		// invoked a Chorus operation.
 		LastSeenUnix int64 `json:"ts"`

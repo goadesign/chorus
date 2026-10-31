@@ -1458,6 +1458,9 @@ func (a *emulatedAgent) withIdentity(toolName string, args map[string]any) map[s
 		merged["agent"] = a.handle
 	}
 	if toolName == "who" || toolName == "join" {
+		if _, ok := merged["model"]; !ok {
+			merged["model"] = "test-model"
+		}
 		if _, ok := merged["swarm"]; !ok {
 			swarm := a.swarm
 			if swarm == "" {
