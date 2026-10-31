@@ -355,13 +355,26 @@ func TestRunWatch(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := svc.Join(ctx, &genchorus.JoinPayload{
-		Agent:    "api",
-		Swarm:    "default",
-		Channels: []string{"#auth"},
-		Tail:     5,
-	}); err != nil {
-		t.Fatalf("Join(#auth): %v", err)
+	for _, agent := range []string{"api", "db", "qa"} {
+		if _, err := svc.Join(ctx, &genchorus.JoinPayload{
+			Agent:    agent,
+			Swarm:    "default",
+			Channels: []string{"#auth"},
+			Tail:     5,
+		}); err != nil {
+			t.Fatalf("Join(#auth) as %s: %v", agent, err)
+		}
+	}
+
+	// 0. Unregistered handle in chorus watch must fail immediately naming registered handles.
+	var typoOut bytes.Buffer
+	typoErr := runWatch([]string{
+		"-addr", parsedURL.Host,
+		"-agent", "api-typo",
+		"-wait", "5s",
+	}, &typoOut)
+	if typoErr == nil || !strings.Contains(typoErr.Error(), `unknown agent "api-typo"`) || !strings.Contains(typoErr.Error(), "@api") {
+		t.Fatalf("expected unregistered agent error listing @api, got: %v", typoErr)
 	}
 
 	// 1. Instant hook check (-wait 0s) with no unread messages must write 0 bytes.
@@ -391,6 +404,18 @@ func TestRunWatch(t *testing.T) {
 	}()
 
 	time.Sleep(80 * time.Millisecond)
+
+	// A second concurrent chorus watch for the same agent identity must fail fast.
+	var dupOut bytes.Buffer
+	dupErr := runWatch([]string{
+		"-addr", parsedURL.Host,
+		"-agent", "api",
+		"-wait", "5s",
+	}, &dupOut)
+	if dupErr == nil || !strings.Contains(dupErr.Error(), `agent "api" already has an active watch`) {
+		t.Fatalf("expected duplicate active watch error for @api, got: %v", dupErr)
+	}
+
 	if _, err := svc.Send(ctx, &genchorus.SendPayload{
 		Agent: "db",
 		Swarm: "default",
@@ -418,9 +443,31 @@ func TestRunWatch(t *testing.T) {
 	}
 
 	got := watchOut.String()
-	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n"
+	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n[watch exited — re-arm in background: chorus watch -agent api -mentions -wait 5s]\n"
 	if got != want {
 		t.Fatalf("runWatch output = %q, want %q", got, want)
+	}
+
+	// 3. When the server is unreachable and stays down, runWatch must fail
+	// bounded by watchReconnectWindow (or -wait when shorter) rather than hanging.
+	lnDead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate dead port: %v", err)
+	}
+	deadAddr := lnDead.Addr().String()
+	_ = lnDead.Close()
+
+	var deadOut bytes.Buffer
+	deadStart := time.Now()
+	if err := runWatch([]string{
+		"-addr", deadAddr,
+		"-agent", "api",
+		"-wait", "450ms",
+	}, &deadOut); err == nil {
+		t.Fatal("expected runWatch against unreachable server to return an error")
+	}
+	if elapsed := time.Since(deadStart); elapsed < 200*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("expected unreachable runWatch to retry briefly and fail within 450ms..2s, took %v", elapsed)
 	}
 }
 
@@ -476,22 +523,36 @@ func TestRedisHandover(t *testing.T) {
 	baseA, _ := url.Parse("http://" + lnA.Addr().String())
 
 	// Populate initial channel state on Server A.
-	if _, err := svcA.Join(context.Background(), &genchorus.JoinPayload{
-		Agent:    "lead",
-		Swarm:    "default",
-		Channels: []string{"#foundry"},
-		Tail:     5,
-	}); err != nil {
-		t.Fatalf("Server A Join(#foundry): %v", err)
+	for _, agent := range []string{"lead", "watcher", "reviewer"} {
+		if _, err := svcA.Join(context.Background(), &genchorus.JoinPayload{
+			Agent:    agent,
+			Swarm:    "default",
+			Channels: []string{"#foundry"},
+			Tail:     5,
+		}); err != nil {
+			t.Fatalf("Server A Join(#foundry) as %s: %v", agent, err)
+		}
 	}
 
-	// 2. Server A serves an in-flight long-poll request.
+	// 2. Server A serves an in-flight long-poll request AND a background runWatch
+	// that must survive the daemon restart without crashing.
+	serverAddr := lnA.Addr().String()
 	longPollStarted := make(chan struct{})
 	longPollDone := make(chan error, 1)
 	go func() {
 		close(longPollStarted)
 		_, readErr := callWatchRead(context.Background(), baseA, "lead", "default", "", 10, 10, false)
 		longPollDone <- readErr
+	}()
+
+	var surviveWatchOut bytes.Buffer
+	surviveWatchDone := make(chan error, 1)
+	go func() {
+		surviveWatchDone <- runWatch([]string{
+			"-addr", serverAddr,
+			"-agent", "watcher",
+			"-wait", "5s",
+		}, &surviveWatchOut)
 	}()
 	<-longPollStarted
 	time.Sleep(100 * time.Millisecond)
@@ -510,14 +571,14 @@ func TestRedisHandover(t *testing.T) {
 		t.Fatalf("expected graceful shutdown to complete promptly via BaseContext cancellation, took %v", shutDuration)
 	}
 
-	// Verify long-poll request returned without hanging for 10s.
+	// Verify raw single-request long-poll returned without hanging for 10s.
 	select {
 	case <-longPollDone:
 	case <-time.After(time.Second):
 		t.Fatal("long-poll request did not return after server shutdown")
 	}
 
-	// 4. Server B starts against the same Redis and dataDir.
+	// 4. Server B starts on the same address against the same Redis and dataDir.
 	rdbB := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer func() { _ = rdbB.Close() }()
 	if err := connectOrStartRedis(context.Background(), rdbB, redisAddr, dataDir); err != nil {
@@ -530,14 +591,36 @@ func TestRedisHandover(t *testing.T) {
 	}
 	defer func() { _ = svcB.Close() }()
 
-	lnB, err := net.Listen("tcp", "127.0.0.1:0")
+	lnB, err := net.Listen("tcp", serverAddr)
 	if err != nil {
-		t.Fatalf("Server B listen: %v", err)
+		t.Fatalf("Server B listen on %s: %v", serverAddr, err)
 	}
 	httpServerB := &http.Server{Handler: chorus.NewHTTPHandler(svcB)}
 	go func() { _ = httpServerB.Serve(lnB) }()
 	defer func() { _ = httpServerB.Close() }()
 	baseB, _ := url.Parse("http://" + lnB.Addr().String())
+
+	// Publish a message on Server B and verify the surviving runWatch reconnects and delivers it.
+	if _, err := svcB.Send(context.Background(), &genchorus.SendPayload{
+		Agent: "reviewer",
+		Swarm: "default",
+		To:    "#foundry",
+		Text:  "LGTM on max_tokens fix",
+	}); err != nil {
+		t.Fatalf("Server B Send(#foundry): %v", err)
+	}
+	select {
+	case watchErr := <-surviveWatchDone:
+		if watchErr != nil {
+			t.Fatalf("expected runWatch to survive Server A -> Server B restart, got error: %v", watchErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for surviving runWatch to wake on Server B message")
+	}
+	wantSurvive := "#foundry#1 @reviewer: LGTM on max_tokens fix\n[watch exited — re-arm in background: chorus watch -agent watcher -wait 5s]\n"
+	if got := surviveWatchOut.String(); got != wantSurvive {
+		t.Fatalf("surviving runWatch output = %q, want %q", got, wantSurvive)
+	}
 
 	// 5. Server B tool calls succeed and access pre-existing swarm state.
 	whoRes, err := svcB.Who(context.Background(), &genchorus.WhoPayload{

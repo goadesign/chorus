@@ -14,6 +14,7 @@ import (
 	"time"
 
 	genchorus "github.com/goadesign/chorus/gen/chorus"
+	"goa.design/pulse/streaming"
 )
 
 type (
@@ -43,6 +44,25 @@ type (
 	}
 )
 
+const (
+	// prefixAgent prefixes agent presence records in the swarm rmap.
+	prefixAgent = "agent:"
+	// prefixChannel prefixes channel topic records in the swarm rmap.
+	prefixChannel = "chan:"
+	// prefixPin prefixes active pinned channel message records in the swarm rmap.
+	prefixPin = "pin:"
+	// prefixSub prefixes per-agent channel subscription lists in the swarm rmap.
+	prefixSub = "sub:"
+	// prefixSeq prefixes monotonic per-target sequence counters in the swarm rmap.
+	prefixSeq = "seq:"
+	// prefixHead prefixes latest published sequence numbers in the swarm rmap.
+	prefixHead = "head:"
+	// prefixMention prefixes latest channel mention/reply sequence numbers in the swarm rmap.
+	prefixMention = "mention:"
+	// prefixCursor prefixes per-agent read watermarks in the swarm rmap.
+	prefixCursor = "cur:"
+)
+
 // formatDirectory renders the complete swarm snapshot for the calling agent in
 // Chorus's compact line-oriented wire format. It reads only the provided
 // in-memory replicated map snapshot and subscription list, performing no I/O.
@@ -51,8 +71,8 @@ type (
 //
 //	me: @api (API Engineer)
 //	agents:
-//	@api (API Engineer) [online]
-//	@db (Database Specialist) [online]
+//	@api (API Engineer)
+//	@db (Database Specialist)
 //	channels:
 //	#arch [sub, 1 unread, head #2] - Schema and API contract decisions
 //	dm: 0 unread
@@ -77,10 +97,12 @@ func formatDirectory(
 
 	var agents []string
 	var channels []string
-	for k := range snap {
+	for k, v := range snap {
 		switch {
 		case strings.HasPrefix(k, prefixAgent):
-			agents = append(agents, strings.TrimPrefix(k, prefixAgent))
+			if _, live := parseLiveAgentRecord(now, onlineWindow, v); live {
+				agents = append(agents, strings.TrimPrefix(k, prefixAgent))
+			}
 		case strings.HasPrefix(k, prefixChannel):
 			channels = append(channels, strings.TrimPrefix(k, prefixChannel))
 		}
@@ -101,9 +123,7 @@ func formatDirectory(
 				b.WriteString(rec.Role)
 				b.WriteString(")")
 			}
-			b.WriteString(" [")
-			b.WriteString(formatLiveness(now, onlineWindow, rec.LastSeenUnix))
-			b.WriteString("]\n")
+			b.WriteByte('\n')
 		}
 	}
 
@@ -142,13 +162,11 @@ func formatDirectory(
 	return b.String()
 }
 
-// formatChannelMembers renders the compact "members: @a (Role) [online], ..."
+// formatChannelMembers renders the compact "members: @a (Role), @b (Role)"
 // line for a joined channel from the in-memory replicated map snapshot and
 // per-agent subscription sets.
 func formatChannelMembers(
 	channel string,
-	now time.Time,
-	onlineWindow time.Duration,
 	snap map[string]string,
 	subsByAgent map[string][]string,
 ) string {
@@ -178,9 +196,6 @@ func formatChannelMembers(
 			b.WriteString(rec.Role)
 			b.WriteString(")")
 		}
-		b.WriteString(" [")
-		b.WriteString(formatLiveness(now, onlineWindow, rec.LastSeenUnix))
-		b.WriteByte(']')
 	}
 	return b.String()
 }
@@ -244,23 +259,6 @@ func textResult(text string) *genchorus.TextResult {
 	}
 }
 
-// formatLiveness returns "online" when lastSeenUnix is within onlineWindow of
-// now, or "idle <Xm>" / "idle <Xh>" when older.
-func formatLiveness(now time.Time, onlineWindow time.Duration, lastSeenUnix int64) string {
-	if lastSeenUnix <= 0 {
-		return "online"
-	}
-	age := max(time.Duration(0), now.Sub(time.Unix(lastSeenUnix, 0)))
-	if age <= onlineWindow {
-		return "online"
-	}
-	mins := max(1, int(age.Minutes()))
-	if mins < 60 {
-		return fmt.Sprintf("idle %dm", mins)
-	}
-	return fmt.Sprintf("idle %dh", mins/60)
-}
-
 // encodeAgentRecord serializes an agentRecord to JSON for storage in rmap.
 func encodeAgentRecord(rec agentRecord) (string, error) {
 	b, err := json.Marshal(rec)
@@ -277,6 +275,19 @@ func parseAgentRecord(raw string) (agentRecord, bool) {
 	}
 	var rec agentRecord
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return agentRecord{}, false
+	}
+	return rec, true
+}
+
+// parseLiveAgentRecord decodes raw as an agentRecord and reports whether the
+// agent has been active within onlineWindow of now.
+func parseLiveAgentRecord(now time.Time, onlineWindow time.Duration, raw string) (agentRecord, bool) {
+	rec, valid := parseAgentRecord(raw)
+	if !valid {
+		return agentRecord{}, false
+	}
+	if rec.LastSeenUnix > 0 && now.Sub(time.Unix(rec.LastSeenUnix, 0)) > onlineWindow {
 		return agentRecord{}, false
 	}
 	return rec, true
@@ -336,4 +347,206 @@ func isAlnumByte(b byte) bool {
 // isHandleChar reports whether b is a valid agent handle byte ([a-zA-Z0-9_-]).
 func isHandleChar(b byte) bool {
 	return isAlnumByte(b) || b == '_' || b == '-'
+}
+
+// formatReadOutput renders a slice of unread message lines, or "none" when empty.
+func formatReadOutput(lines []string) string {
+	if len(lines) == 0 {
+		return "none"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatHandleList renders a sorted slice of agent handles as "@a, @b".
+func formatHandleList(handles []string) string {
+	slices.Sort(handles)
+	prefixed := make([]string, len(handles))
+	for i, h := range handles {
+		prefixed[i] = "@" + h
+	}
+	return strings.Join(prefixed, ", ")
+}
+
+// formatWatchHint returns the 1-line background watcher reminder appended to
+// join and send responses when the calling agent does not currently have an
+// active blocking watch in flight.
+func formatWatchHint(swarm, agent string) string {
+	if swarm != "" && swarm != "default" {
+		return fmt.Sprintf("! no active watch — run in background: chorus watch -agent %s -swarm %s -mentions -wait 5m", agent, swarm)
+	}
+	return fmt.Sprintf("! no active watch — run in background: chorus watch -agent %s -mentions -wait 5m", agent)
+}
+
+// deduplicateStrings returns a new slice preserving the order of first appearance
+// with duplicate strings removed.
+func deduplicateStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if !slices.Contains(out, item) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// hasChannelSubscribers reports whether any agent in subsByAgent is subscribed
+// to channel.
+func hasChannelSubscribers(channel string, subsByAgent map[string][]string) bool {
+	for _, subs := range subsByAgent {
+		if slices.Contains(subs, channel) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentMapKey returns the rmap key storing presence metadata for agent.
+func agentMapKey(agent string) string {
+	return prefixAgent + agent
+}
+
+// channelMapKey returns the rmap key storing the topic for channel ("#name").
+func channelMapKey(channel string) string {
+	return prefixChannel + channel
+}
+
+// pinMapKey returns the rmap key storing the active pinned messageEvent JSON
+// for channel ("#name").
+func pinMapKey(channel string) string {
+	return prefixPin + channel
+}
+
+// subMapKey returns the rmap key storing the JSON array of subscribed channels
+// for agent.
+func subMapKey(agent string) string {
+	return prefixSub + agent
+}
+
+// seqMapKey returns the rmap key storing the monotonic sequence counter for
+// target ("#channel" or "@agent").
+func seqMapKey(target string) string {
+	return prefixSeq + target
+}
+
+// headMapKey returns the rmap key storing the latest sequence number published
+// to target ("#channel" or "@agent").
+func headMapKey(target string) string {
+	return prefixHead + target
+}
+
+// mentionMapKey returns the rmap key storing the latest sequence number in
+// channel where handleLower (lowercase agent handle or "all") was @mentioned
+// or replied to.
+func mentionMapKey(handleLower, channel string) string {
+	return prefixMention + handleLower + ":" + channel
+}
+
+// cursorMapKey returns the rmap key storing agent's read watermark on target
+// ("#channel" or "@agent").
+func cursorMapKey(agent, target string) string {
+	return prefixCursor + agent + ":" + target
+}
+
+// streamName returns the Pulse stream name for target ("#channel" or "@agent")
+// within swarm.
+func streamName(swarm, target string) string {
+	if strings.HasPrefix(target, "#") {
+		return fmt.Sprintf("chorus:%s:chan:%s", swarm, strings.TrimPrefix(target, "#"))
+	}
+	return fmt.Sprintf("chorus:%s:dm:%s", swarm, strings.TrimPrefix(target, "@"))
+}
+
+// semaphoreName returns the Pulse semaphore name serializing publications to
+// target ("#channel" or "@agent") within swarm.
+func semaphoreName(swarm, target string) string {
+	return fmt.Sprintf("chorus:%s:pub:%s", swarm, target)
+}
+
+// formatDeltaLines decodes snapshot events with Seq > afterSeq from target up
+// to maxMessages (skipping messages authored by agent while still advancing the
+// sequence watermark), returning the formatted wire lines and the highest
+// sequence number reached.
+func formatDeltaLines(
+	agent string,
+	target string,
+	afterSeq int,
+	maxMessages int,
+	events []streaming.SnapshotEvent,
+) ([]string, int, error) {
+	var lines []string
+	var lastSeq int
+	for _, ev := range events {
+		var msg messageEvent
+		if err := json.Unmarshal(ev.Payload(), &msg); err != nil {
+			return nil, 0, fmt.Errorf("decode message event %s in %s: %w", ev.ID(), target, err)
+		}
+		if msg.Seq <= afterSeq {
+			continue
+		}
+		if strings.EqualFold(msg.Sender, agent) {
+			lastSeq = msg.Seq
+			continue
+		}
+		if len(lines) >= maxMessages {
+			break
+		}
+		lines = append(lines, formatMessageLine(target, msg))
+		lastSeq = msg.Seq
+	}
+	return lines, lastSeq, nil
+}
+
+// formatTailLines decodes the active pinned manifest line (if any) and up to
+// tail most recent formatted messages from events (deduplicating the pinned
+// message when it falls within the tail window) along with the current head
+// sequence number of the stream.
+func formatTailLines(
+	target string,
+	tail int,
+	rawHead string,
+	rawPin string,
+	events []streaming.SnapshotEvent,
+) ([]string, int, error) {
+	headSeq := parseSeq(rawHead)
+
+	var pinMsg messageEvent
+	hasPin := false
+	if rawPin != "" {
+		if err := json.Unmarshal([]byte(rawPin), &pinMsg); err == nil && pinMsg.Seq > 0 {
+			hasPin = true
+			if pinMsg.Seq > headSeq {
+				headSeq = pinMsg.Seq
+			}
+		}
+	}
+
+	decoded := make([]messageEvent, 0, len(events))
+	for _, ev := range events {
+		var msg messageEvent
+		if err := json.Unmarshal(ev.Payload(), &msg); err != nil {
+			return nil, 0, fmt.Errorf("decode message event %s in %s: %w", ev.ID(), target, err)
+		}
+		decoded = append(decoded, msg)
+		if msg.Seq >= headSeq {
+			headSeq = msg.Seq
+		}
+	}
+
+	var lines []string
+	if hasPin {
+		lines = append(lines, "pin "+formatMessageLine(target, pinMsg))
+	}
+	if tail <= 0 || len(decoded) == 0 {
+		return lines, headSeq, nil
+	}
+	if len(decoded) > tail {
+		decoded = decoded[len(decoded)-tail:]
+	}
+	for _, msg := range decoded {
+		if hasPin && msg.Seq == pinMsg.Seq {
+			continue
+		}
+		lines = append(lines, formatMessageLine(target, msg))
+	}
+	return lines, headSeq, nil
 }

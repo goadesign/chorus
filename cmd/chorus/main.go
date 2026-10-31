@@ -40,7 +40,7 @@ type (
 		swarmTTL time.Duration
 		// streamMaxLen is the maximum number of messages retained per stream.
 		streamMaxLen int
-		// onlineWindow is the duration within which an active agent is marked online.
+		// onlineWindow is the inactivity duration after which an agent's registration expires.
 		onlineWindow time.Duration
 		// origins is a comma-separated list of allowed Origin header values.
 		origins string
@@ -57,8 +57,8 @@ const (
 	defaultSwarmTTL = 24 * time.Hour
 	// defaultStreamMaxLen is the default maximum retained messages per stream.
 	defaultStreamMaxLen = 500
-	// defaultOnlineWindow is the default online activity window.
-	defaultOnlineWindow = 2 * time.Minute
+	// defaultOnlineWindow is the default agent inactivity expiration window.
+	defaultOnlineWindow = 5 * time.Minute
 	// initialPingTimeout bounds the fast check for an already-running Redis instance.
 	initialPingTimeout = 500 * time.Millisecond
 	// autoStartTimeout bounds waiting for an auto-started local Redis or Docker container.
@@ -225,7 +225,7 @@ func parseServerFlags(args []string) (serverConfig, error) {
 	fs.IntVar(&cfg.redisDB, "redis-db", 0, "Redis database index")
 	fs.DurationVar(&cfg.swarmTTL, "swarm-ttl", defaultSwarmTTL, "Sliding TTL for swarm state and streams")
 	fs.IntVar(&cfg.streamMaxLen, "stream-max-len", defaultStreamMaxLen, "Maximum retained messages per channel or DM stream")
-	fs.DurationVar(&cfg.onlineWindow, "online-window", defaultOnlineWindow, "Activity window for marking agents [online]")
+	fs.DurationVar(&cfg.onlineWindow, "online-window", defaultOnlineWindow, "Inactivity window before agent registration expires")
 	fs.StringVar(&cfg.origins, "origins", "", "Comma-separated list of allowed HTTP Origin header values")
 	if err := fs.Parse(args); err != nil {
 		return serverConfig{}, err
