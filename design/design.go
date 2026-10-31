@@ -313,7 +313,7 @@ var AgentType = Type("Agent", func() {
 	Attribute("channels", ArrayOf(String), "Channels the agent is subscribed to, sorted.", func() {
 		Example([]string{"#arch"})
 	})
-	Attribute("watching_on_this_server", Boolean, "True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see.")
+	Attribute("watching_on_this_server", Boolean, "True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see. Starting or stopping a watch does not end a wait on its own, so the value can lag until the next swarm change or the end of the wait.")
 	Required("handle", "last_seen_unix", "channels", "watching_on_this_server")
 })
 
@@ -378,13 +378,11 @@ var _ = Service("view", func() {
 	Description("Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.")
 
 	Error("not_modified", ErrorResult, "The swarm did not change before the wait ended.")
-	Error("forbidden", ErrorResult, "The request's Host or Origin header is not allowed.")
 
 	HTTP(func() {
 		Response("not_modified", StatusNotModified, func() {
 			Body(Empty)
 		})
-		Response("forbidden", StatusForbidden)
 	})
 
 	Method("swarms", func() {

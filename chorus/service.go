@@ -153,9 +153,12 @@ func WithClock(clock func() time.Time) Option {
 // svc at POST /mcp, the embedded dashboard page at GET /, the read-only
 // dashboard data routes GET /swarms and
 // GET /swarms/{swarm}/view, and a liveness probe reporting X-Chorus-Version at
-// GET /healthz, returning the resulting http.Handler. origins lists the
-// browser Origin values allowed in addition to the dashboard's own loopback
-// origin; the dashboard routes also require a loopback Host header.
+// GET /healthz, returning the resulting http.Handler. origins lists every
+// browser Origin value allowed on POST /mcp and the dashboard routes. Browsers
+// send Origin on the dashboard page's POST /mcp calls, so callers that serve
+// the page must include its own origin (for example http://localhost:9440);
+// cmd/chorus does this from the listen port. The dashboard routes also
+// require a loopback Host header.
 func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	chorusEndpoints := genchorus.NewEndpoints(svc)
 	mcpAdapter := genmcpchorus.NewMCPAdapter(chorusEndpoints, nil)

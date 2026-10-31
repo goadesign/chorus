@@ -42,7 +42,6 @@ func (c *Client) BuildSwarmsRequest(ctx context.Context, v any) (*http.Request, 
 // restored after having been read.
 // DecodeSwarmsResponse may return the following errors:
 //   - "not_modified" (type *goa.ServiceError): http.StatusNotModified
-//   - "forbidden" (type *goa.ServiceError): http.StatusForbidden
 //   - error: internal error
 func DecodeSwarmsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (result any, decodeErr error) {
@@ -142,20 +141,6 @@ func DecodeSwarmsResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 				return nil, goahttp.ErrValidationError("view", "swarms", err)
 			}
 			return nil, NewSwarmsNotModified(name, id, message, temporary, timeout, fault)
-		case http.StatusForbidden:
-			var (
-				body SwarmsForbiddenResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("view", "swarms", err)
-			}
-			err = ValidateSwarmsForbiddenResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("view", "swarms", err)
-			}
-			return nil, NewSwarmsForbidden(&body)
 		default:
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
@@ -217,7 +202,6 @@ func EncodeViewRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.R
 // after having been read.
 // DecodeViewResponse may return the following errors:
 //   - "not_modified" (type *goa.ServiceError): http.StatusNotModified
-//   - "forbidden" (type *goa.ServiceError): http.StatusForbidden
 //   - error: internal error
 func DecodeViewResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (result any, decodeErr error) {
@@ -328,20 +312,6 @@ func DecodeViewResponse(decoder func(*http.Response) goahttp.Decoder, restoreBod
 				return nil, goahttp.ErrValidationError("view", "view", err)
 			}
 			return nil, NewViewNotModified(name, id, message, temporary, timeout, fault)
-		case http.StatusForbidden:
-			var (
-				body ViewForbiddenResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("view", "view", err)
-			}
-			err = ValidateViewForbiddenResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("view", "view", err)
-			}
-			return nil, NewViewForbidden(&body)
 		default:
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {

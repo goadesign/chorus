@@ -64,19 +64,6 @@ func EncodeSwarmsError(encoder func(context.Context, http.ResponseWriter) goahtt
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotModified)
 			return nil
-		case "forbidden":
-			var res *goa.ServiceError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewSwarmsForbiddenResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusForbidden)
-			return enc.Encode(body)
 		default:
 			return encodeError(ctx, w, v)
 		}
@@ -174,19 +161,6 @@ func EncodeViewError(encoder func(context.Context, http.ResponseWriter) goahttp.
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotModified)
 			return nil
-		case "forbidden":
-			var res *goa.ServiceError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewViewForbiddenResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusForbidden)
-			return enc.Encode(body)
 		default:
 			return encodeError(ctx, w, v)
 		}

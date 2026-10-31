@@ -30,7 +30,6 @@ func NewClient(swarms, view goa.Endpoint) *Client {
 // Swarms calls the "swarms" endpoint of the "view" service.
 // Swarms may return the following errors:
 //   - "not_modified" (type *goa.ServiceError): The swarm did not change before the wait ended.
-//   - "forbidden" (type *goa.ServiceError): The request's Host or Origin header is not allowed.
 //   - error: internal error
 func (c *Client) Swarms(ctx context.Context) (res *SwarmsResult, err error) {
 	var ires any
@@ -44,7 +43,6 @@ func (c *Client) Swarms(ctx context.Context) (res *SwarmsResult, err error) {
 // View calls the "view" endpoint of the "view" service.
 // View may return the following errors:
 //   - "not_modified" (type *goa.ServiceError): The swarm did not change before the wait ended.
-//   - "forbidden" (type *goa.ServiceError): The request's Host or Origin header is not allowed.
 //   - error: internal error
 func (c *Client) View(ctx context.Context, p *ViewPayload) (res *SwarmView, err error) {
 	var ires any

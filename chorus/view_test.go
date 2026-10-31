@@ -205,10 +205,11 @@ func TestSwarmViewRejectsForeignHostAndOrigin(t *testing.T) {
 	base := srv.URL
 
 	tests := []struct {
-		name   string
-		host   string
-		origin string
-		want   int
+		name      string
+		host      string
+		origin    string
+		fetchSite string
+		want      int
 	}{
 		{name: "loopback without origin", want: http.StatusOK},
 		{name: "same loopback origin", origin: "http://" + u.Host, want: http.StatusOK},
@@ -216,6 +217,8 @@ func TestSwarmViewRejectsForeignHostAndOrigin(t *testing.T) {
 		{name: "rebound attacker host", host: "evil.example:" + u.Port(), want: http.StatusForbidden},
 		{name: "attacker origin", origin: "http://evil.example", want: http.StatusForbidden},
 		{name: "other loopback port origin", origin: "http://127.0.0.1:1", want: http.StatusForbidden},
+		{name: "cross-site script load", fetchSite: "cross-site", want: http.StatusForbidden},
+		{name: "same-origin fetch", fetchSite: "same-origin", want: http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -225,6 +228,9 @@ func TestSwarmViewRejectsForeignHostAndOrigin(t *testing.T) {
 				}
 				if tt.origin != "" {
 					r.Header.Set("Origin", tt.origin)
+				}
+				if tt.fetchSite != "" {
+					r.Header.Set("Sec-Fetch-Site", tt.fetchSite)
 				}
 			})
 			defer resp.Body.Close()

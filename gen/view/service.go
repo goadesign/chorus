@@ -60,6 +60,8 @@ type Agent struct {
 	Channels []string
 	// True when this server process is holding a blocking read or chorus watch for
 	// the agent. Another server process may hold one this process cannot see.
+	// Starting or stopping a watch does not end a wait on its own, so the value
+	// can lag until the next swarm change or the end of the wait.
 	WatchingOnThisServer bool
 }
 
@@ -170,11 +172,6 @@ func MakeNotModified(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "not_modified", false, false, false)
 }
 
-// MakeForbidden builds a goa.ServiceError from an error.
-func MakeForbidden(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "forbidden", false, false, false)
-}
-
 // agentInt64Transport stores JSON fields until they have been validated.
 type agentInt64Transport int64
 
@@ -267,6 +264,8 @@ type jsonAgentTransport struct {
 	Channels []string `json:"channels"`
 	// True when this server process is holding a blocking read or chorus watch for
 	// the agent. Another server process may hold one this process cannot see.
+	// Starting or stopping a watch does not end a wait on its own, so the value
+	// can lag until the next swarm change or the end of the wait.
 	WatchingOnThisServer *bool `json:"watching_on_this_server"`
 }
 
@@ -1811,7 +1810,7 @@ func validateAgentJSONValue(path string, value any, description string) error {
 		case "watching_on_this_server":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see.",
+				typed[key], "True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see. Starting or stopping a watch does not end a wait on its own, so the value can lag until the next swarm change or the end of the wait.",
 			); err != nil {
 				return err
 			}

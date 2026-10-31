@@ -86,7 +86,9 @@ func (v *viewService) View(ctx context.Context, p *genview.ViewPayload) (*genvie
 // (localhost, 127.0.0.1, or ::1), because a rebound attacker page sends its own
 // hostname as Host. When an Origin header is present it must be one of origins,
 // which the composition root seeds with the server's own loopback origins.
-// Requests without Origin (curl, tests) pass once Host is loopback.
+// Requests without Origin (curl, tests) pass once Host is loopback. A
+// browser request whose Sec-Fetch-Site says another site started it is
+// rejected even without Origin, which covers <script src> loads.
 func viewGuard(origins []string) func(http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
@@ -94,7 +96,7 @@ func viewGuard(origins []string) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isLoopbackHost(r.Host) || !viewOriginAllowed(r, allowed) {
+			if !isLoopbackHost(r.Host) || !viewOriginAllowed(r, allowed) || !sameSiteFetch(r) {
 				http.Error(w, "forbidden: request must be addressed to this machine", http.StatusForbidden)
 				return
 			}
@@ -116,6 +118,19 @@ func isLoopbackHost(hostport string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// sameSiteFetch reports whether a browser marked r as coming from the page's
+// own origin or from the user directly. Browsers send Sec-Fetch-Site on every
+// request, including <script src> loads that carry no Origin header; requests
+// from non-browser clients omit it and are allowed.
+func sameSiteFetch(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+		return true
+	default:
+		return false
+	}
 }
 
 // viewOriginAllowed reports whether r carries no Origin header, or exactly
@@ -149,13 +164,13 @@ func viewETag(res *genview.SwarmView) (string, error) {
 
 // sentAtMs returns the Unix millisecond timestamp encoded in a Redis stream
 // entry ID ("<unix_ms>-<sequence>").
-func sentAtMs(id string) int64 {
+func sentAtMs(id string) (int64, error) {
 	ms, _, _ := strings.Cut(id, "-")
 	v, err := strconv.ParseInt(ms, 10, 64)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("parse stream entry ID %q: %w", id, err)
 	}
-	return v
+	return v, nil
 }
 
 // emptyView returns the snapshot of a swarm that has no state.
@@ -412,7 +427,10 @@ func (v *viewService) channel(
 }
 
 // messages returns every retained message in target's stream, oldest first.
-// Entries whose payload is not a message are skipped.
+// Entries whose payload is not a message are skipped. A send stores its
+// message before it advances head, so a snapshot taken during a send can list
+// a message whose seq is above head_seq; the next snapshot, taken when head
+// is written, is consistent again.
 func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target string) ([]*genview.Message, error) {
 	events, err := sw.snapshotTarget(ctx, target)
 	if err != nil {
@@ -424,11 +442,15 @@ func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target stri
 		if err := json.Unmarshal(ev.Payload(), &m); err != nil || m.Seq <= 0 {
 			continue
 		}
+		sentAt, err := sentAtMs(ev.ID())
+		if err != nil {
+			return nil, err
+		}
 		msg := &genview.Message{
 			Seq:      m.Seq,
 			Sender:   m.Sender,
 			Text:     m.Text,
-			SentAtMs: sentAtMs(ev.ID()),
+			SentAtMs: sentAt,
 		}
 		if m.ReplyTo > 0 {
 			replyTo := m.ReplyTo

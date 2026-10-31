@@ -9,7 +9,6 @@ package server
 
 import (
 	view "github.com/goadesign/chorus/gen/view"
-	goa "goa.design/goa/v3/pkg"
 )
 
 // SwarmsResponseBody is the type of the "view" service "swarms" endpoint HTTP
@@ -32,42 +31,6 @@ type ViewResponseBody struct {
 	Inboxes []*InboxResponseBody `form:"inboxes" json:"inboxes" xml:"inboxes"`
 }
 
-// SwarmsForbiddenResponseBody is the type of the "view" service "swarms"
-// endpoint HTTP response body for the "forbidden" error.
-type SwarmsForbiddenResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ViewForbiddenResponseBody is the type of the "view" service "view" endpoint
-// HTTP response body for the "forbidden" error.
-type ViewForbiddenResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
 // AgentResponseBody is used to define fields on response body types.
 type AgentResponseBody struct {
 	// Agent handle (without '@').
@@ -80,6 +43,8 @@ type AgentResponseBody struct {
 	Channels []string `form:"channels" json:"channels" xml:"channels"`
 	// True when this server process is holding a blocking read or chorus watch for
 	// the agent. Another server process may hold one this process cannot see.
+	// Starting or stopping a watch does not end a wait on its own, so the value
+	// can lag until the next swarm change or the end of the wait.
 	WatchingOnThisServer bool `form:"watching_on_this_server" json:"watching_on_this_server" xml:"watching_on_this_server"`
 }
 
@@ -210,34 +175,6 @@ func NewViewResponseBody(res *view.SwarmView) *ViewResponseBody {
 		}
 	} else {
 		body.Inboxes = []*InboxResponseBody{}
-	}
-	return body
-}
-
-// NewSwarmsForbiddenResponseBody builds the HTTP response body from the result
-// of the "swarms" endpoint of the "view" service.
-func NewSwarmsForbiddenResponseBody(res *goa.ServiceError) *SwarmsForbiddenResponseBody {
-	body := &SwarmsForbiddenResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewViewForbiddenResponseBody builds the HTTP response body from the result
-// of the "view" endpoint of the "view" service.
-func NewViewForbiddenResponseBody(res *goa.ServiceError) *ViewForbiddenResponseBody {
-	body := &ViewForbiddenResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
 	}
 	return body
 }

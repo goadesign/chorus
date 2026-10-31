@@ -32,42 +32,6 @@ type ViewResponseBody struct {
 	Inboxes []*InboxResponseBody `form:"inboxes,omitempty" json:"inboxes,omitempty" xml:"inboxes,omitempty"`
 }
 
-// SwarmsForbiddenResponseBody is the type of the "view" service "swarms"
-// endpoint HTTP response body for the "forbidden" error.
-type SwarmsForbiddenResponseBody struct {
-	// Name is the name of this class of errors.
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-	// Is the error temporary?
-	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
-	// Is the error a timeout?
-	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
-	// Is the error a server-side fault?
-	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
-}
-
-// ViewForbiddenResponseBody is the type of the "view" service "view" endpoint
-// HTTP response body for the "forbidden" error.
-type ViewForbiddenResponseBody struct {
-	// Name is the name of this class of errors.
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-	// Is the error temporary?
-	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
-	// Is the error a timeout?
-	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
-	// Is the error a server-side fault?
-	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
-}
-
 // AgentResponseBody is used to define fields on response body types.
 type AgentResponseBody struct {
 	// Agent handle (without '@').
@@ -80,6 +44,8 @@ type AgentResponseBody struct {
 	Channels []string `form:"channels,omitempty" json:"channels,omitempty" xml:"channels,omitempty"`
 	// True when this server process is holding a blocking read or chorus watch for
 	// the agent. Another server process may hold one this process cannot see.
+	// Starting or stopping a watch does not end a wait on its own, so the value
+	// can lag until the next swarm change or the end of the wait.
 	WatchingOnThisServer *bool `form:"watching_on_this_server,omitempty" json:"watching_on_this_server,omitempty" xml:"watching_on_this_server,omitempty"`
 }
 
@@ -180,20 +146,6 @@ func NewSwarmsNotModified(name string, id string, message string, temporary bool
 	return v
 }
 
-// NewSwarmsForbidden builds a view service swarms endpoint forbidden error.
-func NewSwarmsForbidden(body *SwarmsForbiddenResponseBody) *goa.ServiceError {
-	v := &goa.ServiceError{
-		Name:      *body.Name,
-		ID:        *body.ID,
-		Message:   *body.Message,
-		Temporary: *body.Temporary,
-		Timeout:   *body.Timeout,
-		Fault:     *body.Fault,
-	}
-
-	return v
-}
-
 // NewViewSwarmViewOK builds a "view" service "view" endpoint result from a
 // HTTP "OK" response.
 func NewViewSwarmViewOK(body *ViewResponseBody, etag string) *view.SwarmView {
@@ -242,20 +194,6 @@ func NewViewNotModified(name string, id string, message string, temporary bool, 
 	return v
 }
 
-// NewViewForbidden builds a view service view endpoint forbidden error.
-func NewViewForbidden(body *ViewForbiddenResponseBody) *goa.ServiceError {
-	v := &goa.ServiceError{
-		Name:      *body.Name,
-		ID:        *body.ID,
-		Message:   *body.Message,
-		Temporary: *body.Temporary,
-		Timeout:   *body.Timeout,
-		Fault:     *body.Fault,
-	}
-
-	return v
-}
-
 // ValidateSwarmsResponseBody runs the validations defined on SwarmsResponseBody
 func ValidateSwarmsResponseBody(body *SwarmsResponseBody) (err error) {
 	if body.Swarms == nil {
@@ -298,54 +236,6 @@ func ValidateViewResponseBody(body *ViewResponseBody) (err error) {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
-	}
-	return
-}
-
-// ValidateSwarmsForbiddenResponseBody runs the validations defined on
-// SwarmsForbiddenResponseBody
-func ValidateSwarmsForbiddenResponseBody(body *SwarmsForbiddenResponseBody) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	if body.Temporary == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
-	}
-	if body.Timeout == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
-	}
-	if body.Fault == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
-	}
-	return
-}
-
-// ValidateViewForbiddenResponseBody runs the validations defined on
-// ViewForbiddenResponseBody
-func ValidateViewForbiddenResponseBody(body *ViewForbiddenResponseBody) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	if body.Temporary == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
-	}
-	if body.Timeout == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
-	}
-	if body.Fault == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
 	}
 	return
 }
