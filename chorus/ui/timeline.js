@@ -78,7 +78,10 @@
     const axis = buildAxis(events);
     const win = currentWindow(state, axis);
     const plotW = width - LABEL_W - PAD * 2;
-    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
+    // While reviewing earlier messages, one extra row under the lanes holds
+    // the notice, so it never overlaps the axis labels.
+    const noticeH = state.followLive ? 0 : 18;
+    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3 + noticeH;
 
     const svg = el("svg", {
       class: "tl",
@@ -146,7 +149,7 @@
     }
 
     if (!state.followLive) {
-      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(top + 12), "text-anchor": "end" });
+      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(height - PAD), "text-anchor": "end" });
       back.textContent = "Reviewing earlier messages · press F to follow live";
       svg.appendChild(back);
     }
