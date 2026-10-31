@@ -405,7 +405,6 @@
     brush.appendChild(t);
     brush.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
-      rootEl.setPointerCapture(ev.pointerId);
       drags.set(rootEl, {
         pointerId: ev.pointerId,
         startX: ev.clientX,
@@ -417,6 +416,9 @@
         frame: 0,
         next: null,
       });
+      // Capture after recording the drag, so pointermove and pointerup reach
+      // rootEl even when the pointer leaves the timeline.
+      rootEl.setPointerCapture(ev.pointerId);
     });
     svg.appendChild(brush);
   }
