@@ -305,18 +305,6 @@
         state.followLive = false;
       }
       renderAll();
-      if (state.selectedMessage) {
-        const domId = target.startsWith("@")
-          ? `msg-dm-${target.slice(1)}-${seq}`
-          : `msg-${target}-${seq}`;
-        const node = document.getElementById(domId);
-        if (node) {
-          const parentDetails = node.closest("details");
-          if (parentDetails && !parentDetails.open) parentDetails.open = true;
-          if (node.tagName === "DETAILS" && !node.open) node.open = true;
-          node.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }
     },
 
     setTimeWindow(win) {
