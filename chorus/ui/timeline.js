@@ -54,8 +54,10 @@
   const PAD = 8;
 
   // Per-root viewport memory. It is interaction state, never swarm data:
-  // lastLive is the interval most recently shown while following live, and
-  // frozen is the interval shown while paused without an explicit filter.
+  // swarm is the swarm it belongs to (memory is reset when the swarm
+  // changes, kept across channel and DM switches within a swarm), lastLive
+  // is the interval most recently shown while following live, and frozen is
+  // the interval shown while paused without an explicit filter.
   const viewports = new WeakMap();
 
   /**
@@ -89,7 +91,7 @@
     const lanes = laneList(view, events);
     const colors = colorMap(lanes);
     const axis = buildAxis(events);
-    const win = viewport(rootEl, state, axis);
+    const win = viewport(rootEl, state, axis, view.swarm);
     const plotW = width - LABEL_W - PAD * 2;
     // While reviewing earlier messages, one extra row under the lanes holds
     // the notice, so it never overlaps the axis labels.
@@ -280,9 +282,12 @@
 
   // viewport returns the interval to draw (see the file comment) and updates
   // the per-root memory used to keep a paused view still.
-  function viewport(rootEl, state, axis) {
-    const mem = viewports.get(rootEl) || { lastLive: null, frozen: null };
-    viewports.set(rootEl, mem);
+  function viewport(rootEl, state, axis, swarm) {
+    let mem = viewports.get(rootEl);
+    if (!mem || mem.swarm !== swarm) {
+      mem = { swarm, lastLive: null, frozen: null };
+      viewports.set(rootEl, mem);
+    }
     if (state.timeWindow) return state.timeWindow;
     if (state.followLive) {
       mem.frozen = null;
@@ -301,9 +306,8 @@
       actions.setTimeWindow(next);
       return;
     }
-    const mem = viewports.get(rootEl) || { lastLive: null };
-    mem.frozen = next;
-    viewports.set(rootEl, mem);
+    // render has already created this root's memory for the current swarm.
+    viewports.get(rootEl).frozen = next;
     if (state.followLive) actions.setFollowLive(false);
     else render(rootEl, state, actions);
   }
@@ -547,9 +551,12 @@
     // The server matches mentions case-insensitively, so @api reaches both
     // @API and @api when both exist; every lane whose handle matches gets a
     // connector, except the sender's own.
+    // "all" is reserved: it never matches a handle by name and expands only
+    // to the members of the message's channel.
     const mentioned = new Set(mentionedHandles(e.text));
+    const broadcast = mentioned.delete("all");
     const channel = e.pair ? null : (view.channels || []).find((c) => c.name === e.target);
-    const members = new Set(mentioned.has("all") && channel ? (channel.positions || []).map((p) => p.handle) : []);
+    const members = new Set(broadcast && channel ? (channel.positions || []).map((p) => p.handle) : []);
     for (const [handle, y1] of laneY) {
       if (handle === e.sender || !(mentioned.has(handle.toLowerCase()) || members.has(handle))) continue;
       svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
