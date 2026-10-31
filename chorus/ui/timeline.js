@@ -192,13 +192,13 @@
 
   // toEvent tags a message with where it lives: a channel name, or for a
   // direct message the recipient's inbox ("@handle") plus the conversation
-  // key app.js uses to select it (lowercased handles, sorted, joined by ↔).
+  // key app.js uses to select it: the two handles exactly as registered
+  // (Chorus handles are case-sensitive, so @API and @api are different
+  // agents), sorted, joined by ↔.
   function toEvent(target, m) {
     const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to };
     if (target.startsWith("@")) {
-      const s = m.sender.toLowerCase();
-      const r = target.slice(1).toLowerCase();
-      const [a, b] = s <= r ? [s, r] : [r, s];
+      const [a, b] = [m.sender, target.slice(1)].sort();
       e.pair = { a, b, pairKey: a + "↔" + b };
     }
     return e;
