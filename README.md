@@ -27,7 +27,7 @@ Because Chorus exposes a single stateless MCP endpoint (`http://localhost:9440/m
 
 ### What You See: 3-Way Split Terminal
 
-Open three terminal panes in the same repository (here `~/src/auth`), each running a different model. Type `/chorus` in every pane (`$chorus` in Codex). Each agent joins the `auth` swarm (named after the repository folder) and its `#auth` channel, picks a handle, starts a background watcher, and reports that it is ready. Then give the goal to **one** pane only. That agent pins the plan, and the others pick up their part from it:
+Open three terminal panes in the same repository (here `~/src/auth`), each running a different model. Start the Chorus skill in every pane (`/chorus` in Claude Code, `$chorus` in Codex, *"Use the chorus skill"* in Gemini). Each agent joins the `auth` swarm (named after the repository folder) and its `#auth` channel under its own handle, starts a background watcher, and reports that it is ready. Then give the goal to **one** pane only. That agent pins the plan, and the others pick up their part from it:
 
 <table>
 <thead>
@@ -61,7 +61,7 @@ Open three terminal panes in the same repository (here `~/src/auth`), each runni
 </td>
 <td valign="top">
 
-**You:** `/chorus` (nothing else)
+**You:** *"Use the chorus skill"* (nothing else)
 
 1. **Watches at 0 tokens:** Joins `#auth`, starts `chorus watch gemini` in the background, and wakes on `codex`'s plan with the test command.
 2. **Wakes on `@gemini`:** Wakes the instant `claude` mentions `@gemini`, runs `go test -race`, and reports the `500` on expired challenges.
@@ -81,7 +81,7 @@ Under the hood, Chorus exchanged zero JSON envelopes, zero UUIDs, and zero polli
 # 1. @codex (the pane you gave the goal) pins the collaboration manifest via send(..., pin: true)
 pinned #auth#1
 
-# 2. @claude runs /chorus, joins #auth, and receives the live member roster + pinned manifest in one call
+# 2. Joining #auth returns the live member roster + active pinned manifest in one call
 joined #auth (head #1) - WebAuthn passkey rollout & replay protection
 members: @claude (Claude · Goa-AI Service), @codex (ChatGPT · Systems Architect), @gemini (Gemini Flash · Race & Load Verifier)
 pin #auth#1 @codex: Goal: single-use passkey challenges (120s EX + Redis GETDEL) | Owners: @codex spec, @claude store+gen, @gemini -race | Verify: go test -race ./auth/...
@@ -121,19 +121,20 @@ This single command installs the `chorus` binary, installs the model-agnostic [C
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
-### 2. Type `/chorus` in Every Pane, Then Give the Goal to One
+### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
 Open two or more coding-agent sessions (Claude Code, Codex, Gemini, Cursor, etc.) in the same repository folder and start the skill in each one:
 
 | Agent | Type |
 | --- | --- |
-| Claude Code, Gemini / Antigravity, Cursor | `/chorus` |
+| Claude Code, Cursor | `/chorus` |
 | Codex | `$chorus` (or pick `chorus` from `/skills`) |
+| Gemini CLI, Antigravity, other agents | *"Use the chorus skill"* |
 
 Each agent then does the same three things without any further prompt:
 
 1. **Joins the repository's swarm in one call.** In `~/src/auth`, every agent calls `join` with swarm `auth` and channel `#auth`, and gets back the online members, recent messages, and the pinned plan if one exists.
-2. **Picks a free handle.** It uses its model name (`claude`, `codex`, `gemini`, …). If that handle is already taken, for example by a second Claude pane, it switches to another one such as `claude-2`.
+2. **Uses its own handle.** It picks its model name (`claude`, `codex`, `gemini`, …). Every pane needs a different handle, so when you run two panes of the same model, name one of them in the prompt (for example *"Use the chorus skill as `claude-2`"*). Chorus rejects a handle that is in use in another swarm, but inside one swarm it does not stop a second pane from taking over a handle, and the two panes would then miss each other's messages.
 3. **Starts listening at 0 tokens.** It runs `chorus watch <handle>` in the background and tells you it is ready.
 
 Now give the goal to **one** pane, for example: *"Lead this: add single-use challenges to `/v2/passkey/verify`. Split the work with the others."* That agent pins a plan in `#auth` naming the goal, who owns which files, and the test command. The other agents wake on the pin and start their part, and you never have to prompt them again.
