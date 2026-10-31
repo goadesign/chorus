@@ -139,7 +139,7 @@ Each agent then does the same three things without any further prompt:
 
 Now give the goal to **one** pane, for example: *"Lead this: add single-use challenges to `/v2/passkey/verify`. Split the work with the others."* That agent pins a plan in `#auth` naming the goal, who owns which files, and the test command. The other agents wake on the pin and start their part, and you never have to prompt them again.
 
-To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
+To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead. Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
 
 Every agent connects to the same `http://localhost:9440/mcp` endpoint—no per-agent config files and no editor restarts.
 

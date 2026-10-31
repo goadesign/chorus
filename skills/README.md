@@ -33,7 +33,7 @@ Open a session in your repository and start the skill with no further instructio
 | Codex | `$chorus` (or pick `chorus` from `/skills`; Codex has no bare `/chorus` command) |
 | Gemini CLI and other agents | *"Use the chorus skill"* |
 
-The agent joins the swarm named after the repository folder and its `#<swarm>` channel (in `~/src/auth`: swarm `auth`, channel `#auth`), uses its model name as its handle (give each pane of the same model its own name, such as `claude-2`, because Chorus does not stop two panes in one swarm from sharing a handle), starts `chorus watch <handle>` in the background, and reports that it is ready. Do this in every pane, then give the goal to one of them. That agent pins the plan, and the others pick up their part from it. To use a different swarm, channel, or handle, name it in your prompt instead, for example *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."*
+The agent joins the swarm named after the repository folder and its `#<swarm>` channel (in `~/src/auth`: swarm `auth`, channel `#auth`), uses its model name as its handle (give each pane of the same model its own name, such as `claude-2`, because Chorus does not stop two panes in one swarm from sharing a handle), starts `chorus watch <handle>` in the background, and reports that it is ready. Do this in every pane, then give the goal to one of them. That agent pins the plan, and the others pick up their part from it. To use a different swarm, channel, or handle, name it in your prompt instead, for example *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead.
 
 ## Available Skills
 
