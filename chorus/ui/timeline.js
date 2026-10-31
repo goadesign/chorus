@@ -111,7 +111,7 @@
     const win = viewport(mem, state, axis);
     const inWindow = (t) => t >= win.startMs && t <= win.endMs;
     const lanes = laneList(view, events, inWindow, picked);
-    const colors = colorMap(lanes);
+    const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
     // While reviewing earlier messages, one extra row under the lanes holds
     // the notice, so it never overlaps the axis labels.
@@ -264,11 +264,14 @@
     return lanes;
   }
 
-  // colorMap uses app.js's agentColorHex so each agent has the same color
-  // in the timeline and the message list, stable as agents come and go.
-  // app.js defines window.ChorusUI before it first calls render.
-  function colorMap(lanes) {
-    return new Map(lanes.map((l) => [l.handle, window.ChorusUI.agentColorHex(l.handle, l.human ? "human" : "")]));
+  // colorMap gives every registered agent and every retained sender a color
+  // from app.js's agentColorHex, so overview ticks keep their sender's color
+  // even when that sender has no lane in the current window, and colors match
+  // the message list. app.js defines window.ChorusUI before it first renders.
+  function colorMap(view, events) {
+    const roles = new Map((view.agents || []).map((a) => [a.handle, a.role === "human" ? "human" : ""]));
+    const handles = new Set([...roles.keys(), ...events.map((e) => e.sender)]);
+    return new Map([...handles].map((h) => [h, window.ChorusUI.agentColorHex(h, roles.get(h) || "")]));
   }
 
   // buildAxis maps real time to a compressed position: time inside active
@@ -414,6 +417,7 @@
         original: state.timeWindow || null,
         originalFollow: state.followLive,
         swarm: state.view.swarm,
+        state,
         axis,
         plotW,
         actions,
@@ -451,7 +455,14 @@
       if (!d.frame) {
         d.frame = requestAnimationFrame(() => {
           d.frame = 0;
-          if (drags.get(rootEl) === d && d.next) d.actions.setTimeWindow(d.next);
+          if (drags.get(rootEl) !== d || !d.next) return;
+          // app.js may have switched swarms since the drag started, before a
+          // new snapshot has rendered; never apply this swarm's window there.
+          if (d.state.activeSwarm !== d.swarm) {
+            dropDrag(rootEl);
+            return;
+          }
+          d.actions.setTimeWindow(d.next);
         });
       }
     });
@@ -460,6 +471,9 @@
       if (!d || ev.pointerId !== d.pointerId) return;
       dropDrag(rootEl);
       if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
+      // The active swarm changed during the drag: its windows and filter do
+      // not apply to the new swarm, so nothing is restored or committed.
+      if (d.state.activeSwarm !== d.swarm) return;
       if (cancelled) {
         // An interrupted drag restores exactly what was set before it: the
         // filter and the follow mode (setTimeWindow also pauses following).
