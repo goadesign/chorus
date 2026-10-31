@@ -43,8 +43,9 @@ func ValidateJoinPayloadIntTransport(value JoinPayloadIntTransport) (err error) 
 type JoinPayloadTransport struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent *string `json:"agent"`
-	// Swarm namespace (defaults to 'default').
-	Swarm *string `json:"swarm,omitempty"`
+	// Swarm name: use the current git repository or workspace directory basename
+	// (e.g. 'chorus') unless the user specifies a swarm name.
+	Swarm *string `json:"swarm"`
 	// Channels to create or subscribe to (each prefixed with '#').
 	Channels []string `json:"channels"`
 	// Optional channel topic to set on the joined channel(s).
@@ -62,6 +63,9 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 	}
 	if value.Agent == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
+	if value.Swarm == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
 	}
 	if value.Channels == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("channels", "body"))
@@ -187,8 +191,6 @@ func ValidateJoinResultcontentTextTransport(value *JoinResultcontentTextTranspor
 type LeavePayloadTransport struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent *string `json:"agent"`
-	// Swarm namespace (defaults to 'default').
-	Swarm *string `json:"swarm,omitempty"`
 	// Channels to unsubscribe from (each prefixed with '#').
 	Channels []string `json:"channels"`
 }
@@ -206,9 +208,6 @@ func ValidateLeavePayloadTransport(value *LeavePayloadTransport) (err error) {
 	}
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if len(value.Channels) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.channels", value.Channels, len(value.Channels), 1, true))
@@ -327,8 +326,6 @@ func ValidateReadPayloadIntTransport(value ReadPayloadIntTransport) (err error) 
 type ReadPayloadTransport struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent *string `json:"agent"`
-	// Swarm namespace (defaults to 'default').
-	Swarm *string `json:"swarm,omitempty"`
 	// Optional channel filter ('#channel'); omit to read across all subscribed
 	// channels and direct messages.
 	From *string `json:"from,omitempty"`
@@ -351,9 +348,6 @@ func ValidateReadPayloadTransport(value *ReadPayloadTransport) (err error) {
 	}
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
-	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
 	}
 	if value.From != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.from", *value.From, "^#[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
@@ -482,8 +476,6 @@ func ValidateSendPayloadIntTransport(value SendPayloadIntTransport) (err error) 
 type SendPayloadTransport struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent *string `json:"agent"`
-	// Swarm namespace (defaults to 'default').
-	Swarm *string `json:"swarm,omitempty"`
 	// Target '@agent' for direct messages or '#channel' for channel messages.
 	To *string `json:"to"`
 	// Message text to send.
@@ -494,6 +486,9 @@ type SendPayloadTransport struct {
 	// collaboration manifest (replacing any previous pin) so joining agents always
 	// see it.
 	Pin *bool `json:"pin,omitempty"`
+	// Optional seconds to block waiting for a reply, @mention, @all, or direct
+	// message after sending (0 returns immediately).
+	WaitSec *SendPayloadIntTransport `json:"wait_sec,omitempty"`
 }
 
 // ValidateSendPayloadTransport checks decoded JSON before it becomes a service value.
@@ -513,9 +508,6 @@ func ValidateSendPayloadTransport(value *SendPayloadTransport) (err error) {
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
 	}
-	if value.Swarm != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.swarm", *value.Swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
-	}
 	if value.To != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.to", *value.To, "^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
 	}
@@ -530,6 +522,14 @@ func ValidateSendPayloadTransport(value *SendPayloadTransport) (err error) {
 	if value.ReplyTo != nil {
 		if int(*value.ReplyTo) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.reply_to", int(*value.ReplyTo), 1, true))
+		}
+	}
+	if value.WaitSec != nil {
+		if int(*value.WaitSec) < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", int(*value.WaitSec), 0, true))
+		}
+		if int(*value.WaitSec) > 600 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.wait_sec", int(*value.WaitSec), 600, false))
 		}
 	}
 	return err
@@ -620,8 +620,9 @@ func ValidateSendResultcontentTextTransport(value *SendResultcontentTextTranspor
 type WhoPayloadTransport struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent *string `json:"agent"`
-	// Swarm namespace (defaults to 'default').
-	Swarm *string `json:"swarm,omitempty"`
+	// Swarm name: use the current git repository or workspace directory basename
+	// (e.g. 'chorus') unless the user specifies a swarm name.
+	Swarm *string `json:"swarm"`
 	// Optional role description to advertise to peers in this swarm.
 	Role *string `json:"role,omitempty"`
 }
@@ -633,6 +634,9 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 	}
 	if value.Agent == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
+	if value.Swarm == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("swarm", "body"))
 	}
 	if value.Agent != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.agent", *value.Agent, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
@@ -1009,17 +1013,12 @@ func DecodeJoinPayload(data []byte) (out *chorus.JoinPayload, err error) {
 	{
 		out = &chorus.JoinPayload{
 			Agent: *body.Agent,
+			Swarm: *body.Swarm,
 			Topic: body.Topic,
 			Role:  body.Role,
 		}
-		if body.Swarm != nil {
-			out.Swarm = *body.Swarm
-		}
 		if body.Tail != nil {
 			out.Tail = int(*body.Tail)
-		}
-		if body.Swarm == nil {
-			out.Swarm = "default"
 		}
 		out.Channels = make([]string, len(body.Channels))
 		for i, val := range body.Channels {
@@ -1079,12 +1078,6 @@ func DecodeLeavePayload(data []byte) (out *chorus.LeavePayload, err error) {
 		out = &chorus.LeavePayload{
 			Agent: *body.Agent,
 		}
-		if body.Swarm != nil {
-			out.Swarm = *body.Swarm
-		}
-		if body.Swarm == nil {
-			out.Swarm = "default"
-		}
 		out.Channels = make([]string, len(body.Channels))
 		for i, val := range body.Channels {
 			out.Channels[i] = val
@@ -1141,9 +1134,6 @@ func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 			Agent: *body.Agent,
 			From:  body.From,
 		}
-		if body.Swarm != nil {
-			out.Swarm = *body.Swarm
-		}
 		if body.WaitSec != nil {
 			out.WaitSec = int(*body.WaitSec)
 		}
@@ -1152,9 +1142,6 @@ func DecodeReadPayload(data []byte) (out *chorus.ReadPayload, err error) {
 		}
 		if body.Limit != nil {
 			out.Limit = int(*body.Limit)
-		}
-		if body.Swarm == nil {
-			out.Swarm = "default"
 		}
 		if body.WaitSec == nil {
 			out.WaitSec = 0
@@ -1218,9 +1205,6 @@ func DecodeSendPayload(data []byte) (out *chorus.SendPayload, err error) {
 			To:    *body.To,
 			Text:  *body.Text,
 		}
-		if body.Swarm != nil {
-			out.Swarm = *body.Swarm
-		}
 		if body.ReplyTo != nil {
 			replyTo := int(*body.ReplyTo)
 			out.ReplyTo = &replyTo
@@ -1228,11 +1212,14 @@ func DecodeSendPayload(data []byte) (out *chorus.SendPayload, err error) {
 		if body.Pin != nil {
 			out.Pin = *body.Pin
 		}
-		if body.Swarm == nil {
-			out.Swarm = "default"
+		if body.WaitSec != nil {
+			out.WaitSec = int(*body.WaitSec)
 		}
 		if body.Pin == nil {
 			out.Pin = false
+		}
+		if body.WaitSec == nil {
+			out.WaitSec = 0
 		}
 	}
 	return out, nil
@@ -1284,13 +1271,8 @@ func DecodeWhoPayload(data []byte) (out *chorus.WhoPayload, err error) {
 	{
 		out = &chorus.WhoPayload{
 			Agent: *body.Agent,
+			Swarm: *body.Swarm,
 			Role:  body.Role,
-		}
-		if body.Swarm != nil {
-			out.Swarm = *body.Swarm
-		}
-		if body.Swarm == nil {
-			out.Swarm = "default"
 		}
 	}
 	return out, nil

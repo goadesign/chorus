@@ -103,7 +103,7 @@ func dispatch(args []string, out io.Writer) error {
 			case "serve":
 				return runServe(args[1:])
 			case "who", "join", "leave", "send", "read":
-				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch -agent <handle>' only for background shell listening)", args[0], args[0])
+				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
 				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, watch, version, serve)", args[0])
 			}

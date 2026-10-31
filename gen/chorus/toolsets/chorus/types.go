@@ -12,7 +12,8 @@ type (
 	JoinPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm namespace (defaults to 'default').
+		// Swarm name: use the current git repository or workspace directory basename
+		// (e.g. 'chorus') unless the user specifies a swarm name.
 		Swarm string
 		// Channels to create or subscribe to (each prefixed with '#').
 		Channels []string
@@ -27,8 +28,6 @@ type (
 	LeavePayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm namespace (defaults to 'default').
-		Swarm string
 		// Channels to unsubscribe from (each prefixed with '#').
 		Channels []string
 	}
@@ -36,8 +35,6 @@ type (
 	ReadPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm namespace (defaults to 'default').
-		Swarm string
 		// Optional channel filter ('#channel'); omit to read across all subscribed
 		// channels and direct messages.
 		From *string
@@ -53,8 +50,6 @@ type (
 	SendPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm namespace (defaults to 'default').
-		Swarm string
 		// Target '@agent' for direct messages or '#channel' for channel messages.
 		To string
 		// Message text to send.
@@ -65,12 +60,16 @@ type (
 		// collaboration manifest (replacing any previous pin) so joining agents always
 		// see it.
 		Pin bool
+		// Optional seconds to block waiting for a reply, @mention, @all, or direct
+		// message after sending (0 returns immediately).
+		WaitSec int
 	}
 	// WhoPayload defines the JSON payload for the chorus.who tool.
 	WhoPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm namespace (defaults to 'default').
+		// Swarm name: use the current git repository or workspace directory basename
+		// (e.g. 'chorus') unless the user specifies a swarm name.
 		Swarm string
 		// Optional role description to advertise to peers in this swarm.
 		Role *string

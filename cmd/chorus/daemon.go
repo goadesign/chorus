@@ -194,29 +194,46 @@ func runSetup(args []string) error {
 // arrive before -wait elapses, runWatch writes nothing to out and exits 0.
 func runWatch(args []string, out io.Writer) error {
 	var (
-		addr         string
-		agent        string
-		swarm        string
-		from         string
-		wait         time.Duration
-		mentionsOnly bool
-		limit        int
+		addr            string
+		agent           string
+		positionalAgent string
+		from            string
+		wait            time.Duration
+		mentionsOnly    bool
+		limit           int
 	)
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		positionalAgent = args[0]
+		args = args[1:]
+	}
 	fs := flag.NewFlagSet("chorus watch", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
 	fs.StringVar(&agent, "agent", "", "Your agent handle (e.g. 'api' or '@api')")
-	fs.StringVar(&swarm, "swarm", "default", "Swarm namespace")
 	fs.StringVar(&from, "from", "", "Optional '#channel' filter")
 	fs.DurationVar(&wait, "wait", defaultWatchWait, "Maximum duration to wait for unread messages (0s for instant hook check)")
-	fs.BoolVar(&mentionsOnly, "mentions", false, "Only wake on direct messages, @agent/@all mentions, or replies to your messages")
+	fs.BoolVar(&mentionsOnly, "mentions", true, "Only wake on direct messages, @agent/@all mentions, or replies to your messages")
 	fs.IntVar(&limit, "limit", 20, "Maximum unread messages to drain per target")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if positionalAgent != "" {
+		if agent != "" {
+			return errors.New("chorus watch cannot specify both positional <agent> and -agent")
+		}
+		if fs.NArg() > 0 {
+			return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		}
+		agent = positionalAgent
+	} else if fs.NArg() > 0 {
+		if agent != "" || fs.NArg() > 1 {
+			return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		}
+		agent = fs.Arg(0)
+	}
 
 	agent = strings.TrimPrefix(strings.TrimSpace(agent), "@")
 	if agent == "" {
-		return errors.New("chorus watch requires -agent <handle>")
+		return errors.New("chorus watch requires <agent> (e.g. 'chorus watch api')")
 	}
 	if wait < 0 {
 		return errors.New("-wait must not be negative")
@@ -234,7 +251,10 @@ func runWatch(args []string, out io.Writer) error {
 	defer stopSignals()
 
 	deadline := time.Now().Add(wait)
-	var reconnectDeadline time.Time
+	var (
+		reconnectDeadline time.Time
+		watchedOnce       bool
+	)
 	for {
 		chunkSec := 0
 		if wait > 0 {
@@ -248,9 +268,12 @@ func runWatch(args []string, out io.Writer) error {
 			}
 		}
 
-		text, err := callWatchRead(sigCtx, parsedURL, agent, swarm, from, chunkSec, limit, mentionsOnly)
+		text, err := callWatchRead(sigCtx, parsedURL, agent, from, chunkSec, limit, mentionsOnly)
 		if err != nil {
 			if sigCtx.Err() != nil {
+				return nil
+			}
+			if errors.Is(err, errWatchToolError) && watchedOnce {
 				return nil
 			}
 			if wait == 0 || errors.Is(err, errWatchToolError) {
@@ -279,9 +302,10 @@ func runWatch(args []string, out io.Writer) error {
 			}
 		}
 		reconnectDeadline = time.Time{}
+		watchedOnce = true
 		if text != "" && text != "none" {
 			if wait > 0 {
-				text += "\n[watch exited — re-arm in background: " + formatWatchRearmCommand(agent, swarm, from, wait, mentionsOnly) + "]"
+				text += "\n! watch: " + formatWatchRearmCommand(agent, from, wait, mentionsOnly)
 			}
 			if _, err := fmt.Fprintln(out, text); err != nil {
 				return fmt.Errorf("write watch output: %w", err)
@@ -296,27 +320,25 @@ func runWatch(args []string, out io.Writer) error {
 
 // formatWatchRearmCommand renders the exact "chorus watch" command string an
 // agent should run to re-arm its background watcher after a one-shot wakeup.
-func formatWatchRearmCommand(agent, swarm, from string, wait time.Duration, mentionsOnly bool) string {
+func formatWatchRearmCommand(agent, from string, wait time.Duration, mentionsOnly bool) string {
 	var b strings.Builder
-	b.WriteString("chorus watch -agent ")
+	b.WriteString("chorus watch ")
 	b.WriteString(agent)
-	if swarm != "" && swarm != "default" {
-		b.WriteString(" -swarm ")
-		b.WriteString(swarm)
-	}
 	if from != "" {
 		b.WriteString(" -from ")
 		b.WriteString(from)
 	}
-	if mentionsOnly {
-		b.WriteString(" -mentions")
+	if !mentionsOnly {
+		b.WriteString(" -mentions=false")
 	}
-	waitStr := wait.String()
-	if wait >= time.Minute && wait%time.Minute == 0 {
-		waitStr = strings.TrimSuffix(waitStr, "0s")
+	if wait != defaultWatchWait {
+		waitStr := wait.String()
+		if wait >= time.Minute && wait%time.Minute == 0 {
+			waitStr = strings.TrimSuffix(waitStr, "0s")
+		}
+		b.WriteString(" -wait ")
+		b.WriteString(waitStr)
 	}
-	b.WriteString(" -wait ")
-	b.WriteString(waitStr)
 	return b.String()
 }
 
@@ -841,7 +863,6 @@ func callWatchRead(
 	ctx context.Context,
 	baseURL *url.URL,
 	agent string,
-	swarm string,
 	from string,
 	waitSec int,
 	limit int,
@@ -849,7 +870,6 @@ func callWatchRead(
 ) (string, error) {
 	toolArgs := map[string]any{
 		"agent":         agent,
-		"swarm":         swarm,
 		"wait_sec":      waitSec,
 		"limit":         limit,
 		"mentions_only": mentionsOnly,

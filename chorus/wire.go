@@ -370,11 +370,8 @@ func formatHandleList(handles []string) string {
 // formatWatchHint returns the 1-line background watcher reminder appended to
 // join and send responses when the calling agent does not currently have an
 // active blocking watch in flight.
-func formatWatchHint(swarm, agent string) string {
-	if swarm != "" && swarm != "default" {
-		return fmt.Sprintf("! no active watch — run in background: chorus watch -agent %s -swarm %s -mentions -wait 5m", agent, swarm)
-	}
-	return fmt.Sprintf("! no active watch — run in background: chorus watch -agent %s -mentions -wait 5m", agent)
+func formatWatchHint(agent string) string {
+	return "! watch: chorus watch " + agent
 }
 
 // deduplicateStrings returns a new slice preserving the order of first appearance

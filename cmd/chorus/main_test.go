@@ -390,16 +390,16 @@ func TestRunWatch(t *testing.T) {
 		t.Fatalf("expected 0 bytes from caught-up -wait 0s watch, got %q", emptyOut.String())
 	}
 
-	// 2. Blocking watch with -mentions ignores unrelated messages and wakes
-	// immediately when @api is mentioned, printing the full unread delta.
+	// 2. Blocking watch with positional agent (default -mentions=true) ignores
+	// unrelated messages and wakes immediately when @api is mentioned, printing
+	// the full unread delta.
 	var watchOut bytes.Buffer
 	doneCh := make(chan error, 1)
 	go func() {
 		doneCh <- runWatch([]string{
+			"api",
 			"-addr", parsedURL.Host,
-			"-agent", "api",
 			"-wait", "5s",
-			"-mentions",
 		}, &watchOut)
 	}()
 
@@ -408,8 +408,8 @@ func TestRunWatch(t *testing.T) {
 	// A second concurrent chorus watch for the same agent identity must fail fast.
 	var dupOut bytes.Buffer
 	dupErr := runWatch([]string{
+		"api",
 		"-addr", parsedURL.Host,
-		"-agent", "api",
 		"-wait", "5s",
 	}, &dupOut)
 	if dupErr == nil || !strings.Contains(dupErr.Error(), `agent "api" already has an active watch`) {
@@ -418,7 +418,6 @@ func TestRunWatch(t *testing.T) {
 
 	if _, err := svc.Send(ctx, &genchorus.SendPayload{
 		Agent: "db",
-		Swarm: "default",
 		To:    "#auth",
 		Text:  "starting passkey schema check",
 	}); err != nil {
@@ -426,7 +425,6 @@ func TestRunWatch(t *testing.T) {
 	}
 	if _, err := svc.Send(ctx, &genchorus.SendPayload{
 		Agent: "qa",
-		Swarm: "default",
 		To:    "#auth",
 		Text:  "hey @api 500 on expired challenge",
 	}); err != nil {
@@ -436,14 +434,14 @@ func TestRunWatch(t *testing.T) {
 	select {
 	case watchErr := <-doneCh:
 		if watchErr != nil {
-			t.Fatalf("runWatch(-mentions) failed: %v", watchErr)
+			t.Fatalf("runWatch(api) failed: %v", watchErr)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for chorus watch to wake on @api mention")
 	}
 
 	got := watchOut.String()
-	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n[watch exited — re-arm in background: chorus watch -agent api -mentions -wait 5s]\n"
+	want := "#auth#1 @db: starting passkey schema check\n#auth#2 @qa: hey @api 500 on expired challenge\n! watch: chorus watch api -wait 5s\n"
 	if got != want {
 		t.Fatalf("runWatch output = %q, want %q", got, want)
 	}
@@ -541,7 +539,7 @@ func TestRedisHandover(t *testing.T) {
 	longPollDone := make(chan error, 1)
 	go func() {
 		close(longPollStarted)
-		_, readErr := callWatchRead(context.Background(), baseA, "lead", "default", "", 10, 10, false)
+		_, readErr := callWatchRead(context.Background(), baseA, "lead", "", 10, 10, false)
 		longPollDone <- readErr
 	}()
 
@@ -549,8 +547,9 @@ func TestRedisHandover(t *testing.T) {
 	surviveWatchDone := make(chan error, 1)
 	go func() {
 		surviveWatchDone <- runWatch([]string{
+			"watcher",
 			"-addr", serverAddr,
-			"-agent", "watcher",
+			"-mentions=false",
 			"-wait", "5s",
 		}, &surviveWatchOut)
 	}()
@@ -603,7 +602,6 @@ func TestRedisHandover(t *testing.T) {
 	// Publish a message on Server B and verify the surviving runWatch reconnects and delivers it.
 	if _, err := svcB.Send(context.Background(), &genchorus.SendPayload{
 		Agent: "reviewer",
-		Swarm: "default",
 		To:    "#foundry",
 		Text:  "LGTM on max_tokens fix",
 	}); err != nil {
@@ -617,7 +615,7 @@ func TestRedisHandover(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for surviving runWatch to wake on Server B message")
 	}
-	wantSurvive := "#foundry#1 @reviewer: LGTM on max_tokens fix\n[watch exited — re-arm in background: chorus watch -agent watcher -wait 5s]\n"
+	wantSurvive := "#foundry#1 @reviewer: LGTM on max_tokens fix\n! watch: chorus watch watcher -mentions=false -wait 5s\n"
 	if got := surviveWatchOut.String(); got != wantSurvive {
 		t.Fatalf("surviving runWatch output = %q, want %q", got, wantSurvive)
 	}
@@ -644,7 +642,7 @@ func TestRedisHandover(t *testing.T) {
 		t.Fatalf("expected Server B directory to contain @lead, got: %q", whoBranch.Text)
 	}
 
-	if _, err := callWatchRead(context.Background(), baseB, "lead", "default", "", 0, 10, false); err != nil {
+	if _, err := callWatchRead(context.Background(), baseB, "lead", "", 0, 10, false); err != nil {
 		t.Fatalf("Server B read tool call failed: %v", err)
 	}
 
