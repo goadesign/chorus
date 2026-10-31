@@ -198,17 +198,22 @@ func TestUnboundSwarmViewHonorsWait(t *testing.T) {
 	getView(t, base, "nobody-here", etag, 0, http.StatusNotModified)
 	start := time.Now()
 	getView(t, base, "nobody-here", etag, 1, http.StatusNotModified)
-	assert.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
+	assert.Less(t, elapsed, 3*time.Second)
 
+	// The server, not just the client, must stop waiting when the caller
+	// disconnects: Close blocks until every in-flight handler has returned.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/swarms/nobody-here/view?wait=30", nil)
 	require.NoError(t, err)
 	req.Header.Set("If-None-Match", etag)
-	start = time.Now()
 	_, err = http.DefaultClient.Do(req)
 	require.Error(t, err)
-	assert.Less(t, time.Since(start), 5*time.Second)
+	start = time.Now()
+	cluster.replicas[0].httpServer.Close()
+	assert.Less(t, time.Since(start), 2*time.Second, "view handler kept waiting after the caller disconnected")
 }
 
 // TestSwarmViewRejectsForeignHostAndOrigin verifies the DNS-rebinding and
@@ -305,24 +310,46 @@ func viewRequest(t *testing.T, target string, edit func(*http.Request)) *http.Re
 	return resp
 }
 
-// TestDashboardPageServed verifies that GET / serves the embedded dashboard
-// as uncached HTML with a same-origin Content-Security-Policy, and that other
-// unknown paths are not answered with the page.
+// TestDashboardPageServed verifies that GET / serves the dashboard page and
+// GET /ui/<file> its scripts, each with a Content-Security-Policy that allows
+// only same-origin code, forbids other sites from framing the page, and
+// allows no inline scripts, and that other paths are not answered with files.
 func TestDashboardPageServed(t *testing.T) {
 	cluster := newTestCluster(t, 1, nil)
 	base := cluster.replicas[0].httpServer.URL
 
-	resp := viewRequest(t, base+"/", nil)
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
-	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "connect-src 'self'")
-	assert.Contains(t, string(body), "<html")
-
-	missing := viewRequest(t, base+"/nope", nil)
-	defer missing.Body.Close()
-	assert.Equal(t, http.StatusNotFound, missing.StatusCode)
+	tests := []struct {
+		name        string
+		path        string
+		wantStatus  int
+		wantType    string
+		wantContent string
+	}{
+		{name: "page", path: "/", wantStatus: http.StatusOK, wantType: "text/html; charset=utf-8", wantContent: "<html"},
+		{name: "timeline script", path: "/ui/timeline.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusTimeline"},
+		{name: "page under ui", path: "/ui/index.html", wantStatus: http.StatusNotFound},
+		{name: "missing file", path: "/ui/missing.js", wantStatus: http.StatusNotFound},
+		{name: "path escape", path: "/ui/..%2fui.go", wantStatus: http.StatusNotFound},
+		{name: "unknown root path", path: "/nope", wantStatus: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := viewRequest(t, base+tt.path, nil)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantStatus, resp.StatusCode, string(body))
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			assert.Equal(t, tt.wantType, resp.Header.Get("Content-Type"))
+			assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+			assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+			csp := resp.Header.Get("Content-Security-Policy")
+			assert.Contains(t, csp, "default-src 'self'")
+			assert.Contains(t, csp, "frame-ancestors 'none'")
+			assert.NotContains(t, csp, "unsafe-inline")
+			assert.Contains(t, string(body), tt.wantContent)
+		})
+	}
 }
