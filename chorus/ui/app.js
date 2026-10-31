@@ -94,16 +94,14 @@
     const pairMap = new Map();
     const inboxByRecipient = new Map();
     for (const ib of inboxes || []) {
-      inboxByRecipient.set(ib.recipient.toLowerCase(), ib);
+      inboxByRecipient.set(ib.recipient, ib);
     }
 
     for (const ib of inboxes || []) {
       const recipient = ib.recipient;
-      const rLower = recipient.toLowerCase();
       for (const m of ib.messages || []) {
         const sender = m.sender;
-        const sLower = sender.toLowerCase();
-        const [a, b] = sLower <= rLower ? [sLower, rLower] : [rLower, sLower];
+        const [a, b] = sender <= recipient ? [sender, recipient] : [recipient, sender];
         const pairKey = `${a}↔${b}`;
         let pair = pairMap.get(pairKey);
         if (!pair) {
@@ -289,7 +287,7 @@
       if (targetObj.kind === "channel" && sendTarget) {
         sendTarget.value = targetObj.name;
       } else if (targetObj.kind === "dm" && sendTarget) {
-        const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim().toLowerCase();
+        const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim();
         const other = targetObj.a === myHandle ? targetObj.b : targetObj.a;
         sendTarget.value = `@${other}`;
         if (pinCheck) pinCheck.checked = false;
