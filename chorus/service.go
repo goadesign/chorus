@@ -253,7 +253,7 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.directory(ctx, p.Agent, role)
+	out, err := sw.directory(ctx, p.Agent, role, p.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +283,7 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Tail)
+	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Model, p.Tail)
 	if err != nil {
 		return nil, err
 	}

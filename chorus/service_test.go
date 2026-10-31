@@ -1175,7 +1175,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
 	}
 
-	// 7. Participants registered with role "human" (such as from the browser UI)
+	// 7. Participants registered with model "human" (such as from the browser UI)
 	// are annotated with "(human)" on channel and direct-message wire lines so
 	// agents immediately distinguish human steering from peer worker messages.
 	arch.call("join", map[string]any{
@@ -1184,7 +1184,8 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	human := c.newAgent(0, swarm, "raphael")
 	human.call("join", map[string]any{
 		"channels": []string{"#ui-review"},
-		"role":     "human",
+		"model":    "human",
+		"role":     "Product Lead",
 	})
 	human.call("send", map[string]any{
 		"to":   "#ui-review",
@@ -1196,10 +1197,10 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	})
 	archRead := arch.call("read", map[string]any{})
 	if !strings.Contains(archRead, "#ui-review#1 @raphael (human): Please prioritize accessibility and contrast") {
-		t.Fatalf("expected channel message from role=human to carry (human) tag, got:\n%s", archRead)
+		t.Fatalf("expected channel message from model=human to carry (human) tag, got:\n%s", archRead)
 	}
 	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
-		t.Fatalf("expected direct message from role=human to carry (human) tag, got:\n%s", archRead)
+		t.Fatalf("expected direct message from model=human to carry (human) tag, got:\n%s", archRead)
 	}
 	parsedHuman := parseWireMessages(t, archRead)
 	if len(parsedHuman) != 2 {
@@ -1489,6 +1490,9 @@ func (a *emulatedAgent) withIdentity(toolName string, args map[string]any) map[s
 		merged["agent"] = a.handle
 	}
 	if toolName == "who" || toolName == "join" {
+		if _, ok := merged["model"]; !ok {
+			merged["model"] = "test-model"
+		}
 		if _, ok := merged["swarm"]; !ok {
 			swarm := a.swarm
 			if swarm == "" {

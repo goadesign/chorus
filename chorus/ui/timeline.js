@@ -56,9 +56,9 @@
   // plot, so the first and last dots never touch a label or the border.
   const PLOT_PAD = 18;
   const PLOT_X0 = LABEL_W + PLOT_PAD;
-  // Lane avatar: neutral plate radius and the provider icon size inside it.
-  const AVATAR_R = 10;
-  const AVATAR_ICON = 16;
+  // Lane identity mark: the provider logo (or initial) drawn at this size,
+  // with no circle or plate around it.
+  const AVATAR = 22;
   // Dot radius, and radius of the selected dot.
   const DOT_R = 6;
   const DOT_R_SELECTED = 8;
@@ -269,7 +269,13 @@
     }
     const lanes = [...handles].map((h) => {
       const a = live.get(h);
-      return { handle: h, role: a ? a.role || "" : "", human: !!(a && a.role === "human"), unregistered: !a };
+      return {
+        handle: h,
+        role: a ? a.role || "" : "",
+        model: a ? a.model || "" : "",
+        human: !!(a && a.role === "human"),
+        unregistered: !a,
+      };
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
@@ -535,16 +541,17 @@
       x1: String(LABEL_W), x2: String(width - PLOT_PAD), y1: String(y), y2: String(y),
     }));
     // Identity mark from app.js's shared resolver, so the lane shows the same
-    // provider logo (or neutral initial) as the rest of the page. A neutral
-    // plate sits behind every mark because some logos are white.
+    // provider logo (or neutral initial) as the rest of the page, with no
+    // circle around it.
     const id = window.ChorusUI.resolveIdentity(lane.handle, lane.role);
-    const cx = PAD + AVATAR_R;
-    svg.appendChild(el("circle", { class: "tl-avatar-plate", cx: String(cx), cy: String(y), r: String(AVATAR_R) }));
+    const cx = PAD + AVATAR / 2;
     if (id.iconUrl) {
       svg.appendChild(el("image", {
-        class: "tl-avatar-icon", href: id.iconUrl,
-        x: String(cx - AVATAR_ICON / 2), y: String(y - AVATAR_ICON / 2),
-        width: String(AVATAR_ICON), height: String(AVATAR_ICON),
+        // The provider class lets one shared CSS rule size each provider's
+        // mark (the OpenAI glyph fills less of its canvas than the others).
+        class: "tl-avatar-icon provider-" + id.provider, href: id.iconUrl,
+        x: String(cx - AVATAR / 2), y: String(y - AVATAR / 2),
+        width: String(AVATAR), height: String(AVATAR),
       }));
     } else {
       const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y + 4), "text-anchor": "middle" });
@@ -554,12 +561,14 @@
     }
     const label = el("text", {
       class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""),
-      x: String(PAD + AVATAR_R * 2 + 6), y: String(y + 4), "clip-path": "url(#tl-gutter)",
+      x: String(PAD + AVATAR + 6), y: String(y + 4), "clip-path": "url(#tl-gutter)",
     });
     label.textContent = "@" + lane.handle;
     label.setAttribute("fill", colors.get(lane.handle));
     const title = el("title", {});
-    title.textContent = "@" + lane.handle + (lane.human ? " · human" : "") +
+    // The exact model the agent declared on join or who, when it has one.
+    title.textContent = "@" + lane.handle + (lane.model ? " · " + lane.model : "") +
+      (lane.human ? " · human" : "") +
       (lane.unregistered ? " · no current registration (messages kept)" : "");
     label.appendChild(title);
     svg.appendChild(label);

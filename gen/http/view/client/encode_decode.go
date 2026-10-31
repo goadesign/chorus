@@ -328,6 +328,7 @@ func unmarshalAgentResponseBodyToViewAgent(v *AgentResponseBody) *view.Agent {
 	res := &view.Agent{
 		Handle:               *v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		LastSeenUnix:         *v.LastSeenUnix,
 		WatchingOnThisServer: *v.WatchingOnThisServer,
 	}

@@ -34,8 +34,33 @@
     pollAbort: null,
   };
 
-  function agentColorClass(handle, role) {
-    if (role === "human") return "agent-human";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const ICON_PATHS = {
+    close: ["M18 6 6 18", "m6 6 12 12"],
+    reply: ["M9 17 4 12l5-5", "M20 18v-2a4 4 0 0 0-4-4H4"],
+    edit: ["M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z", "m15 5 4 4"],
+    pin: ["M12 17v5", "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"],
+    code: ["m16 18 6-6-6-6", "m8 6-6 6 6 6"],
+    check: ["M20 6 9 17l-5-5"],
+    copy: ["M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2", "M16 4h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"],
+    arrowUp: ["m5 12 7-7 7 7", "M12 19V5"],
+  };
+
+  function svgIcon(name, className = "icon") {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("class", className);
+    svg.setAttribute("aria-hidden", "true");
+    for (const d of ICON_PATHS[name] || ICON_PATHS.close) {
+      const p = document.createElementNS(SVG_NS, "path");
+      p.setAttribute("d", d);
+      svg.appendChild(p);
+    }
+    return svg;
+  }
+
+  function agentColorClass(handle, model) {
+    if (model === "human") return "agent-human";
     const h = String(handle || "").toLowerCase();
     let hash = 2166136261;
     for (let i = 0; i < h.length; i++) {
@@ -45,12 +70,9 @@
     return `agent-c${Math.abs(hash) % 8}`;
   }
 
-  function agentColorHex(handle, role) {
-    if (role === "human") return "#F43F5E";
-    const palette = [
-      "#3B82F6", "#14B8A6", "#F59E0B", "#F43F5E",
-      "#6366F1", "#10B981", "#EC4899", "#06B6D4",
-    ];
+  function agentColorHex(handle, model) {
+    if (model === "human") return "#F43F5E";
+    const palette = ["#3B82F6", "#14B8A6", "#F59E0B", "#F43F5E", "#6366F1", "#10B981", "#EC4899", "#06B6D4"];
     const h = String(handle || "").toLowerCase();
     let hash = 2166136261;
     for (let i = 0; i < h.length; i++) {
@@ -60,57 +82,45 @@
     return palette[Math.abs(hash) % palette.length];
   }
 
-  // resolveIdentity maps explicitly recognized model/provider handles (or a
-  // current registration role when provided for a live participant) to the
-  // official brand mark under /ui/brands/, leaving custom or multi-model client
-  // handles (such as agy) neutral with iconUrl/avatarUrl: null.
-  function resolveIdentity(handle, currentRole = "") {
+  // resolveIdentity maps a participant's declared model (or saved send-time
+  // human provenance) to the official brand mark under /ui/brands/. It never
+  // guesses from handle prefixes or free-text role words.
+  function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
-    const h = raw.toLowerCase();
-    const roleLower = String(currentRole || "").toLowerCase();
-    if (roleLower === "human") {
-      return { handle: raw, label: `@${raw}`, provider: "human", iconUrl: null, avatarUrl: null };
+    const reg = (state.view?.agents || []).find((a) => a.handle === raw);
+    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "");
+    const m = mod.toLowerCase();
+    if (isHuman || m === "human") {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
     }
-    if (/^(codex|gpt|openai|chatgpt|o1|o3|o4)($|[-_0-9])/.test(h)) {
-      return { handle: raw, label: `@${raw}`, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
+    if (m.includes("claude") || m.includes("anthropic") || m.includes("opus") || m.includes("sonnet") || m.includes("haiku")) {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
     }
-    if (/^(opus|sonnet|haiku|claude)($|[-_0-9])/.test(h)) {
-      return { handle: raw, label: `@${raw}`, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
+    if (m.includes("gpt") || m.includes("codex") || m.includes("openai") || m.includes("chatgpt") || /(^|[^a-z0-9])o[134]([^a-z0-9]|$)/.test(m)) {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
     }
-    if (/^gemini($|[-_0-9])/.test(h)) {
-      return { handle: raw, label: `@${raw}`, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
+    if (m.includes("gemini") || m.includes("google")) {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
     }
-    if (/\b(codex|chatgpt|openai|gpt-)\b/.test(roleLower)) {
-      return { handle: raw, label: `@${raw}`, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
-    }
-    if (/\b(claude|opus|sonnet|haiku)\b/.test(roleLower)) {
-      return { handle: raw, label: `@${raw}`, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
-    }
-    if (/\bgemini\b/.test(roleLower)) {
-      return { handle: raw, label: `@${raw}`, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
-    }
-    return { handle: raw, label: `@${raw}`, provider: null, iconUrl: null, avatarUrl: null };
+    return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null };
   }
 
-  // handleBadge renders @<handle> with an inline 16px brand mark when
-  // resolveIdentity recognizes the handle or current registration role.
-  function handleBadge(handle, currentRole = "", extraClass = "") {
+  // handleBadge renders @<handle> with an inline brand mark (no circular border
+  // container) when resolveIdentity recognizes the declared model.
+  function handleBadge(handle, model = "", extraClass = "", isHuman = false) {
     const raw = String(handle || "");
-    const identity = resolveIdentity(raw, currentRole);
+    const identity = resolveIdentity(raw, model, isHuman);
     const span = document.createElement("span");
     span.className = `handle-with-logo ${extraClass}`.trim();
     if (identity.iconUrl) {
-      const badge = document.createElement("span");
-      badge.className = "inline-brand-badge";
-      badge.dataset.provider = identity.provider || "";
-      badge.setAttribute("aria-hidden", "true");
       const img = document.createElement("img");
-      img.className = "inline-brand-logo";
+      img.className = `inline-brand-logo provider-${identity.provider}`.trim();
+      img.dataset.provider = identity.provider || "";
       img.src = identity.iconUrl;
       img.alt = "";
-      img.addEventListener("error", () => badge.remove());
-      badge.appendChild(img);
-      span.appendChild(badge);
+      img.setAttribute("aria-hidden", "true");
+      img.addEventListener("error", () => img.remove());
+      span.appendChild(img);
     }
     span.appendChild(document.createTextNode(`@${raw}`));
     return span;
@@ -202,21 +212,14 @@
     if (!swarm) return {};
     try {
       const raw = localStorage.getItem(`chorus_seen:${swarm}`);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
+      const parsed = raw ? JSON.parse(raw) : null;
       return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
+    } catch { return {}; }
   }
 
   function saveLastSeenMap(swarm, map) {
     if (!swarm) return;
-    try {
-      localStorage.setItem(`chorus_seen:${swarm}`, JSON.stringify(map));
-    } catch {
-      // Ignore storage quota errors
-    }
+    try { localStorage.setItem(`chorus_seen:${swarm}`, JSON.stringify(map)); } catch {}
   }
 
   function initializeBaselineSeenIfEmpty(view) {
@@ -226,8 +229,7 @@
     for (const ch of view.channels || []) {
       if (map[ch.name] === undefined) {
         const msgs = ch.messages || [];
-        const maxSeq = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
-        map[ch.name] = maxSeq;
+        map[ch.name] = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
         changed = true;
       }
     }
@@ -238,40 +240,23 @@
         changed = true;
       }
     }
-    if (changed) {
-      saveLastSeenMap(state.activeSwarm, map);
-    }
+    if (changed) saveLastSeenMap(state.activeSwarm, map);
   }
 
   function readHashState() {
-    const raw = window.location.hash.replace(/^#/, "");
-    const params = new URLSearchParams(raw);
-    return {
-      swarm: params.get("swarm") || "",
-      target: params.get("target") || "",
-      mode: params.get("mode") || "",
-    };
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    return { swarm: params.get("swarm") || "", target: params.get("target") || "", mode: params.get("mode") || "" };
   }
 
   function writeHashState() {
     const params = new URLSearchParams();
     if (state.activeSwarm) params.set("swarm", state.activeSwarm);
-    if (state.selectedTarget) {
-      if (state.selectedTarget.kind === "channel") {
-        params.set("target", state.selectedTarget.name);
-      } else if (state.selectedTarget.kind === "dm") {
-        params.set("target", `dm:${state.selectedTarget.pairKey}`);
-      } else if (state.selectedTarget.kind === "all") {
-        params.set("target", "all");
-      }
-    }
-    if (state.viewMode !== "threaded") {
-      params.set("mode", state.viewMode);
-    }
+    if (state.selectedTarget?.kind === "channel") params.set("target", state.selectedTarget.name);
+    else if (state.selectedTarget?.kind === "dm") params.set("target", `dm:${state.selectedTarget.pairKey}`);
+    else if (state.selectedTarget?.kind === "all") params.set("target", "all");
+    if (state.viewMode !== "threaded") params.set("mode", state.viewMode);
     const nextHash = `#${params.toString()}`;
-    if (window.location.hash !== nextHash) {
-      history.replaceState(null, "", nextHash);
-    }
+    if (window.location.hash !== nextHash) history.replaceState(null, "", nextHash);
   }
 
   function reconcileSelectedTarget(view, pairedDMs) {
@@ -279,36 +264,22 @@
     const channels = view.channels || [];
     if (state.selectedTarget) {
       if (state.selectedTarget.kind === "all") return;
-      if (state.selectedTarget.kind === "channel") {
-        if (channels.some((c) => c.name === state.selectedTarget.name)) return;
-      }
-      if (state.selectedTarget.kind === "dm") {
-        if (pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
-      }
+      if (state.selectedTarget.kind === "channel" && channels.some((c) => c.name === state.selectedTarget.name)) return;
+      if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
     }
     const hash = readHashState();
-    if (hash.target === "all") {
-      state.selectedTarget = { kind: "all" };
-      return;
-    }
+    if (hash.target === "all") { state.selectedTarget = { kind: "all" }; return; }
     if (hash.target.startsWith("dm:")) {
-      const pk = hash.target.slice(3);
-      const found = pairedDMs.find((p) => p.pairKey === pk);
-      if (found) {
-        state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
-        return;
-      }
+      const found = pairedDMs.find((p) => p.pairKey === hash.target.slice(3));
+      if (found) { state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b }; return; }
     }
     if (hash.target.startsWith("#") && channels.some((c) => c.name === hash.target)) {
-      state.selectedTarget = { kind: "channel", name: hash.target };
-      return;
+      state.selectedTarget = { kind: "channel", name: hash.target }; return;
     }
     if (channels.length > 0) {
       state.selectedTarget = { kind: "channel", name: channels[0].name };
       const sendTarget = document.getElementById("send-target");
-      if (sendTarget && !sendTarget.dataset.userEdited) {
-        sendTarget.value = channels[0].name;
-      }
+      if (sendTarget && !sendTarget.dataset.userEdited) sendTarget.value = channels[0].name;
       return;
     }
     if (pairedDMs.length > 0) {
@@ -322,19 +293,11 @@
   const actions = {
     selectTarget(targetObj) {
       if (!targetObj) return;
-      const sameAsCurrent =
-        state.selectedTarget &&
-        state.selectedTarget.kind === targetObj.kind &&
-        (targetObj.kind === "channel"
-          ? state.selectedTarget.name === targetObj.name
-          : targetObj.kind === "dm"
-            ? state.selectedTarget.pairKey === targetObj.pairKey
-            : true);
-
+      const sameAsCurrent = state.selectedTarget && state.selectedTarget.kind === targetObj.kind &&
+        (targetObj.kind === "channel" ? state.selectedTarget.name === targetObj.name
+          : targetObj.kind === "dm" ? state.selectedTarget.pairKey === targetObj.pairKey : true);
       state.selectedTarget = targetObj;
-      if (sameAsCurrent) {
-        return;
-      }
+      if (sameAsCurrent) return;
       state.selectedMessage = null;
       state.replyToSeq = 0;
       renderReplyChip();
@@ -344,8 +307,7 @@
         sendTarget.value = targetObj.name;
       } else if (targetObj.kind === "dm" && sendTarget) {
         const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim();
-        const other = targetObj.a === myHandle ? targetObj.b : targetObj.a;
-        sendTarget.value = `@${other}`;
+        sendTarget.value = `@${targetObj.a === myHandle ? targetObj.b : targetObj.a}`;
         if (pinCheck) pinCheck.checked = false;
       }
       writeHashState();
@@ -353,22 +315,14 @@
     },
 
     selectMessage(target, seq) {
-      if (!target || !seq || seq <= 0) {
-        state.selectedMessage = null;
-      } else {
-        state.selectedMessage = { target, seq };
-        state.followLive = false;
-      }
+      if (!target || !seq || seq <= 0) state.selectedMessage = null;
+      else { state.selectedMessage = { target, seq }; state.followLive = false; }
       renderAll();
     },
 
     setTimeWindow(win) {
-      if (!win || typeof win.startMs !== "number" || typeof win.endMs !== "number") {
-        state.timeWindow = null;
-      } else {
-        state.timeWindow = { startMs: win.startMs, endMs: win.endMs };
-        state.followLive = false;
-      }
+      if (!win || typeof win.startMs !== "number" || typeof win.endMs !== "number") state.timeWindow = null;
+      else { state.timeWindow = { startMs: win.startMs, endMs: win.endMs }; state.followLive = false; }
       renderAll();
     },
 
@@ -421,16 +375,29 @@
       document.getElementById("send-text")?.focus();
     },
 
-    editPin(channelName, text) {
-      const sendTarget = document.getElementById("send-target");
-      const sendPin = document.getElementById("send-pin");
-      const sendText = document.getElementById("send-text");
-      if (sendTarget && channelName) sendTarget.value = channelName;
-      if (sendPin) sendPin.checked = true;
-      if (sendText) {
-        sendText.value = text || "";
-        sendText.focus();
+    async updatePin(channelName, text) {
+      const handleInput = document.getElementById("send-handle");
+      const agent = (handleInput?.value || "").trim().replace(/^@/, "");
+      const cleanText = (text || "").trim();
+      const swarm = state.activeSwarm;
+      if (!swarm) throw new Error("Select a swarm before updating the pin.");
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
+        handleInput?.focus();
+        throw new Error("Enter your handle in the bottom bar (1–32 letters, digits, dashes, or underscores) to update the pin.");
       }
+      if (!cleanText) throw new Error("Pin text cannot be empty.");
+      const existingAgent = (state.view?.agents || []).find((a) => a.handle === agent);
+      if (existingAgent && existingAgent.model !== "human") {
+        throw new Error(`@${existingAgent.handle} is an agent in this swarm; pick your own handle.`);
+      }
+      localStorage.setItem("chorus_handle", agent);
+      const ch = (state.view?.channels || []).find((c) => c.name === channelName);
+      const alreadyMember = Boolean(existingAgent) && existingAgent.model === "human" && Boolean(ch) && (ch.positions || []).some((p) => p.handle === agent);
+      if (!alreadyMember) {
+        await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [channelName], tail: 1 });
+      }
+      await callMCPTool("send", { agent, to: channelName, text: cleanText, pin: true, wait_sec: 0 });
+      if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     },
 
     markSeen(target, seq) {
@@ -440,8 +407,7 @@
         const ch = (state.view?.channels || []).find((c) => c.name === state.selectedTarget.name);
         if (ch) {
           const msgs = ch.messages || [];
-          const maxSeq = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
-          state.lastSeenSeqByTarget[ch.name] = maxSeq;
+          state.lastSeenSeqByTarget[ch.name] = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
         }
       } else if (state.selectedTarget?.kind === "dm") {
         const pair = state.pairedDMs.find((p) => p.pairKey === state.selectedTarget.pairKey);
@@ -463,27 +429,18 @@
       return;
     }
     container.replaceChildren(
-      el(
-        "span",
-        { className: "context-pill" },
-        `↩ #${state.replyToSeq}`,
+      el("span", { className: "context-pill" },
+        svgIcon("reply", "icon icon-sm"), `#${state.replyToSeq}`,
         ...(state.replyToSender ? [" (", handleBadge(state.replyToSender), ")"] : []),
-        el(
-          "button",
-          {
-            type: "button",
-            className: "btn-icon",
-            "aria-label": "Cancel reply",
-            onClick: () => {
-              state.replyToSeq = 0;
-              state.replyToTarget = "";
-              state.replyToSender = "";
-              renderReplyChip();
-            },
+        el("button", {
+          type: "button", className: "icon-btn icon-btn-sm", "aria-label": "Cancel reply", title: "Cancel reply",
+          onClick: () => {
+            state.replyToSeq = 0;
+            state.replyToTarget = "";
+            state.replyToSender = "";
+            renderReplyChip();
           },
-          "×"
-        )
-      )
+        }, svgIcon("close")))
     );
   }
 
@@ -492,14 +449,10 @@
     const dot = document.getElementById("live-dot");
     const txt = document.getElementById("live-text");
     if (!btn || !dot || !txt) return;
-
     if (state.connectionState === "error") {
       btn.className = "live-pill reconnecting";
       dot.className = "status-dot warn";
-      txt.textContent =
-        state.retryCountdownSec > 0
-          ? `Reconnecting (${state.retryCountdownSec}s)`
-          : "Reconnecting…";
+      txt.textContent = state.retryCountdownSec > 0 ? `Reconnecting (${state.retryCountdownSec}s)` : "Reconnecting…";
     } else if (state.connectionState === "connecting") {
       btn.className = "live-pill";
       dot.className = "status-dot warn";
@@ -519,20 +472,14 @@
     const select = document.getElementById("swarm-select");
     const sendBtn = document.getElementById("btn-send");
     if (sendBtn) sendBtn.disabled = !state.activeSwarm;
-
     const allSwarms = new Set(["default", ...state.swarms]);
     if (state.activeSwarm) allSwarms.add(state.activeSwarm);
-    const sortedSwarms = Array.from(allSwarms).sort();
-    select.replaceChildren(
-      ...sortedSwarms.map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s))
-    );
-
+    select.replaceChildren(...Array.from(allSwarms).sort().map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
     renderLiveStatus();
 
     const channels = state.view?.channels || [];
     const agents = state.view?.agents || [];
     const pairedDMs = state.pairedDMs || [];
-
     const datalist = document.getElementById("target-suggestions");
     if (datalist) {
       datalist.replaceChildren(
@@ -543,120 +490,51 @@
 
     const tabsEl = document.getElementById("target-tabs");
     if (!tabsEl) return;
-
     const tabNodes = [];
     for (const ch of channels) {
-      const isActive =
-        state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
+      const isActive = state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
       const seenSeq = state.lastSeenSeqByTarget[ch.name];
       const msgs = ch.messages || [];
       const headSeq = msgs.length > 0 ? msgs[msgs.length - 1].seq : ch.head_seq || 0;
       const newCount = seenSeq !== undefined ? Math.max(0, headSeq - seenSeq) : 0;
-
       tabNodes.push(
-        el(
-          "button",
-          {
-            type: "button",
-            className: `target-tab${isActive ? " active" : ""}`,
-            onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }),
-          },
+        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }) },
           el("span", {}, ch.name),
-          el(
-            "span",
-            { className: `count-pill${newCount > 0 ? " attention" : ""}` },
-            newCount > 0 ? `+${newCount}` : String(msgs.length)
-          )
-        )
+          el("span", { className: `count-pill${newCount > 0 ? " attention" : ""}` }, newCount > 0 ? `+${newCount}` : String(msgs.length)))
       );
     }
-
     for (const pair of pairedDMs) {
-      const isActive =
-        state.selectedTarget?.kind === "dm" && state.selectedTarget.pairKey === pair.pairKey;
+      const isActive = state.selectedTarget?.kind === "dm" && state.selectedTarget.pairKey === pair.pairKey;
       tabNodes.push(
-        el(
-          "button",
-          {
-            type: "button",
-            className: `target-tab${isActive ? " active" : ""}`,
-            onClick: () =>
-              actions.selectTarget({
-                kind: "dm",
-                pairKey: pair.pairKey,
-                a: pair.a,
-                b: pair.b,
-              }),
-          },
+        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }) },
           el("span", {}, handleBadge(pair.a), " ↔ ", handleBadge(pair.b)),
-          el("span", { className: "count-pill" }, String(pair.messages.length))
-        )
+          el("span", { className: "count-pill" }, String(pair.messages.length)))
       );
     }
-
     let totalMsgs = 0;
     for (const ch of channels) totalMsgs += (ch.messages || []).length;
     for (const p of pairedDMs) totalMsgs += p.messages.length;
-
     tabNodes.push(
-      el(
-        "button",
-        {
-          type: "button",
-          className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`,
-          onClick: () => actions.selectTarget({ kind: "all" }),
-        },
+      el("button", { type: "button", className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "all" }) },
         el("span", {}, "All Activity"),
-        el("span", { className: "count-pill" }, String(totalMsgs))
-      )
+        el("span", { className: "count-pill" }, String(totalMsgs)))
     );
-
     tabsEl.replaceChildren(...tabNodes);
 
-    // Active filters bar
     const filtersBar = document.getElementById("active-filters-bar");
     if (filtersBar) {
       const chips = [];
       if (state.filterAgent) {
-        chips.push(
-          el(
-            "button",
-            {
-              type: "button",
-              className: "chip-btn active",
-              onClick: () => actions.setFilterAgent(""),
-            },
-            "Agent: ",
-            handleBadge(state.filterAgent),
-            " ×"
-          )
-        );
+        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear agent filter @${state.filterAgent}`, onClick: () => actions.setFilterAgent("") },
+          "Agent: ", handleBadge(state.filterAgent), svgIcon("close", "icon icon-xs")));
       }
       if (state.filterArtifact) {
-        chips.push(
-          el(
-            "button",
-            {
-              type: "button",
-              className: "chip-btn active",
-              onClick: () => actions.setFilterArtifact(""),
-            },
-            `Artifact: ${state.filterArtifact} ×`
-          )
-        );
+        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear artifact filter ${state.filterArtifact}`, onClick: () => actions.setFilterArtifact("") },
+          `Artifact: ${state.filterArtifact}`, svgIcon("close", "icon icon-xs")));
       }
       if (state.timeWindow) {
-        chips.push(
-          el(
-            "button",
-            {
-              type: "button",
-              className: "chip-btn active",
-              onClick: () => actions.setTimeWindow(null),
-            },
-            "Time window active ×"
-          )
-        );
+        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": "Clear time window filter", onClick: () => actions.setTimeWindow(null) },
+          "Time window active", svgIcon("close", "icon icon-xs")));
       }
       filtersBar.replaceChildren(...chips);
     }
@@ -845,12 +723,15 @@
     const txt = document.getElementById("composer-status-text");
     if (!wrap || !txt) return;
     wrap.className = `composer-feedback${kind ? ` ${kind}` : ""}`;
-    txt.textContent = msg;
-      clearTimeout(setComposerFeedback._timer);
-    if (msg && kind === "ok") {
+    const parts = Array.isArray(msg) ? msg : msg ? [msg] : [];
+    txt.replaceChildren(
+      ...parts.map((p) => (p instanceof Node ? p : document.createTextNode(String(p))))
+    );
+    clearTimeout(setComposerFeedback._timer);
+    if (parts.length > 0 && kind === "ok") {
       setComposerFeedback._timer = setTimeout(() => {
         wrap.className = "composer-feedback";
-        txt.textContent = "";
+        txt.replaceChildren();
       }, 4000);
     }
   }
@@ -868,31 +749,18 @@
     const pin = Boolean(pinCheck.checked && to.startsWith("#"));
     const swarm = state.activeSwarm;
 
-    if (!swarm) {
-      setComposerFeedback("Select a swarm before sending.", "error");
-      return;
-    }
+    if (!swarm) { setComposerFeedback("Select a swarm before sending.", "error"); return; }
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
-      setComposerFeedback("Handle must be 1–32 letters, digits, dashes, or underscores.", "error");
-      return;
+      setComposerFeedback("Handle must be 1–32 letters, digits, dashes, or underscores.", "error"); return;
     }
     if (!/^(#|@)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(to)) {
-      setComposerFeedback("Target must start with #channel or @agent.", "error");
-      return;
+      setComposerFeedback("Target must start with #channel or @agent.", "error"); return;
     }
-    if (!text) {
-      setComposerFeedback("Enter a message before sending.", "error");
-      return;
-    }
+    if (!text) { setComposerFeedback("Enter a message before sending.", "error"); return; }
 
-    const existingAgent = (state.view?.agents || []).find(
-      (a) => a.handle === agent
-    );
-    if (existingAgent && existingAgent.role !== "human") {
-      setComposerFeedback(
-        `@${existingAgent.handle} is an agent in this swarm; pick your own handle.`,
-        "error"
-      );
+    const existingAgent = (state.view?.agents || []).find((a) => a.handle === agent);
+    if (existingAgent && existingAgent.model !== "human") {
+      setComposerFeedback([handleBadge(existingAgent.handle, existingAgent.model), " is an agent in this swarm; pick your own handle."], "error");
       return;
     }
 
@@ -902,27 +770,15 @@
     try {
       if (to.startsWith("#")) {
         const ch = (state.view?.channels || []).find((c) => c.name === to);
-        const alreadyMember =
-          Boolean(existingAgent) &&
-          Boolean(ch) &&
-          (ch.positions || []).some((p) => p.handle === agent);
+        const alreadyMember = Boolean(existingAgent) && existingAgent.model === "human" && Boolean(ch) && (ch.positions || []).some((p) => p.handle === agent);
         if (!alreadyMember) {
-          await callMCPTool("join", {
-            swarm,
-            agent,
-            role: "human",
-            channels: [to],
-            tail: 1,
-          });
+          await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [to], tail: 1 });
         }
-      } else if (!existingAgent) {
-        await callMCPTool("who", { swarm, agent, role: "human" });
+      } else if (!existingAgent || existingAgent.model !== "human") {
+        await callMCPTool("who", { swarm, agent, model: "human", role: "human" });
       }
-
       const sendArgs = { agent, to, text, pin, wait_sec: 0 };
-      if (state.replyToSeq > 0 && to.startsWith("#")) {
-        sendArgs.reply_to = state.replyToSeq;
-      }
+      if (state.replyToSeq > 0 && to.startsWith("#")) sendArgs.reply_to = state.replyToSeq;
       await callMCPTool("send", sendArgs);
 
       textInput.value = "";
@@ -931,11 +787,9 @@
       state.replyToTarget = "";
       state.replyToSender = "";
       renderReplyChip();
-      setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
-
-      if (state.activeSwarm === swarm) {
-        startSwarmLoop(swarm);
-      }
+      if (to.startsWith("@")) setComposerFeedback(["Sent to ", handleBadge(to.slice(1))], "ok");
+      else setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
+      if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     } catch (err) {
       setComposerFeedback(err.message || "Failed to send message.", "error");
     } finally {
@@ -1094,6 +948,7 @@
     agentColorHex,
     resolveIdentity,
     handleBadge,
+    svgIcon,
   };
 
   async function boot() {

@@ -36,7 +36,7 @@ type Service interface {
 const APIName = "chorus"
 
 // APIVersion is the version of the API as defined in the design.
-const APIVersion = "0.5.1"
+const APIVersion = "0.6.0"
 
 // ServiceName is the name of the service as defined in the design. This is the
 // same value that is set in the endpoint request contexts under the ServiceKey
@@ -54,6 +54,10 @@ type Agent struct {
 	Handle string
 	// Role the agent advertised on join or who. Absent when none was given.
 	Role *string
+	// Model the agent declared on its most recent join or who ('human' for a
+	// person using the dashboard). Absent for agents registered before declaring a
+	// model was required.
+	Model *string
 	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
 	LastSeenUnix int64
 	// Channels the agent is subscribed to, sorted.
@@ -110,8 +114,8 @@ type Message struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64
-	// True when the sender was registered with role human when the message was
-	// sent. Absent otherwise.
+	// True when the sender declared model "human" when the message was sent.
+	// Absent otherwise.
 	Human *bool
 }
 
@@ -123,8 +127,8 @@ type Pin struct {
 	Sender string
 	// Pinned message body exactly as sent.
 	Text string
-	// True when the sender was registered with role human when the message was
-	// pinned. Absent otherwise.
+	// True when the sender declared model "human" when the message was pinned.
+	// Absent otherwise.
 	Human *bool
 }
 
@@ -264,6 +268,10 @@ type jsonAgentTransport struct {
 	Handle *string `json:"handle"`
 	// Role the agent advertised on join or who. Absent when none was given.
 	Role *string `json:"role,omitempty"`
+	// Model the agent declared on its most recent join or who ('human' for a
+	// person using the dashboard). Absent for agents registered before declaring a
+	// model was required.
+	Model *string `json:"model,omitempty"`
 	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
 	LastSeenUnix *agentInt64Transport `json:"last_seen_unix"`
 	// Channels the agent is subscribed to, sorted.
@@ -429,8 +437,8 @@ type jsonMessageTransport struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs *channelInt64Transport `json:"sent_at_ms"`
-	// True when the sender was registered with role human when the message was
-	// sent. Absent otherwise.
+	// True when the sender declared model "human" when the message was sent.
+	// Absent otherwise.
 	Human *bool `json:"human,omitempty"`
 }
 
@@ -472,8 +480,8 @@ type jsonPinTransport struct {
 	Sender *string `json:"sender"`
 	// Pinned message body exactly as sent.
 	Text *string `json:"text"`
-	// True when the sender was registered with role human when the message was
-	// pinned. Absent otherwise.
+	// True when the sender declared model "human" when the message was pinned.
+	// Absent otherwise.
 	Human *bool `json:"human,omitempty"`
 }
 
@@ -747,6 +755,7 @@ func EncodeAgent(in *Agent) ([]byte, error) {
 		body = &jsonAgentTransport{
 			Handle:               &in.Handle,
 			Role:                 in.Role,
+			Model:                in.Model,
 			WatchingOnThisServer: &in.WatchingOnThisServer,
 		}
 		lastSeenUnix := agentInt64Transport(in.LastSeenUnix)
@@ -786,6 +795,7 @@ func ValidateAgentValue(in *Agent) error {
 		body = &jsonAgentTransport{
 			Handle:               &in.Handle,
 			Role:                 in.Role,
+			Model:                in.Model,
 			WatchingOnThisServer: &in.WatchingOnThisServer,
 		}
 		lastSeenUnix := agentInt64Transport(in.LastSeenUnix)
@@ -829,6 +839,7 @@ func DecodeAgent(data []byte) (out *Agent, err error) {
 		out = &Agent{
 			Handle:               *body.Handle,
 			Role:                 body.Role,
+			Model:                body.Model,
 			LastSeenUnix:         int64(*body.LastSeenUnix),
 			WatchingOnThisServer: *body.WatchingOnThisServer,
 		}
@@ -1573,6 +1584,7 @@ func decodeAgentTransportToAgent(v *jsonAgentTransport) *Agent {
 	res := &Agent{
 		Handle:               *v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		LastSeenUnix:         int64(*v.LastSeenUnix),
 		WatchingOnThisServer: *v.WatchingOnThisServer,
 	}
@@ -1674,6 +1686,7 @@ func encodeAgentToAgentTransport(v *Agent) *jsonAgentTransport {
 	res := &jsonAgentTransport{
 		Handle:               &v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		WatchingOnThisServer: &v.WatchingOnThisServer,
 	}
 	lastSeenUnix := agentInt64Transport(v.LastSeenUnix)
@@ -1822,6 +1835,13 @@ func validateAgentJSONValue(path string, value any, description string) error {
 			); err != nil {
 				return err
 			}
+		case "model":
+			if err := validateAgentJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.",
+			); err != nil {
+				return err
+			}
 		case "role":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
@@ -1841,6 +1861,7 @@ func validateAgentJSONValue(path string, value any, description string) error {
 				"channels",
 				"handle",
 				"last_seen_unix",
+				"model",
 				"role",
 				"watching_on_this_server",
 			})
@@ -2063,7 +2084,7 @@ func validateChannelJSONValue4(path string, value any, description string) error
 		case "human":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when the sender was registered with role human when the message was sent. Absent otherwise.",
+				typed[key], "True when the sender declared model \"human\" when the message was sent. Absent otherwise.",
 			); err != nil {
 				return err
 			}
@@ -2139,7 +2160,7 @@ func validateChannelJSONValue5(path string, value any, description string) error
 		case "human":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when the sender was registered with role human when the message was pinned. Absent otherwise.",
+				typed[key], "True when the sender declared model \"human\" when the message was pinned. Absent otherwise.",
 			); err != nil {
 				return err
 			}
@@ -2693,6 +2714,11 @@ func checkAgentAgentValue(in *Agent, field string, active map[any]bool) error {
 		if in.Role != nil {
 			if !utf8.ValidString(string(*in.Role)) {
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "role", false))
+			}
+		}
+		if in.Model != nil {
+			if !utf8.ValidString(string(*in.Model)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "model", false))
 			}
 		}
 		for index1, item1 := range in.Channels {

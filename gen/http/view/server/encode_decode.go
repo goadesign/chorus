@@ -173,6 +173,7 @@ func marshalViewAgentToAgentResponseBody(v *view.Agent) *AgentResponseBody {
 	res := &AgentResponseBody{
 		Handle:               v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		LastSeenUnix:         v.LastSeenUnix,
 		WatchingOnThisServer: v.WatchingOnThisServer,
 	}

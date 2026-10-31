@@ -312,6 +312,9 @@ func (v *viewService) build(ctx context.Context, sw *swarmHandle) (*genview.Swar
 		if rec.Role != "" {
 			a.Role = &rec.Role
 		}
+		if rec.Model != "" {
+			a.Model = &rec.Model
+		}
 		agents = append(agents, a)
 	}
 	slices.SortFunc(agents, func(a, b *genview.Agent) int { return strings.Compare(a.Handle, b.Handle) })

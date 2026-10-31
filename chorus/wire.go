@@ -26,7 +26,7 @@ type (
 		Seq int `json:"seq"`
 		// Sender is the handle of the agent that sent the message (without '@').
 		Sender string `json:"sender"`
-		// Human is true when the sender's registration role was "human" at publication time.
+		// Human is true when the sender's declared model was "human" at publication time.
 		Human bool `json:"human,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`
@@ -40,6 +40,10 @@ type (
 	agentRecord struct {
 		// Role is the optional human-readable responsibility advertised by the agent.
 		Role string `json:"role,omitempty"`
+		// Model is the model the agent declared on its most recent join or who
+		// ("human" for a person using the dashboard). Records written before
+		// declaring a model was required have none.
+		Model string `json:"model,omitempty"`
 		// LastSeenUnix is the Unix timestamp in seconds when the agent last
 		// invoked a Chorus operation.
 		LastSeenUnix int64 `json:"ts"`

@@ -164,6 +164,11 @@ var joinPayloadFields = []tools.FieldMetadata{
 		Description: "Optional role description to advertise for the calling agent.",
 	},
 	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
+		JSONType:    "string",
+		Description: "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+	},
+	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("tail")},
 		JSONType:    "integer",
 		Description: "Maximum recent messages to return per joined channel.",
@@ -272,6 +277,11 @@ var whoPayloadFields = []tools.FieldMetadata{
 		Path:        []tools.FieldPathSegment{tools.FixedField("role")},
 		JSONType:    "string",
 		Description: "Optional role description to advertise to peers in this swarm.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
+		JSONType:    "string",
+		Description: "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
 	},
 }
 
@@ -560,6 +570,7 @@ func MarshalJoinPayload(v *JoinPayload) ([]byte, error) {
 		Swarm: &in.Swarm,
 		Topic: in.Topic,
 		Role:  in.Role,
+		Model: &in.Model,
 		Tail:  &in.Tail,
 	}
 	out.Channels = make([]string, len(in.Channels))
@@ -594,6 +605,7 @@ func UnmarshalJoinPayload(data []byte) (*JoinPayload, error) {
 		Swarm: *in.Swarm,
 		Topic: in.Topic,
 		Role:  in.Role,
+		Model: *in.Model,
 	}
 	if in.Tail != nil {
 		out.Tail = *in.Tail
@@ -791,6 +803,7 @@ func MarshalWhoPayload(v *WhoPayload) ([]byte, error) {
 		Agent: &in.Agent,
 		Swarm: &in.Swarm,
 		Role:  in.Role,
+		Model: &in.Model,
 	}
 	return json.Marshal(out)
 }
@@ -819,6 +832,7 @@ func UnmarshalWhoPayload(data []byte) (*WhoPayload, error) {
 		Agent: *in.Agent,
 		Swarm: *in.Swarm,
 		Role:  in.Role,
+		Model: *in.Model,
 	}
 	return out, nil
 }
@@ -1022,6 +1036,13 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 			); err != nil {
 				return err
 			}
+		case "model":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+			); err != nil {
+				return err
+			}
 		case "role":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1039,6 +1060,7 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"agent",
+				"model",
 				"role",
 				"swarm",
 			})
@@ -1097,6 +1119,13 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "model":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+			); err != nil {
+				return err
+			}
 		case "role":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1129,6 +1158,7 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 			return unknownJSONFieldError(path, key, []string{
 				"agent",
 				"channels",
+				"model",
 				"role",
 				"swarm",
 				"tail",

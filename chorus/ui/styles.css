@@ -75,7 +75,16 @@
   --scrollbar-thumb: var(--scrollbar-thumb-light);
   --scrollbar-track: var(--scrollbar-track-light);
 
-  @media (prefers-color-scheme: dark) {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+
+  accent-color: var(--accent);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
     --bg-canvas: var(--bg-canvas-dark);
     --bg-surface: var(--bg-surface-dark);
     --bg-elevated: var(--bg-elevated-dark);
@@ -96,38 +105,10 @@
     --scrollbar-thumb: var(--scrollbar-thumb-dark);
     --scrollbar-track: var(--scrollbar-track-dark);
   }
-
-  @supports (color: light-dark(white, black)) {
-    --bg-canvas: light-dark(var(--bg-canvas-light), var(--bg-canvas-dark));
-    --bg-surface: light-dark(var(--bg-surface-light), var(--bg-surface-dark));
-    --bg-elevated: light-dark(var(--bg-elevated-light), var(--bg-elevated-dark));
-    --bg-subtle: light-dark(var(--bg-subtle-light), var(--bg-subtle-dark));
-    --text-primary: light-dark(var(--text-primary-light), var(--text-primary-dark));
-    --text-secondary: light-dark(var(--text-secondary-light), var(--text-secondary-dark));
-    --text-muted: light-dark(var(--text-muted-light), var(--text-muted-dark));
-    --border: light-dark(var(--border-light), var(--border-dark));
-    --border-strong: light-dark(var(--border-strong-light), var(--border-strong-dark));
-    --accent: light-dark(var(--accent-light), var(--accent-dark));
-    --accent-soft: light-dark(var(--accent-soft-light), var(--accent-soft-dark));
-    --teal: light-dark(var(--teal-light), var(--teal-dark));
-    --teal-soft: light-dark(var(--teal-soft-light), var(--teal-soft-dark));
-    --amber: light-dark(var(--amber-light), var(--amber-dark));
-    --amber-soft: light-dark(var(--amber-soft-light), var(--amber-soft-dark));
-    --coral: light-dark(var(--coral-light), var(--coral-dark));
-    --coral-soft: light-dark(var(--coral-soft-light), var(--coral-soft-dark));
-    --scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
-    --scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
-  }
-
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
-
-  accent-color: var(--accent);
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
-html[data-theme="dark"] {
+html[data-theme="dark"],
+body[data-theme="dark"] {
   color-scheme: dark;
   --bg-canvas: var(--bg-canvas-dark);
   --bg-surface: var(--bg-surface-dark);
@@ -150,7 +131,8 @@ html[data-theme="dark"] {
   --scrollbar-track: var(--scrollbar-track-dark);
 }
 
-html[data-theme="light"] {
+html[data-theme="light"],
+body[data-theme="light"] {
   color-scheme: light;
   --bg-canvas: var(--bg-canvas-light);
   --bg-surface: var(--bg-surface-light);
@@ -237,6 +219,39 @@ button, input, select, textarea {
   color: var(--text-muted);
 }
 
+.icon-xs {
+  width: 14px;
+  height: 14px;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.icon-btn-sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
 /* Agent Color Classes */
 .agent-c0 { color: #3B82F6; --agent-color: #3B82F6; }
 .agent-c1 { color: #14B8A6; --agent-color: #14B8A6; }
@@ -272,17 +287,18 @@ button, input, select, textarea {
   border: 1.5px solid color-mix(in srgb, var(--agent-color, var(--accent)) 45%, transparent);
   flex-shrink: 0;
   user-select: none;
-  overflow: hidden;
+  overflow: visible;
 }
 
-.agent-avatar[data-provider="openai"] {
-  background: #171717;
-  border-color: #2e2e2e;
+.agent-avatar[data-provider] {
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 
 .agent-brand-logo {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   display: block;
 }
@@ -294,29 +310,37 @@ button, input, select, textarea {
   vertical-align: middle;
 }
 
-.inline-brand-badge {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.inline-brand-badge[data-provider="openai"] {
-  background: #171717;
-  border-color: #2e2e2e;
-}
-
 .inline-brand-logo {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   object-fit: contain;
   display: block;
+  flex-shrink: 0;
+}
+
+/* OpenAI's official SVG mark has a 484x480 glyph inside a 721x721 canvas (~67% fill);
+   scale it optically across both HTML <img> and SVG <image> elements. */
+.provider-openai {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.49);
+  filter: invert(1) brightness(0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .provider-openai {
+    filter: none;
+  }
+}
+
+html[data-theme="dark"] .provider-openai,
+body[data-theme="dark"] .provider-openai {
+  filter: none;
+}
+
+html[data-theme="light"] .provider-openai,
+body[data-theme="light"] .provider-openai {
+  filter: invert(1) brightness(0.12);
 }
 
 .details-agent-title {
@@ -691,21 +715,33 @@ button, input, select, textarea {
   color: var(--agent-color, var(--text-primary));
 }
 
-.agent-status {
+.agent-model-inline {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.agent-status-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  padding: 1px 7px;
-  border-radius: 999px;
 }
 
-.agent-status.is-watching {
-  background: var(--teal-soft);
+.agent-status-inline.is-watching {
   color: var(--teal);
-  border-color: color-mix(in srgb, var(--teal) 35%, transparent);
   font-weight: 600;
+}
+
+.presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  flex-shrink: 0;
 }
 
 .agent-behind-pill {
@@ -1254,7 +1290,7 @@ button, input, select, textarea {
   position: relative;
   list-style: none;
   cursor: pointer;
-  padding: 10px 42px 10px 16px;
+  padding: 10px 76px 10px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1267,6 +1303,13 @@ button, input, select, textarea {
   font-weight: 600;
 }
 
+.pin-edit-btn {
+  position: absolute;
+  top: 5px;
+  right: 38px;
+  z-index: 2;
+}
+
 .thread-disclosure > summary,
 .thread-summary,
 .message-disclosure > summary,
@@ -1274,7 +1317,7 @@ button, input, select, textarea {
   position: relative;
   list-style: none;
   cursor: pointer;
-  padding: 12px 112px 12px 16px;
+  padding: 12px 44px 12px 16px;
   display: flex;
   flex-direction: row;
   align-items: flex-start;
@@ -1401,25 +1444,139 @@ button, input, select, textarea {
   border-radius: 999px;
 }
 
-.pin-clauses {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+.pin-body {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 14px;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  padding: 8px 18px 14px;
-  margin: 0;
 }
 
-.pin-clauses dt {
-  font-size: 12px;
+.pin-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pin-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pin-section-label {
+  font-size: 11.5px;
   font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
-.pin-clauses dd {
-  margin: 0 0 8px;
-  font-size: 14.5px;
-  line-height: 22px;
+.pin-goal-block {
+  font-size: 15px;
+  line-height: 23px;
+  color: var(--text-primary);
+}
+
+.pin-owners-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pin-owner-row {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.pin-owner-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.pin-owner-scope {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.pin-verify-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.pin-verify-code {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pin-raw-toggle {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.pin-raw-toggle:hover {
+  color: var(--text-primary);
+}
+
+.pin-editor {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pin-edit-textarea {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 20px;
+  resize: vertical;
+}
+
+.pin-edit-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--coral);
+}
+
+.pin-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .pin-raw-text,
@@ -1431,7 +1588,7 @@ button, input, select, textarea {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 16px;
-  margin: 6px 18px 14px;
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
