@@ -18,7 +18,6 @@
     selectedTarget: null,
     // selectedMessage: null | { target: "#chorus" | "@recipient", seq: number }
     selectedMessage: null,
-    selectedSeq: 0,
     // timeWindow: null | { startMs: number, endMs: number }
     timeWindow: null,
     followLive: true,
@@ -110,7 +109,6 @@
         if (!pair) {
           pair = {
             pairKey,
-            key: `${a}|${b}`,
             a,
             b,
             messages: [],
@@ -241,9 +239,9 @@
     }
     if (hash.target.startsWith("dm:")) {
       const pk = hash.target.slice(3);
-      const found = pairedDMs.find((p) => p.pairKey === pk || p.key === pk);
+      const found = pairedDMs.find((p) => p.pairKey === pk);
       if (found) {
-        state.selectedTarget = { kind: "dm", pairKey: found.pairKey, key: found.key, a: found.a, b: found.b };
+        state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
         return;
       }
     }
@@ -261,7 +259,7 @@
     }
     if (pairedDMs.length > 0) {
       const p = pairedDMs[0];
-      state.selectedTarget = { kind: "dm", pairKey: p.pairKey, key: p.key, a: p.a, b: p.b };
+      state.selectedTarget = { kind: "dm", pairKey: p.pairKey, a: p.a, b: p.b };
       return;
     }
     state.selectedTarget = { kind: "all" };
@@ -270,43 +268,28 @@
   const actions = {
     selectTarget(targetObj) {
       if (!targetObj) return;
-      let normalized = targetObj;
-      if (targetObj.kind === "dm") {
-        const key = targetObj.key || (targetObj.pairKey ? targetObj.pairKey.replace("↔", "|") : "");
-        const parts = key.split("|");
-        const a = targetObj.a || parts[0] || "";
-        const b = targetObj.b || parts[1] || "";
-        normalized = {
-          kind: "dm",
-          key: `${a}|${b}`,
-          pairKey: targetObj.pairKey || `${a}↔${b}`,
-          a,
-          b,
-        };
-      }
       const sameAsCurrent =
         state.selectedTarget &&
-        state.selectedTarget.kind === normalized.kind &&
-        (normalized.kind === "channel"
-          ? state.selectedTarget.name === normalized.name
-          : normalized.kind === "dm"
-            ? state.selectedTarget.key === normalized.key
+        state.selectedTarget.kind === targetObj.kind &&
+        (targetObj.kind === "channel"
+          ? state.selectedTarget.name === targetObj.name
+          : targetObj.kind === "dm"
+            ? state.selectedTarget.pairKey === targetObj.pairKey
             : true);
 
-      state.selectedTarget = normalized;
+      state.selectedTarget = targetObj;
       if (!sameAsCurrent) {
         state.selectedMessage = null;
-        state.selectedSeq = 0;
         state.replyToSeq = 0;
         renderReplyChip();
       }
       const sendTarget = document.getElementById("send-target");
       const pinCheck = document.getElementById("send-pin");
-      if (normalized.kind === "channel" && sendTarget) {
-        sendTarget.value = normalized.name;
-      } else if (normalized.kind === "dm" && sendTarget) {
+      if (targetObj.kind === "channel" && sendTarget) {
+        sendTarget.value = targetObj.name;
+      } else if (targetObj.kind === "dm" && sendTarget) {
         const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim().toLowerCase();
-        const other = normalized.a === myHandle ? normalized.b : normalized.a;
+        const other = targetObj.a === myHandle ? targetObj.b : targetObj.a;
         sendTarget.value = `@${other}`;
         if (pinCheck) pinCheck.checked = false;
       }
@@ -317,17 +300,8 @@
     selectMessage(target, seq) {
       if (!target || !seq || seq <= 0) {
         state.selectedMessage = null;
-        state.selectedSeq = 0;
-      } else if (
-        state.selectedMessage &&
-        state.selectedMessage.target === target &&
-        state.selectedMessage.seq === seq
-      ) {
-        state.selectedMessage = null;
-        state.selectedSeq = 0;
       } else {
         state.selectedMessage = { target, seq };
-        state.selectedSeq = seq;
         state.followLive = false;
       }
       renderAll();
@@ -361,7 +335,6 @@
       if (state.followLive) {
         state.timeWindow = null;
         state.selectedMessage = null;
-        state.selectedSeq = 0;
       }
       renderAll();
     },
@@ -573,7 +546,6 @@
               actions.selectTarget({
                 kind: "dm",
                 pairKey: pair.pairKey,
-                key: pair.key,
                 a: pair.a,
                 b: pair.b,
               }),
@@ -991,6 +963,9 @@
 
     document.getElementById("btn-toggle-disclosure").addEventListener("click", (e) => {
       state.expandAllMessages = !state.expandAllMessages;
+      if (!state.expandAllMessages) {
+        state.selectedMessage = null;
+      }
       e.currentTarget.textContent = state.expandAllMessages ? "Collapse All" : "Expand All";
       renderAll();
     });
