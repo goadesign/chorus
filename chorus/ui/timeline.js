@@ -825,12 +825,17 @@
     return { startMs: Math.max(axis.first, endMs - LIVE_WINDOW_MS), endMs };
   }
 
-  // noteSwarm records the swarm rootEl is drawing and drops any drag started
-  // while it showed a different swarm, so that drag never applies here.
+  // noteSwarm records the swarm rootEl is drawing and, when it changes,
+  // drops any drag and hover label (shown or dismissed) left from the swarm
+  // shown before, so neither applies to the new one.
   function noteSwarm(rootEl, swarm) {
     if (drawnSwarm.get(rootEl) === swarm) return;
     drawnSwarm.set(rootEl, swarm);
     dropDrag(rootEl);
+    // Hover keys name marks within one swarm ("#room 1" exists in many), so
+    // a shown or dismissed label never carries over to another swarm.
+    hideHover(rootEl);
+    hoverState.delete(rootEl);
   }
 
   // A view is a span of real time (state.timeWindow filters the message list
