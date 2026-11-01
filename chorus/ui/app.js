@@ -254,17 +254,24 @@
     }
   }
 
-  function resolveTargetFromHash(hashTarget, channels, pairedDMs) {
-    if (!hashTarget) return null;
+  function resolveTarget(hashTarget, channels, pairedDMs) {
     if (hashTarget === "all") return { kind: "all" };
-    if (hashTarget.startsWith("dm:")) {
-      const found = pairedDMs.find((p) => p.pairKey === hashTarget.slice(3));
+    if (hashTarget?.startsWith("dm:")) {
+      const rawPair = hashTarget.slice(3);
+      const [x, y] = rawPair.split("↔");
+      const pairKey = x && y ? (x <= y ? `${x}↔${y}` : `${y}↔${x}`) : rawPair;
+      const found = pairedDMs.find((p) => p.pairKey === pairKey);
       if (found) return { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
     }
-    if (hashTarget.startsWith("#") && channels.some((c) => c.name === hashTarget)) {
+    if (hashTarget?.startsWith("#") && channels.some((c) => c.name === hashTarget)) {
       return { kind: "channel", name: hashTarget };
     }
-    return null;
+    if (channels.length > 0) return { kind: "channel", name: channels[0].name };
+    if (pairedDMs.length > 0) {
+      const p = pairedDMs[0];
+      return { kind: "dm", pairKey: p.pairKey, a: p.a, b: p.b };
+    }
+    return { kind: "all" };
   }
 
   function reconcileSelectedTarget(view, pairedDMs) {
@@ -275,35 +282,26 @@
       if (state.selectedTarget.kind === "channel" && channels.some((c) => c.name === state.selectedTarget.name)) return;
       if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
     }
-    const fromHash = resolveTargetFromHash(readHashState().target, channels, pairedDMs);
-    if (fromHash) {
-      state.selectedTarget = fromHash;
-    } else if (channels.length > 0) {
-      state.selectedTarget = { kind: "channel", name: channels[0].name };
-    } else if (pairedDMs.length > 0) {
-      const p = pairedDMs[0];
-      state.selectedTarget = { kind: "dm", pairKey: p.pairKey, a: p.a, b: p.b };
-    } else {
-      state.selectedTarget = { kind: "all" };
-    }
+    state.selectedTarget = resolveTarget(readHashState().target, channels, pairedDMs);
     syncComposerTarget(state.selectedTarget, true);
     writeHashState();
   }
 
   const actions = {
     selectTarget(targetObj) {
-      if (!targetObj) return;
+      if (!targetObj) return false;
       const sameAsCurrent = state.selectedTarget && state.selectedTarget.kind === targetObj.kind &&
         (targetObj.kind === "channel" ? state.selectedTarget.name === targetObj.name
           : targetObj.kind === "dm" ? state.selectedTarget.pairKey === targetObj.pairKey : true);
       state.selectedTarget = targetObj;
-      if (sameAsCurrent) return;
+      if (sameAsCurrent) return false;
       state.selectedMessage = null;
       state.replyTo = null;
       renderReplyChip();
       syncComposerTarget(targetObj, false);
       writeHashState();
       renderAll();
+      return true;
     },
 
     selectMessage(target, seq) {
@@ -886,18 +884,11 @@
         return;
       }
       if (state.view) {
-        const nextTarget = resolveTargetFromHash(h.target, state.view.channels || [], state.pairedDMs);
-        if (nextTarget) {
-          actions.selectTarget(nextTarget);
-          if (modeChanged) {
-            writeHashState();
-            renderAll();
-          }
-          return;
+        const nextTarget = resolveTarget(h.target, state.view.channels || [], state.pairedDMs);
+        if (!actions.selectTarget(nextTarget)) {
+          writeHashState();
+          if (modeChanged) renderAll();
         }
-        state.selectedTarget = null;
-        reconcileSelectedTarget(state.view, state.pairedDMs);
-        renderAll();
       }
     });
   }

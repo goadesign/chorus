@@ -364,6 +364,11 @@ button, input, select, textarea {
   align-items: center;
   gap: 5px;
   vertical-align: middle;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .inline-brand-logo {
@@ -943,14 +948,6 @@ body[data-theme="light"] .provider-openai {
   cursor: pointer;
 }
 
-.message-parent-quote .handle-with-logo {
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
-}
-
 .message-parent-quote:hover {
   background: var(--bg-subtle);
   border-color: var(--border-strong);
@@ -1396,6 +1393,14 @@ body[data-theme="light"] .provider-openai {
   font-weight: 600;
 }
 
+.mentions-disclosure > summary,
+.mentions-summary {
+  padding-right: 36px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 8px;
+}
+
 .pin-edit-btn {
   position: absolute;
   top: 5px;
@@ -1760,14 +1765,18 @@ body[data-theme="light"] .provider-openai {
 .stream-action {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
   gap: 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 16px;
   padding: 4px 12px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+  text-align: left;
   cursor: pointer;
 }
 
