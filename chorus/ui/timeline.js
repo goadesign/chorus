@@ -119,10 +119,12 @@
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
-    // How far the open card's own contents were scrolled, so a redraw of the
-    // same card keeps showing the same part of it.
+    // How far the open card's own contents were scrolled, and which item it
+    // described, so a redraw of the same card keeps showing the same part of
+    // it while a newly picked item starts at its top.
     const oldCard = rootEl.querySelector(".tl-card");
     const cardScroll = oldCard ? oldCard.scrollTop : 0;
+    const oldCardKey = oldCard ? oldCard.dataset.tlItem : "";
     clear(rootEl);
     if (!view) {
       // app.js clears the view when it switches swarms, before loading the
@@ -259,7 +261,7 @@
         const place = () => placeCard(rootEl, svg, card, mx(found.e.t), y, width);
         cardPlacers.set(card, place);
         place();
-        card.scrollTop = cardScroll;
+        if (card.dataset.tlItem === oldCardKey) card.scrollTop = cardScroll;
       }
     }
     // While an earlier interval is shown, one quiet button returns the whole
@@ -351,6 +353,9 @@
       svg.focus({ preventScroll: true });
     };
     const card = html("div", "tl-card");
+    // Identifies the inspected item, so a redraw can tell the same card from
+    // a newly picked one.
+    card.dataset.tlItem = `${e.target} ${e.seq} ${found.reader ? found.reader.handle : ""}`;
     card.setAttribute("role", "group");
     card.setAttribute("aria-label", `Preview of ${e.target} #${e.seq} from @${e.sender}`);
     card.style.touchAction = "pan-y";
