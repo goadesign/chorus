@@ -48,9 +48,10 @@ var (
 	// directly to file names.
 	uiRoot = mustSub(uiFiles, "ui")
 
-	// uiBuild identifies the embedded dashboard files: the hex SHA-256 of
-	// every file's path and contents (see uiDigest). It changes only when a
-	// dashboard file changes, never for a server-only change.
+	// uiBuild identifies the dashboard browsers are served: the hex SHA-256
+	// of every served file's path and contents (see uiDigest). It changes
+	// only when a served dashboard file changes, never for a server-only
+	// change or a change to a file that is not served.
 	uiBuild = mustDigest(uiRoot)
 )
 
@@ -79,7 +80,7 @@ func mountUI(mux goahttp.Muxer) {
 // rebuilt server is picked up on the next page load.
 func serveUIFile(w http.ResponseWriter, r *http.Request, name string) {
 	info, err := fs.Stat(uiRoot, name)
-	if err != nil || info.IsDir() || name == "brands/SOURCES.md" {
+	if err != nil || info.IsDir() || !uiServed(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -120,15 +121,22 @@ func uiBuildStamp(next http.Handler) http.Handler {
 	})
 }
 
-// uiDigest returns the hex SHA-256 identity of the regular files in fsys.
-// Files are visited in path order, and each contributes its path length,
-// path, content length, and contents, so no two different sets of files
-// produce the same input (for example "a" holding "bc" and "ab" holding
-// "c").
+// uiServed reports whether the embedded file name is sent to browsers. The
+// brand-asset source notice ships with the release but is never served, so
+// it is not part of the dashboard a browser runs.
+func uiServed(name string) bool {
+	return name != "brands/SOURCES.md"
+}
+
+// uiDigest returns the hex SHA-256 identity of the files in fsys that
+// browsers are served (see uiServed). Files are visited in path order, and
+// each contributes its path length, path, content length, and contents, so
+// no two different sets of files produce the same input (for example "a"
+// holding "bc" and "ab" holding "c").
 func uiDigest(fsys fs.FS) (string, error) {
 	h := sha256.New()
 	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || !uiServed(path) {
 			return err
 		}
 		data, err := fs.ReadFile(fsys, path)

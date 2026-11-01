@@ -11,9 +11,10 @@ import (
 )
 
 // TestUIDigestFollowsDashboardFilesOnly verifies that the dashboard identity
-// changes when any dashboard file changes, is the same for the same files,
-// cannot be confused by moving bytes between a path and its contents, and is
-// computed from the embedded dashboard alone.
+// changes when any served dashboard file changes, is the same for the same
+// files, ignores files browsers are never served, cannot be confused by
+// moving bytes between a path and its contents, and is computed from the
+// embedded dashboard alone.
 func TestUIDigestFollowsDashboardFilesOnly(t *testing.T) {
 	digest := func(fsys fstest.MapFS) string {
 		t.Helper()
@@ -39,6 +40,12 @@ func TestUIDigestFollowsDashboardFilesOnly(t *testing.T) {
 		digest(fstest.MapFS{"a": {Data: []byte("bc")}}),
 		digest(fstest.MapFS{"ab": {Data: []byte("c")}}),
 		"bytes moved between a path and its contents give a different identity")
+	notice := fstest.MapFS{
+		"index.html":        {Data: []byte("<html></html>")},
+		"timeline.js":       {Data: []byte("render()")},
+		"brands/SOURCES.md": {Data: []byte("corrected license note")},
+	}
+	assert.Equal(t, digest(base), digest(notice), "a file browsers are never served does not change the identity")
 	assert.Len(t, uiBuild, 64, "full SHA-256 in hex")
 	assert.Equal(t, mustDigest(uiRoot), uiBuild, "the identity covers the embedded dashboard files only")
 }
