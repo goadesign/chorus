@@ -86,6 +86,11 @@
   const drags = new WeakMap();
   // Roots whose drag listeners are installed (once per root element).
   const dragRoots = new WeakSet();
+  // Per-card function that places the card again next to its point, used
+  // when the scrolling message area moves under an open card.
+  const cardPlacers = new WeakMap();
+  // Roots whose scroll listener is installed (once per root element).
+  const scrollRoots = new WeakSet();
 
   /**
    * render draws the timeline into rootEl.
@@ -114,6 +119,10 @@
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
+    // How far the open card's own contents were scrolled, so a redraw of the
+    // same card keeps showing the same part of it.
+    const oldCard = rootEl.querySelector(".tl-card");
+    const cardScroll = oldCard ? oldCard.scrollTop : 0;
     clear(rootEl);
     if (!view) {
       // app.js clears the view when it switches swarms, before loading the
@@ -175,6 +184,7 @@
       else actions.selectMessage(target, seq, reader ? { reveal: false, reader } : { reveal: false });
     };
     installDrag(rootEl);
+    installCardScroll(rootEl);
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
@@ -246,7 +256,10 @@
       if (y != null) {
         const lane = lanes.find((l) => l.handle === found.e.sender);
         card = buildCard(found, lane, channel, actions, svg);
-        placeCard(rootEl, svg, card, mx(found.e.t), y, width);
+        const place = () => placeCard(rootEl, svg, card, mx(found.e.t), y, width);
+        cardPlacers.set(card, place);
+        place();
+        card.scrollTop = cardScroll;
       }
     }
     // While an earlier interval is shown, one quiet button returns the whole
@@ -265,7 +278,10 @@
     // card button keeps focus when its card is drawn again; when the card is
     // gone, focus returns to the chart.
     const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
-    if (cardTarget) cardTarget.focus({ preventScroll: true });
+    if (cardTarget) {
+      cardTarget.focus({ preventScroll: true });
+      revealInCard(card, cardTarget);
+    }
     else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
@@ -393,11 +409,16 @@
   // page header and the composer), not the browser window: the card opens
   // above when below does not fit there and above does, and otherwise on the
   // side with more room, limited to that room so its buttons stay visible
-  // (the card scrolls inside). The card floats above the page, so placing it
-  // never moves layout.
+  // (the card scrolls inside). The card always stays inside that visible
+  // area. The card floats above the page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
+    // Placing again (after the message area scrolled) measures the card at
+    // its natural height, then restores how far its contents were scrolled.
+    const inner = card.scrollTop;
     card.style.visibility = "hidden";
-    rootEl.appendChild(card);
+    card.style.maxHeight = "";
+    card.style.overflowY = "";
+    if (!card.isConnected) rootEl.appendChild(card);
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
     const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
@@ -409,8 +430,10 @@
     const cw = card.offsetWidth;
     const ch = card.offsetHeight;
     const gap = (DOT_R_SELECTED + 6) * scale;
-    const roomBelow = area.bottom - (ay + gap) - PAD;
-    const roomAbove = ay - gap - area.top - PAD;
+    // Room counts only the visible part of the area on each side of the
+    // point, so a point scrolled out of view never claims space nobody sees.
+    const roomBelow = area.bottom - PAD - Math.max(ay + gap, area.top + PAD);
+    const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
     const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
     const room = below ? roomBelow : roomAbove;
     if (ch > room) {
@@ -419,11 +442,39 @@
     }
     const shown = Math.min(ch, Math.max(0, room));
     const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
-    const top = below ? ay + gap : ay - gap - shown;
+    // When the point itself has scrolled out of the visible area, the card
+    // still stays wholly inside it, so its controls remain reachable.
+    const wanted = below ? ay + gap : ay - gap - shown;
+    const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
     // Absolute positions are measured from the section's padding edge.
     card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
     card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
     card.style.visibility = "";
+    card.scrollTop = inner;
+  }
+
+  // installCardScroll places the open card again whenever the scrolling
+  // message area that holds the chart scrolls, so the card stays next to
+  // its point and inside the visible area. It is installed once per root.
+  function installCardScroll(rootEl) {
+    if (scrollRoots.has(rootEl)) return;
+    const area = rootEl.closest("#stage-container");
+    if (!area) return;
+    scrollRoots.add(rootEl);
+    area.addEventListener("scroll", () => {
+      const card = rootEl.querySelector(".tl-card");
+      const place = card && cardPlacers.get(card);
+      if (place) place();
+    }, { passive: true });
+  }
+
+  // revealInCard scrolls only the card's own contents so that control is
+  // fully visible; the page and the message area do not move.
+  function revealInCard(card, control) {
+    const top = control.offsetTop;
+    const bottom = top + control.offsetHeight;
+    if (top < card.scrollTop) card.scrollTop = top;
+    else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
   }
 
   // laneList returns the lanes to draw: every registered agent and every
