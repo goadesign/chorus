@@ -153,7 +153,7 @@
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
-    drawAxis(svg, axis, w0, w1, mx, top, plotW, height);
+    drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height);
     const laneTop = top + AXIS_H;
     const laneY = new Map();
     lanes.forEach((lane, i) => {
@@ -295,7 +295,9 @@
 
   // buildAxis maps real time to a compressed position: time inside active
   // stretches counts fully, and each gap longer than QUIET_MS counts as
-  // QUIET_UNITS. pos(t) is monotonic, so ordering is kept.
+  // QUIET_UNITS. Time before the oldest retained message counts fully too
+  // (negative positions), so a view longer than the retained history is
+  // drawn at its true scale. pos(t) is monotonic, so ordering is kept.
   function buildAxis(events) {
     const first = events[0].t;
     const last = events[events.length - 1].t;
@@ -313,7 +315,7 @@
         p -= covered;
         p += QUIET_UNITS * (covered / (g.to - g.from));
       }
-      return Math.max(0, p);
+      return p;
     }
     const total = Math.max(1, pos(last) + 60 * 1000);
     return { first, last, gaps, pos, total };
@@ -339,12 +341,15 @@
   // overview moves the view's start by the dragged distance on that axis.
 
   // placeWindow returns a view of win's real duration starting at startMs,
-  // clamped so it stays within the retained history.
+  // clamped to the retained history: it never ends after the newest message
+  // and never starts before the oldest one, except when the history is
+  // shorter than the view (for example after old messages were trimmed),
+  // where the view keeps its duration and ends at the newest message.
   function placeWindow(axis, win, startMs) {
     const dur = win.endMs - win.startMs;
     const lastEnd = axis.last + 60 * 1000;
-    const start = Math.max(axis.first, Math.min(startMs, lastEnd - dur));
-    return { startMs: start, endMs: Math.min(lastEnd, start + dur) };
+    const start = Math.max(Math.min(axis.first, lastEnd - dur), Math.min(startMs, lastEnd - dur));
+    return { startMs: start, endMs: start + dur };
   }
 
   // shiftWindow moves win by delta compressed-axis units, measured at its
@@ -395,7 +400,9 @@
     // The window rectangle can be dragged. While it moves, the new range is
     // sent to app.js on every animation frame, so the plot and the message
     // list follow the drag live.
-    const x0 = ox(win.startMs);
+    // A view longer than the retained history starts before the strip; the
+    // box then begins at the strip's left edge.
+    const x0 = Math.max(PLOT_X0, ox(win.startMs));
     const x1 = Math.max(x0 + 6, ox(win.endMs));
     const brush = el("rect", {
       class: "tl-window",
@@ -487,8 +494,9 @@
   }
 
   // drawAxis draws the quiet breaks and the clock labels at both window edges
-  // on the upper line of the axis row; the pin badge uses the lower line.
-  function drawAxis(svg, axis, w0, w1, mx, top, plotW, height) {
+  // (the view's own start and end times) on the upper line of the axis row;
+  // the pin badge uses the lower line.
+  function drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height) {
     const y = top + 11;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
@@ -501,9 +509,9 @@
     }
     // Clock labels at both window edges.
     const left = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(y) });
-    left.textContent = clock(timeAt(axis, w0));
+    left.textContent = clock(win.startMs);
     const right = el("text", { class: "tl-axis", x: String(PLOT_X0 + plotW), y: String(y), "text-anchor": "end" });
-    right.textContent = clock(timeAt(axis, w1));
+    right.textContent = clock(win.endMs);
     svg.appendChild(left);
     svg.appendChild(right);
   }
