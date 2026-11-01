@@ -481,7 +481,6 @@
     const reply = state.replyTo;
     if (!reply) {
       container.replaceChildren();
-      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       return;
     }
     container.replaceChildren(
@@ -496,7 +495,6 @@
           },
         }, svgIcon("close")))
     );
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
   }
 
   function renderLiveStatus() {
@@ -691,8 +689,24 @@
     window.ChorusTimeline?.placePreview?.(timelineRoot);
   }
 
+  // loadedUIBuild is the embedded UI digest stamped into index.html when this
+  // tab loaded. When a later server response reports a different X-Chorus-UI-Build
+  // header, the quiet update banner is shown so the reader can reload manually
+  // without losing an open composer draft or timeline selection.
+  const loadedUIBuild = (document.querySelector('meta[name="chorus-ui-build"]')?.content || "").trim();
+
+  function checkUIBuild(res) {
+    if (!loadedUIBuild || !res?.headers) return;
+    const serverBuild = (res.headers.get("X-Chorus-UI-Build") || "").trim();
+    const banner = document.getElementById("update-banner");
+    if (banner && serverBuild) {
+      banner.hidden = serverBuild === loadedUIBuild;
+    }
+  }
+
   async function fetchSwarms() {
     const res = await fetch("/swarms", { headers: { Accept: "application/json" } });
+    checkUIBuild(res);
     if (!res.ok) throw new Error(`GET /swarms HTTP ${res.status}`);
     const data = await res.json();
     state.swarms = Array.isArray(data.swarms) ? data.swarms : [];
@@ -734,6 +748,7 @@
         }
         const url = `/swarms/${encodeURIComponent(swarmName)}/view?wait=${waitSec}`;
         const res = await fetch(url, { headers, signal: abortCtrl.signal });
+        checkUIBuild(res);
 
         if (res.status === 304) {
           state.lastSyncMs = Date.now();
@@ -840,12 +855,10 @@
       ...parts.map((p) => (p instanceof Node ? p : document.createTextNode(String(p))))
     );
     clearTimeout(setComposerFeedback._timer);
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
     if (parts.length > 0 && kind === "ok") {
       setComposerFeedback._timer = setTimeout(() => {
         wrap.className = "composer-feedback";
         txt.replaceChildren();
-        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       }, 4000);
     }
   }
@@ -1017,6 +1030,9 @@
     });
 
     document.getElementById("btn-send").addEventListener("click", sendMessage);
+    document.getElementById("btn-reload-ui")?.addEventListener("click", () => {
+      window.location.reload();
+    });
 
     const stageEl = document.getElementById("stage-container");
     if (stageEl) {

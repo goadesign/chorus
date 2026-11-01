@@ -59,6 +59,11 @@
     </div>
   </header>
 
+  <div class="update-banner" id="update-banner" role="status" aria-live="polite" hidden>
+    <span>Dashboard updated</span>
+    <button type="button" class="btn-tonal update-reload-btn" id="btn-reload-ui">Reload</button>
+  </div>
+
   <!-- Main Single-Canvas Stage (Participants + Timeline + Newest-First Stream) -->
   <main class="stage-container scroller" id="stage-container">
     <div class="stage-inner">
@@ -137,6 +142,7 @@
     </div>
   </footer>
 
+  <script src="/ui/marked.umd.js" defer></script>
   <script src="/ui/timeline.js" defer></script>
   <script src="/ui/stream.js" defer></script>
   <script src="/ui/app.js" defer></script>

@@ -5,10 +5,14 @@
 
   window.ChorusStream = Object.freeze({
     render,
+    renderMessageText,
     captureScrollSnapshot,
     restoreScrollSnapshot,
     resetDisclosures,
   });
+
+  // Cached Marked lexer instance with raw HTML/XML tag tokenizers disabled.
+  let cachedMdEngine = null;
 
   // Displayed previews belong only to this page visit and the retained messages
   // in the current swarm. Displaying a preview does not mean reading its text.
@@ -523,11 +527,12 @@
     return form;
   }
 
-  // cleanPinHeadline removes only the display convention's Goal label; the
-  // original message remains unchanged in its text view and edit form.
+  // cleanPinHeadline removes the display convention's Goal label and inline
+  // markdown delimiters; the original message remains unchanged in its text
+  // view and edit form.
   function cleanPinHeadline(text) {
     const goal = pinClauses(text).find((clause) => clause.key.toLowerCase() === "goal");
-    return headline(goal?.value || text).replace(/^\s*Goal\s*:\s*/i, "");
+    return stripInlineMarkdown(headline(goal?.value || text)).replace(/^\s*Goal\s*:\s*/i, "");
   }
 
   // pinClauses recognizes complete labelled segments for display only. Any
@@ -953,11 +958,11 @@
       element("span", "message-coordinate", `${entry.target}#${message.seq}`),
       element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`));
 
-    const second = secondLine(message.text);
+    const secondPreview = formattedPreview(message.text, 1);
     const contentCol = element("span", "row-main",
       meta,
-      element("span", "message-headline", formattedPreview(message.text)),
-      ...(second ? [element("span", "message-supporting", formattedPreview(message.text, 1))] : []));
+      element("span", "message-headline", formattedPreview(message.text, 0)),
+      ...(secondPreview.hasChildNodes() ? [element("span", "message-supporting", secondPreview)] : []));
 
     const summary = element("summary", "message-summary", avatarNode(message.sender, state, "", fromHuman), contentCol);
     summary.dataset.focusKey = `message:${key}`;
@@ -1042,68 +1047,419 @@
     return [...result.values()];
   }
 
-  // formattedText decorates prose mentions while keeping inline and fenced
-  // code literal. The same code boundaries govern the collapsed previews.
-  function formattedText(text) {
-    const fragment = document.createDocumentFragment();
-    for (const part of textParts(text)) {
-      if (part.kind === "block") {
-        fragment.append(element("pre", "message-code", element("code", "", part.text.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\n/, ""))));
-      } else if (part.kind === "inline") {
-        fragment.append(element("code", "", part.text.slice(1, -1)));
-      } else {
-        appendTextWithMentions(fragment, part.text);
-      }
+  // markdownEngine returns a configured Marked lexer instance with GFM tables,
+  // strikethrough, autolinks, and line breaks enabled, and raw HTML/XML tag
+  // tokenizers disabled so raw tags (<script>, <details>, <agent>) remain
+  // inert plain text tokens.
+  function markdownEngine() {
+    if (cachedMdEngine) return cachedMdEngine;
+    const MarkedClass = (window.marked || globalThis.marked)?.Marked;
+    if (!MarkedClass) return null;
+    cachedMdEngine = new MarkedClass({
+      gfm: true,
+      breaks: true,
+      tokenizer: {
+        html() { return undefined; },
+        tag() { return undefined; },
+      },
+    });
+    return cachedMdEngine;
+  }
+
+  // lexMarkdownBlocks tokenizes text into CommonMark/GFM block and inline
+  // tokens using markdownEngine(), falling back to a single plain-text
+  // paragraph if the Marked bundle is not loaded in a minimal test harness.
+  function lexMarkdownBlocks(text) {
+    const str = String(text || "").replace(/\r\n|\r/g, "\n");
+    if (!str.trim()) return [];
+    const engine = markdownEngine();
+    if (!engine) {
+      return [{ type: "paragraph", raw: str, text: str, tokens: [{ type: "text", raw: str, text: str }] }];
     }
+    return engine.lexer(str);
+  }
+
+  // formattedText renders a full message body with CommonMark/GFM blocks,
+  // clickable http/https links, and @handle mention badges.
+  function formattedText(text) {
+    return renderMessageText(text, { allowLinks: true, maxBlocks: 0 });
+  }
+
+  // renderMessageText renders CommonMark/GFM Markdown into a DocumentFragment
+  // using direct DOM construction (createElement / createTextNode) without
+  // innerHTML. Raw HTML in messages stays inert text. When opts.maxBlocks > 0
+  // (used by compact preview cards such as .tl-card-body), at most maxBlocks
+  // top-level blocks are rendered so the floating preview card stays compact
+  // while "Show in conversation" reveals the full message.
+  function renderMessageText(text, opts = {}) {
+    const allowLinks = opts.allowLinks !== false;
+    const maxBlocks = Number(opts.maxBlocks) > 0 ? Number(opts.maxBlocks) : 0;
+    const fragment = document.createDocumentFragment();
+    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks, maxBlocks);
     return fragment;
   }
 
-  // formattedPreview selects a nonblank source line without losing its code
-  // context. For example, an @mention inside a fence stays plain in line two.
+  // formattedPreview renders the lineNumber-th nonblank logical line from the
+  // Markdown lexer token tree so full messages and collapsed summaries share
+  // one grammar: lines inside fenced (```, ~~~, ````) or indented code blocks
+  // stay literal plain text, while prose lines render inline formatting
+  // (bold, italic, inline code, strikethrough, and @handle badges) without
+  // nested interactive <a> links.
   function formattedPreview(text, lineNumber = 0) {
     const fragment = document.createDocumentFragment();
-    let line = null;
-    let index = 0;
-    for (const match of text.matchAll(/[^\n]+/g)) {
-      if (!match[0].trim()) continue;
-      if (index++ === lineNumber) {
-        line = match;
-        break;
+    const lines = [];
+    collectPreviewLines(lexMarkdownBlocks(text), lines, lineNumber + 1);
+    const entry = lines[lineNumber];
+    if (!entry) {
+      if (lineNumber === 0) {
+        const fallback = String(text || "").trim();
+        fragment.append(fallback || "Empty message");
       }
-    }
-    if (!line) {
-      if (lineNumber === 0) fragment.append("Empty message");
       return fragment;
     }
-    const start = line.index + line[0].search(/\S/);
-    const end = line.index + line[0].trimEnd().length;
-    let offset = 0;
-    for (const part of textParts(text)) {
-      if (offset >= end) break;
-      const from = Math.max(0, start - offset);
-      const to = Math.min(part.text.length, end - offset);
-      if (from < to) {
-        const excerpt = part.text.slice(from, to);
-        if (part.kind === "text") appendTextWithMentions(fragment, excerpt);
-        else fragment.append(excerpt);
-      }
-      offset += part.text.length;
+    if (entry.kind === "code") {
+      fragment.append(document.createTextNode(entry.text));
+    } else {
+      renderInlineTokens(fragment, entry.tokens, false);
     }
     return fragment;
   }
 
-  // textParts preserves the original delimiters and offsets so all text
-  // surfaces can distinguish prose from code before decorating mentions.
-  function* textParts(text) {
-    for (const part of text.split(/(```[\s\S]*?```)/g)) {
-      if (part.startsWith("```") && part.endsWith("```")) {
-        yield { kind: "block", text: part };
-      } else {
-        for (const inline of part.split(/(`[^`\n]+`)/g)) {
-          yield { kind: inline.startsWith("`") && inline.endsWith("`") ? "inline" : "text", text: inline };
+  // renderBlockTokens walks CommonMark/GFM block tokens and appends DOM nodes
+  // to target, stopping after maxBlocks visible blocks when maxBlocks > 0.
+  function renderBlockTokens(target, tokens, allowLinks, maxBlocks = 0) {
+    let rendered = 0;
+    for (const tok of tokens || []) {
+      if (tok.type === "space" || tok.type === "def") continue;
+      if (maxBlocks > 0 && rendered >= maxBlocks) break;
+      rendered++;
+      switch (tok.type) {
+        case "hr":
+          target.append(element("hr", "md-hr"));
+          break;
+        case "heading": {
+          const level = Math.min(4, Math.max(1, tok.depth || 1));
+          const h = element("h4", `md-heading md-h${level}`);
+          renderInlineTokens(h, tok.tokens || [], allowLinks);
+          target.append(h);
+          break;
+        }
+        case "code": {
+          const codeEl = element("code", "", tok.text || "");
+          if (tok.lang) codeEl.dataset.lang = tok.lang;
+          target.append(element("pre", "message-code", codeEl));
+          break;
+        }
+        case "blockquote": {
+          const bq = element("blockquote", "md-quote");
+          renderBlockTokens(bq, tok.tokens || [], allowLinks, 0);
+          target.append(bq);
+          break;
+        }
+        case "list": {
+          const listEl = element(tok.ordered ? "ol" : "ul", "md-list");
+          if (tok.ordered && tok.start && tok.start !== 1) listEl.start = Number(tok.start);
+          for (const item of tok.items || []) {
+            listEl.append(renderListItem(item, allowLinks));
+          }
+          target.append(listEl);
+          break;
+        }
+        case "table": {
+          const wrap = element("div", "md-table-wrap");
+          const table = element("table", "md-table");
+          if (Array.isArray(tok.header) && tok.header.length > 0) {
+            const thead = document.createElement("thead");
+            const tr = document.createElement("tr");
+            for (const cell of tok.header) {
+              const th = document.createElement("th");
+              if (cell.align) th.style.textAlign = cell.align;
+              renderInlineTokens(th, cell.tokens || [], allowLinks);
+              tr.append(th);
+            }
+            thead.append(tr);
+            table.append(thead);
+          }
+          if (Array.isArray(tok.rows) && tok.rows.length > 0) {
+            const tbody = document.createElement("tbody");
+            for (const row of tok.rows) {
+              const tr = document.createElement("tr");
+              for (const cell of row) {
+                const td = document.createElement("td");
+                if (cell.align) td.style.textAlign = cell.align;
+                renderInlineTokens(td, cell.tokens || [], allowLinks);
+                tr.append(td);
+              }
+              tbody.append(tr);
+            }
+            table.append(tbody);
+          }
+          wrap.append(table);
+          target.append(wrap);
+          break;
+        }
+        case "paragraph":
+        case "text":
+        default: {
+          const p = element("p", "md-p");
+          if (Array.isArray(tok.tokens)) {
+            renderInlineTokens(p, tok.tokens, allowLinks);
+          } else {
+            appendTextWithMentions(p, tok.raw ?? tok.text ?? "");
+          }
+          target.append(p);
+          break;
         }
       }
     }
+  }
+
+  // renderListItem builds a <li class="md-list-item"> from a Marked list_item
+  // token, grouping tight inline text and task checkboxes into .md-li-text
+  // while appending nested lists, code blocks, and loose paragraphs as blocks.
+  function renderListItem(item, allowLinks) {
+    const li = element("li", `md-list-item${item.task ? " is-task-item" : ""}`);
+    let inlineSpan = null;
+    for (const child of item.tokens || []) {
+      if (child.type === "space" || child.type === "def") continue;
+      if (child.type === "checkbox") {
+        if (!inlineSpan) {
+          inlineSpan = element("span", "md-li-text");
+          li.append(inlineSpan);
+        }
+        inlineSpan.append(taskCheckboxNode(child.checked));
+      } else if (child.type === "text") {
+        if (!inlineSpan) {
+          inlineSpan = element("span", "md-li-text");
+          li.append(inlineSpan);
+        } else if (inlineSpan.childNodes.length > 0 && inlineSpan.lastChild?.tagName !== "INPUT") {
+          inlineSpan.append(document.createElement("br"));
+        }
+        if (Array.isArray(child.tokens)) {
+          renderInlineTokens(inlineSpan, child.tokens, allowLinks);
+        } else {
+          appendTextWithMentions(inlineSpan, child.raw ?? child.text ?? "");
+        }
+      } else {
+        inlineSpan = null;
+        renderBlockTokens(li, [child], allowLinks, 0);
+      }
+    }
+    return li;
+  }
+
+  // taskCheckboxNode creates a disabled checkbox for GFM task list items.
+  function taskCheckboxNode(checked) {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "md-task-check";
+    input.disabled = true;
+    input.checked = Boolean(checked);
+    input.setAttribute("aria-label", checked ? "Completed task" : "Incomplete task");
+    return input;
+  }
+
+  // renderInlineTokens walks CommonMark/GFM inline tokens and appends DOM
+  // elements and text nodes to target. Leaf text tokens use tok.raw so
+  // numeric character references or ampersands are never HTML-entity-encoded.
+  function renderInlineTokens(target, tokens, allowLinks) {
+    for (const tok of tokens || []) {
+      switch (tok.type) {
+        case "codespan":
+          target.append(element("code", "md-inline-code", tok.text ?? ""));
+          break;
+        case "strong": {
+          const strong = document.createElement("strong");
+          renderInlineTokens(strong, tok.tokens || [], allowLinks);
+          target.append(strong);
+          break;
+        }
+        case "em": {
+          const em = document.createElement("em");
+          renderInlineTokens(em, tok.tokens || [], allowLinks);
+          target.append(em);
+          break;
+        }
+        case "del": {
+          const del = document.createElement("del");
+          renderInlineTokens(del, tok.tokens || [], allowLinks);
+          target.append(del);
+          break;
+        }
+        case "br":
+          target.append(document.createElement("br"));
+          break;
+        case "checkbox":
+          target.append(taskCheckboxNode(tok.checked));
+          break;
+        case "escape":
+          target.append(document.createTextNode(tok.text ?? ""));
+          break;
+        case "link": {
+          const href = allowLinks ? safeHttpUrl(tok.href) : "";
+          if (href) {
+            const a = element("a", "md-link");
+            a.href = href;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            if (tok.title) a.title = tok.title;
+            if (tok.autolink) {
+              a.append(document.createTextNode(tok.text ?? href));
+            } else {
+              renderInlineTokens(a, tok.tokens || [], false);
+            }
+            target.append(a);
+          } else if (tok.autolink) {
+            target.append(document.createTextNode(tok.raw ?? tok.text ?? ""));
+          } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+            renderInlineTokens(target, tok.tokens, false);
+          } else {
+            appendTextWithMentions(target, tok.text ?? "");
+          }
+          break;
+        }
+        case "image":
+          appendTextWithMentions(target, tok.text || tok.raw || "");
+          break;
+        case "text":
+        default:
+          if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+            renderInlineTokens(target, tok.tokens, allowLinks);
+          } else {
+            appendTextWithMentions(target, tok.raw ?? tok.text ?? "");
+          }
+          break;
+      }
+    }
+  }
+
+  // collectPreviewLines walks the block token tree and collects up to limit
+  // logical preview lines, keeping fenced/indented code block lines as literal
+  // code text and splitting prose inline tokens on line breaks.
+  function collectPreviewLines(tokens, out, limit) {
+    for (const tok of tokens || []) {
+      if (out.length >= limit) return;
+      switch (tok.type) {
+        case "space":
+        case "def":
+        case "hr":
+          break;
+        case "code":
+          for (const rawLine of String(tok.text || "").split("\n")) {
+            const trimmed = rawLine.trim();
+            if (!trimmed) continue;
+            out.push({ kind: "code", text: trimmed });
+            if (out.length >= limit) return;
+          }
+          break;
+        case "blockquote":
+          collectPreviewLines(tok.tokens || [], out, limit);
+          break;
+        case "list":
+          for (const item of tok.items || []) {
+            collectPreviewLines(item.tokens || [], out, limit);
+            if (out.length >= limit) return;
+          }
+          break;
+        case "table":
+          if (Array.isArray(tok.header) && tok.header.length > 0) {
+            out.push({ kind: "inline", tokens: joinTableCells(tok.header) });
+            if (out.length >= limit) return;
+          }
+          for (const row of tok.rows || []) {
+            out.push({ kind: "inline", tokens: joinTableCells(row) });
+            if (out.length >= limit) return;
+          }
+          break;
+        case "heading":
+        case "paragraph":
+        case "text":
+        default:
+          if (Array.isArray(tok.tokens)) {
+            for (const lineTokens of splitInlineByLine(tok.tokens)) {
+              out.push({ kind: "inline", tokens: lineTokens });
+              if (out.length >= limit) return;
+            }
+          } else if (tok.text && tok.text.trim()) {
+            out.push({ kind: "code", text: tok.text.trim() });
+          }
+          break;
+      }
+    }
+  }
+
+  // splitInlineByLine splits an array of inline tokens at { type: "br" }
+  // boundaries, preserving enclosing strong/em/del/link wrappers on each line.
+  function splitInlineByLine(tokens) {
+    const lines = [[]];
+    for (const tok of tokens || []) {
+      if (tok.type === "br") {
+        lines.push([]);
+      } else if (tok.type === "checkbox") {
+        continue;
+      } else if ((tok.type === "strong" || tok.type === "em" || tok.type === "del" || tok.type === "link") && Array.isArray(tok.tokens)) {
+        const subLines = splitInlineByLine(tok.tokens);
+        subLines.forEach((subTokens, idx) => {
+          if (idx > 0) lines.push([]);
+          if (subTokens.length > 0) {
+            lines.at(-1).push({ ...tok, tokens: subTokens });
+          }
+        });
+      } else {
+        lines.at(-1).push(tok);
+      }
+    }
+    return lines.filter((line) => line.length > 0);
+  }
+
+  // joinTableCells joins table row cells with a middle-dot separator for
+  // single-line collapsed previews.
+  function joinTableCells(cells) {
+    const out = [];
+    (cells || []).forEach((cell, idx) => {
+      if (idx > 0) out.push({ type: "text", raw: " · ", text: " · " });
+      out.push(...(cell.tokens || []));
+    });
+    return out;
+  }
+
+  // safeHttpUrl returns a normalized href when rawUrl parses as http: or https:,
+  // or "" for any other scheme or malformed URL.
+  function safeHttpUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  // stripInlineMarkdown extracts plain text from the first logical line of
+  // text using the Markdown lexer so collapsed pin headlines strip heading,
+  // quote, list, link, emphasis, and multi-backtick code delimiters cleanly.
+  function stripInlineMarkdown(text) {
+    const lines = [];
+    collectPreviewLines(lexMarkdownBlocks(text), lines, 1);
+    if (lines.length === 0) return String(text || "").trim();
+    const first = lines[0];
+    return first.kind === "code" ? first.text : inlineTokensToPlainText(first.tokens).trim();
+  }
+
+  // inlineTokensToPlainText flattens inline tokens to unescaped plain text.
+  function inlineTokensToPlainText(tokens) {
+    let out = "";
+    for (const tok of tokens || []) {
+      if (tok.type === "codespan" || tok.type === "escape" || tok.type === "image") {
+        out += tok.text ?? "";
+      } else if (tok.type === "br") {
+        out += " ";
+      } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+        out += inlineTokensToPlainText(tok.tokens);
+      } else if (tok.type !== "checkbox") {
+        out += tok.raw ?? tok.text ?? "";
+      }
+    }
+    return out;
   }
 
   function appendTextWithMentions(target, text) {
@@ -1124,11 +1480,6 @@
 
   function headline(text) {
     return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || "Empty message";
-  }
-
-  function secondLine(text) {
-    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-    return lines.length > 1 ? lines[1] : "";
   }
 
   function coordinate(entry) { return `${entry.target}:${entry.message.seq}`; }

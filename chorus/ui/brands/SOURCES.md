@@ -39,3 +39,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+# Vendored UI libraries
+
+`chorus/ui/marked.umd.js` is the unmodified UMD bundle from [`marked` v18.1.2](https://github.com/markedjs/marked/releases/tag/v18.1.2) (`lib/marked.umd.js` from the published `marked@18.1.2` npm package, without the trailing source-map comment), distributed under the MIT License (`Copyright (c) 2018-2026, MarkedJS; Copyright (c) 2011-2018, Christopher Jeffrey`).
+
