@@ -75,9 +75,7 @@
   // and its edge clocks, then quiet-break labels, then the pin label just
   // above the lanes.
   const AXIS_ROW = 16;
-  // Width of one character of the 12px monospace axis labels (0.6em), and
-  // the space kept between two quiet labels on their row.
-  const MONO_CHAR_W = 7.2;
+  // Space kept between two quiet labels on their row.
   const LABEL_GAP = 6;
   const AXIS_H = AXIS_ROW * 3;
   const LANE_H = 38;
@@ -118,6 +116,14 @@
   // pointer leaves its mark, and the text of a label the user dismissed with
   // Escape, which stays hidden until the pointer enters another mark.
   const hoverState = new WeakMap();
+  // Per-root work that must wait until the whole page has finished updating
+  // after a render (placing the preview card and restoring the hover label).
+  // It runs once, in the next animation frame, which comes after app.js has
+  // drawn every surface and restored scroll positions but before the page is
+  // painted; placePreview runs it at once when asked earlier.
+  const finishers = new WeakMap();
+  // Roots whose stage-resize observer is installed (once per root element).
+  const resizeRoots = new WeakSet();
   // How long a hover label waits after the pointer leaves its mark before it
   // hides, so the pointer can move onto the label to read it.
   const HOVER_GRACE_MS = 150;
@@ -221,6 +227,7 @@
     };
     installDrag(rootEl);
     installCardScroll(rootEl);
+    installStageResize(rootEl);
     installHover(rootEl);
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
@@ -280,6 +287,7 @@
       actions.selectMessage(null, 0, { reveal: false });
     });
     rootEl.appendChild(svg);
+    fitQuietLabels(svg, PLOT_X0 + plotW);
 
     // The preview card for the picked message or read mark.
     const found = cardAnchor(picked, order, channel, inWindow);
@@ -295,15 +303,24 @@
       if (y != null) {
         const lane = lanes.find((l) => l.handle === found.e.sender);
         card = buildCard(found, lane, channel, actions, svg);
-        const place = () => placeCard(rootEl, svg, card, mx(found.e.t), y, width);
-        cardPlacers.set(card, place);
-        place();
-        if (card.dataset.tlItem === oldCardKey) card.scrollTop = cardScroll;
+        cardPlacers.set(card, () => placeCard(rootEl, svg, card, mx(found.e.t), y, width));
+        // The card is added now, so focus can return to it, but stays
+        // transparent until the page has finished updating and it is placed.
+        card.style.opacity = "0";
+        rootEl.appendChild(card);
       }
     }
-    // With the card in place, show the hover label again if the pointer still
-    // rests on a mark (placePreview repeats this after the page's last layout).
-    rehover(rootEl);
+    const shownCard = card;
+    const sameItem = card != null && card.dataset.tlItem === oldCardKey;
+    scheduleFinish(rootEl, () => {
+      if (shownCard && shownCard.isConnected) {
+        cardPlacers.get(shownCard)();
+        if (sameItem) shownCard.scrollTop = cardScroll;
+        if (shownCard.contains(document.activeElement)) revealInCard(shownCard, document.activeElement);
+        shownCard.style.opacity = "";
+      }
+      rehover(rootEl);
+    });
     // While an earlier interval is shown, one quiet button returns the whole
     // page to the latest messages; it is a real button so keyboards and
     // screen readers reach it.
@@ -320,10 +337,7 @@
     // card button keeps focus when its card is drawn again; when the card is
     // gone, focus returns to the chart.
     const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
-    if (cardTarget) {
-      cardTarget.focus({ preventScroll: true });
-      revealInCard(card, cardTarget);
-    }
+    if (cardTarget) cardTarget.focus({ preventScroll: true });
     else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
@@ -496,6 +510,58 @@
     card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
     card.style.visibility = "";
     card.scrollTop = inner;
+  }
+
+  // fitQuietLabels sizes the quiet labels by their rendered width, left to
+  // right: a label keeps its full text ("11m quiet") when it fits beside the
+  // previous one and inside the plot, else shows its length alone ("11m"),
+  // else shows no text. Every quiet break keeps the full text and its start
+  // and end times as its hover label.
+  function fitQuietLabels(svg, plotRight) {
+    const labels = [...svg.querySelectorAll("text.tl-quiet-label")]
+      .sort((a, b) => Number(a.getAttribute("x")) - Number(b.getAttribute("x")));
+    let freeFrom = PLOT_X0;
+    for (const lbl of labels) {
+      const cx = Number(lbl.getAttribute("x"));
+      const fits = () => {
+        const half = lbl.getComputedTextLength() / 2;
+        return cx - half >= freeFrom && cx + half <= plotRight;
+      };
+      if (!fits()) lbl.textContent = lbl.dataset.short;
+      if (!fits()) {
+        lbl.remove();
+        continue;
+      }
+      freeFrom = cx + lbl.getComputedTextLength() / 2 + LABEL_GAP;
+    }
+  }
+
+  // scheduleFinish records the work to run once the page has finished
+  // updating after this render, replacing work from an earlier render that
+  // has not run yet, and requests one animation frame for it.
+  function scheduleFinish(rootEl, fn) {
+    const pending = finishers.has(rootEl);
+    finishers.set(rootEl, fn);
+    if (!pending) requestAnimationFrame(() => runFinish(rootEl));
+  }
+
+  // runFinish runs and clears rootEl's pending finishing work, if any.
+  function runFinish(rootEl) {
+    const fn = finishers.get(rootEl);
+    finishers.delete(rootEl);
+    if (fn) fn();
+  }
+
+  // installStageResize places the open card again when the scrolling message
+  // area changes size (the window is resized or the composer grows), which
+  // changes the room around the card without a redraw. Installed once per
+  // root.
+  function installStageResize(rootEl) {
+    if (resizeRoots.has(rootEl)) return;
+    const area = rootEl.closest("#stage-container");
+    if (!area || typeof ResizeObserver !== "function") return;
+    resizeRoots.add(rootEl);
+    new ResizeObserver(() => placePreview(rootEl)).observe(area);
   }
 
   // installCardScroll places the open card again whenever the scrolling
@@ -889,14 +955,11 @@
   // drawAxis draws the quiet breaks and the clock labels at both window edges
   // (the view's own start and end times) on the upper line of the axis row;
   // the pin badge uses the lower line.
-  // Quiet labels are placed left to right on their own row: each gets its
-  // full text ("11m quiet") when that fits beside the previous label, else
-  // its length alone ("11m"), else no text. Every quiet break keeps the full
-  // text as its hover label, so nothing is lost when the row is crowded.
+  // Quiet labels go on their own row; fitQuietLabels sizes them once the
+  // chart is on the page and their real text widths can be measured.
   function drawAxis(svg, rootEl, axis, win, w0, w1, mx, top, plotW, height) {
     const y = top + AXIS_ROW - 4;
     const quietY = top + 2 * AXIS_ROW - 4;
-    let freeFrom = PLOT_X0;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
@@ -905,16 +968,10 @@
       const band = el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) });
       hoverable(rootEl, band, `${full} · ${clock(g.from)}–${clock(g.to)}`);
       svg.appendChild(band);
-      const cx = (xa + xb) / 2;
-      const text = [full, duration(g.to - g.from)].find((t) => {
-        const half = (t.length * MONO_CHAR_W) / 2;
-        return cx - half >= freeFrom && cx + half <= PLOT_X0 + plotW;
-      });
-      if (!text) continue;
-      const lbl = el("text", { class: "tl-quiet-label", x: cx.toFixed(1), y: String(quietY), "text-anchor": "middle" });
-      lbl.textContent = text;
+      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(quietY), "text-anchor": "middle" });
+      lbl.textContent = full;
+      lbl.dataset.short = duration(g.to - g.from);
       svg.appendChild(lbl);
-      freeFrom = cx + (text.length * MONO_CHAR_W) / 2 + LABEL_GAP;
     }
     // Clock labels at both window edges.
     const left = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(y) });
@@ -1202,12 +1259,16 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
-  // placePreview places the open preview card and hover label again. app.js
-  // calls it once every surface above and around the chart has been drawn
-  // and scroll positions are restored, and after any change that moves the
-  // chart without a redraw, because render runs before those surfaces and
-  // cannot know where the chart ends up.
+  // placePreview places the open preview card and hover label for the page
+  // as it is now. A render already schedules this for the next animation
+  // frame, after app.js has drawn every surface and restored scroll; app.js
+  // calls placePreview directly after a change that moves the chart without
+  // a render (opening or closing an agent's details above it).
   function placePreview(rootEl) {
+    if (finishers.has(rootEl)) {
+      runFinish(rootEl);
+      return;
+    }
     const card = rootEl.querySelector(".tl-card");
     const place = card && cardPlacers.get(card);
     if (place) place();
