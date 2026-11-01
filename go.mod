@@ -11,7 +11,7 @@ require (
 	goa.design/goa-ai v0.89.1-0.20261028052713-99d852887d11
 	goa.design/goa/v3 v3.35.1-0.20261023134129-12a5635f9dd0
 	goa.design/model v1.16.10
-	goa.design/pulse v1.10.3-0.20261006173751-4182b80d7cd4
+	goa.design/pulse v1.11.0
 )
 
 require (
@@ -82,7 +82,7 @@ require (
 	go.temporal.io/api v1.64.0 // indirect
 	go.temporal.io/sdk v1.50.0 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	goa.design/clue v1.3.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
