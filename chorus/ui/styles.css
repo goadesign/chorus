@@ -961,10 +961,12 @@ body[data-theme="light"] .provider-openai {
   cursor: pointer;
 }
 
-.message-parent-quote .handle-badge {
+.message-parent-quote .handle-with-logo {
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .message-parent-quote:hover {
