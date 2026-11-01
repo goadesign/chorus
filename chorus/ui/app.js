@@ -697,6 +697,11 @@
     if (!text.trim()) throw new Error("Enter text before sending.");
     const existingAgent = state.view.agents.find((a) => a.handle === agent);
     if (existingAgent && existingAgent.model !== "human") {
+      if (!existingAgent.model) {
+        throw new Error(
+          `@${existingAgent.handle} has not declared a model in this swarm; if this is your handle, call who with swarm="${swarm}", agent="${existingAgent.handle}", and model="human" (see Tool Reference in README), or pick another handle.`
+        );
+      }
       throw new Error(`@${existingAgent.handle} is an agent in this swarm; pick your own handle.`);
     }
     localStorage.setItem("chorus_handle", agent);
