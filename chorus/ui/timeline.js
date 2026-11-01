@@ -92,7 +92,11 @@
     const view = state && state.view;
     // Re-rendering replaces the SVG; keep keyboard focus on the timeline if
     // it had it, so arrow-key navigation survives new messages arriving.
-    const hadFocus = rootEl.contains(document.activeElement);
+    // Remember which control had focus (the chart or the Jump to latest
+    // button) so the same one gets it back.
+    const focused = document.activeElement;
+    const hadFocus = rootEl.contains(focused);
+    const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
     clear(rootEl);
     if (!view) {
       // app.js clears the view when it switches swarms, before loading the
@@ -131,7 +135,7 @@
       viewBox: `0 0 ${width} ${height}`,
       role: "application",
       tabindex: "0",
-      "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Page Up and Page Down move the view, Enter opens, F toggles Follow live.`,
+      "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Home and End jump to the first and last, Page Up and Page Down move the view, Enter opens the selected message.`,
     });
 
     // Scales: overview maps the whole compressed axis; the main plot maps the
@@ -203,9 +207,10 @@
       jump.textContent = "Jump to latest";
       jump.addEventListener("click", () => actions.jumpToLatest());
       rootEl.appendChild(jump);
+      if (jumpHadFocus) jump.focus({ preventScroll: true });
     }
     // Restoring focus must not scroll the page under the reader.
-    if (hadFocus) svg.focus({ preventScroll: true });
+    if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
   // collectEvents flattens every retained channel message and DM into one
