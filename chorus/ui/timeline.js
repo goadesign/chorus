@@ -32,6 +32,9 @@
 // too) until "Jump to latest" (actions.jumpToLatest) returns both the
 // timeline and the message list to the newest messages.
 //
+// Hovering: pointing at a message dot, the pin, or a read mark shows a
+// one-line label at once (the browser's own tooltip waits about a second).
+//
 // Inspecting: clicking a message dot, the pin landmark, or a member's read
 // mark selects it in place (actions.selectMessage with reveal: false) and
 // shows one preview card next to it; the tab, filters, and page scroll stay
@@ -100,6 +103,11 @@
   const cardPlacers = new WeakMap();
   // Roots whose scroll listener is installed (once per root element).
   const scrollRoots = new WeakSet();
+  // Per-root last pointer position over the chart, so a hover label can be
+  // shown again after a redraw replaces the mark under a still pointer.
+  const pointers = new WeakMap();
+  // Roots whose hover-tracking listeners are installed (once per root).
+  const hoverRoots = new WeakSet();
 
   /**
    * render draws the timeline into rootEl.
@@ -200,6 +208,7 @@
     };
     installDrag(rootEl);
     installCardScroll(rootEl);
+    installHover(rootEl);
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
@@ -220,9 +229,9 @@
     }
 
     if (channel) {
-      drawPin(svg, channel, mx, inWindow, laneTop, lanes.length, inspect);
+      drawPin(svg, rootEl, channel, mx, inWindow, laneTop, lanes.length, inspect);
       drawReplies(svg, channel, mx, inWindow, laneY, colors);
-      drawReadPositions(svg, channel, mx, inWindow, laneY, picked, inspect);
+      drawReadPositions(svg, rootEl, channel, mx, inWindow, laneY, picked, inspect);
     }
 
     const order = events;
@@ -239,9 +248,7 @@
         r: String(isSel ? DOT_R_SELECTED : DOT_R),
         fill: colors.get(e.sender),
       });
-      const title = el("title", {});
-      title.textContent = `${e.target} #${e.seq} · @${e.sender} · ${clock(e.t)} — ${firstLine(e.text, 120)}`;
-      dot.appendChild(title);
+      hoverable(rootEl, dot, `@${e.sender} · ${e.target} #${e.seq} · ${clock(e.t)} — ${firstLine(e.text, 80)}`);
       dot.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(e.target, e.seq, "");
@@ -260,6 +267,7 @@
       actions.selectMessage(null, 0, { reveal: false });
     });
     rootEl.appendChild(svg);
+    rehover(rootEl);
 
     // The preview card for the picked message or read mark.
     const found = cardAnchor(picked, order, channel, inWindow);
@@ -497,6 +505,74 @@
     const bottom = top + control.offsetHeight;
     if (top < card.scrollTop) card.scrollTop = top;
     else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
+  }
+
+  // hoverable gives node an instant hover label with text, and the same text
+  // as its accessible name. Browsers delay native SVG tooltips by about a
+  // second, so the timeline draws its own label as soon as a mouse or pen
+  // pointer enters the mark, and removes it when the pointer leaves.
+  function hoverable(rootEl, node, text) {
+    node.setAttribute("aria-label", text);
+    node.dataset.tlHover = text;
+    node.addEventListener("pointerenter", (ev) => {
+      if (ev.pointerType !== "touch") showHover(rootEl, node);
+    });
+    node.addEventListener("pointerleave", () => hideHover(rootEl));
+  }
+
+  // installHover remembers where the pointer is over the chart, so rehover
+  // can restore a hover label after a redraw. It is installed once per root.
+  function installHover(rootEl) {
+    if (hoverRoots.has(rootEl)) return;
+    hoverRoots.add(rootEl);
+    rootEl.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType !== "touch") pointers.set(rootEl, { x: ev.clientX, y: ev.clientY });
+    });
+    rootEl.addEventListener("pointerleave", () => {
+      pointers.delete(rootEl);
+      hideHover(rootEl);
+    });
+  }
+
+  // rehover shows the hover label again when the pointer still rests on a
+  // mark after a redraw replaced it (redraws happen on every live update).
+  function rehover(rootEl) {
+    const at = pointers.get(rootEl);
+    if (!at) return;
+    const node = document.elementFromPoint(at.x, at.y);
+    if (node && node.dataset && node.dataset.tlHover && rootEl.contains(node)) showHover(rootEl, node);
+  }
+
+  // showHover places the single hover label above node (below it when the
+  // visible message area has no room above), kept inside the chart. A mark
+  // whose preview card is already open shows no label, since the card says
+  // more.
+  function showHover(rootEl, node) {
+    hideHover(rootEl);
+    if (node.classList.contains("is-selected") && rootEl.querySelector(".tl-card")) return;
+    const label = html("div", "tl-hover", node.dataset.tlHover);
+    label.setAttribute("aria-hidden", "true");
+    label.style.visibility = "hidden";
+    rootEl.appendChild(label);
+    const rootBox = rootEl.getBoundingClientRect();
+    const svgBox = rootEl.querySelector("svg.tl").getBoundingClientRect();
+    const box = node.getBoundingClientRect();
+    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
+    const w = label.offsetWidth;
+    const h = label.offsetHeight;
+    const cx = box.left + box.width / 2;
+    const left = Math.max(svgBox.left + PAD, Math.min(cx - w / 2, svgBox.right - w - PAD));
+    const above = box.top - 6 - h;
+    const top = above >= area.top ? above : box.bottom + 6;
+    label.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
+    label.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
+    label.style.visibility = "";
+  }
+
+  // hideHover removes the hover label, if one is shown.
+  function hideHover(rootEl) {
+    const label = rootEl.querySelector(".tl-hover");
+    if (label) label.remove();
   }
 
   // laneList returns the lanes to draw for the current range: each known
@@ -838,7 +914,7 @@
   // drawPin places the single current-pin landmark at the pinned message's
   // stored time when that message is still retained in the channel.
   // Clicking the line or its label inspects the pinned message.
-  function drawPin(svg, channel, mx, inWindow, laneTop, laneCount, inspect) {
+  function drawPin(svg, rootEl, channel, mx, inWindow, laneTop, laneCount, inspect) {
     if (!channel.pin) return;
     const msg = (channel.messages || []).find((m) => m.seq === channel.pin.seq);
     if (!msg || !inWindow(msg.sent_at_ms)) return;
@@ -847,12 +923,15 @@
       ev.stopPropagation();
       inspect(channel.name, channel.pin.seq, "");
     };
+    const pinText = `Pin #${channel.pin.seq} — ${firstLine(msg.text, 80)}`;
     const line = el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) });
     line.addEventListener("click", pick);
+    hoverable(rootEl, line, pinText);
     svg.appendChild(line);
     const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
     lbl.textContent = `Pin #${channel.pin.seq}`;
     lbl.addEventListener("click", pick);
+    hoverable(rootEl, lbl, pinText);
     svg.appendChild(lbl);
   }
 
@@ -883,7 +962,7 @@
   // is retained and inside the view. Positions elsewhere are not drawn; the
   // participant cards report every member's read state. Clicking a mark
   // inspects that member's position; the picked mark is drawn selected.
-  function drawReadPositions(svg, channel, mx, inWindow, laneY, picked, inspect) {
+  function drawReadPositions(svg, rootEl, channel, mx, inWindow, laneY, picked, inspect) {
     const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
     for (const p of channel.positions || []) {
       const y = laneY.get(p.handle);
@@ -901,11 +980,9 @@
         height: String(LANE_H - 12),
         rx: "1.5",
       });
-      const title = el("title", {});
-      title.textContent = p.behind > 0
+      hoverable(rootEl, mark, p.behind > 0
         ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
-        : `@${p.handle} is caught up to #${p.read_seq}`;
-      mark.appendChild(title);
+        : `@${p.handle} is caught up to #${p.read_seq}`);
       mark.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(channel.name, p.read_seq, p.handle);
