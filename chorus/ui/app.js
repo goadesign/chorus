@@ -88,8 +88,8 @@
       return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null };
     }
     const reg = (state.view?.agents || []).find((a) => a.handle === raw);
-    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "").trim();
-    const m = mod.toLowerCase();
+    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "");
+    const m = mod.trim().toLowerCase();
     if (m === "human") {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
     }
