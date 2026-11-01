@@ -184,6 +184,7 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		nil,
 	)
 	viewSrv.Use(viewGuard(origins))
+	viewSrv.Use(uiBuildStamp)
 	genviewsrv.Mount(mux, viewSrv)
 	mountUI(mux)
 	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {

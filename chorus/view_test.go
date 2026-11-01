@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -444,6 +445,38 @@ func viewRequest(t *testing.T, target string, edit func(*http.Request)) *http.Re
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
+}
+
+// TestDashboardCarriesUIBuild verifies that the dashboard page records the
+// identity of the dashboard files it was built from, and that every
+// dashboard data response, including 304 Not Modified, names the files this
+// server embeds, so an open page can compare the two and offer a reload
+// after the server starts serving a different dashboard.
+func TestDashboardCarriesUIBuild(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	cluster.newAgent(0, "build-swarm", "probe").call("join", map[string]any{"channels": []string{"#b"}})
+	base := cluster.replicas[0].httpServer.URL
+
+	page := viewRequest(t, base+"/", nil)
+	body, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	require.NoError(t, err)
+	match := regexp.MustCompile(`<meta name="chorus-ui-build" content="([0-9a-f]{64})">`).FindSubmatch(body)
+	require.NotNil(t, match, "page must carry its dashboard identity")
+	loaded := string(match[1])
+	assert.Equal(t, "no-store", page.Header.Get("Cache-Control"))
+
+	list := viewRequest(t, base+"/swarms", nil)
+	list.Body.Close()
+	assert.Equal(t, loaded, list.Header.Get("X-Chorus-UI-Build"))
+
+	_, etag := getView(t, base, "build-swarm", "", 0, http.StatusOK)
+	unchanged := viewRequest(t, base+"/swarms/build-swarm/view?wait=1", func(r *http.Request) {
+		r.Header.Set("If-None-Match", etag)
+	})
+	unchanged.Body.Close()
+	require.Equal(t, http.StatusNotModified, unchanged.StatusCode)
+	assert.Equal(t, loaded, unchanged.Header.Get("X-Chorus-UI-Build"))
 }
 
 // TestDashboardPageServed verifies that GET / serves the dashboard page and
