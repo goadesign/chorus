@@ -345,28 +345,12 @@
       document.getElementById("send-text")?.focus();
     },
 
-    async updatePin(channelName, text) {
+    // updatePin sends the editor's exact text to its original channel. It
+    // never reads or resets the main message draft, target, or reply fields.
+    async updatePin(swarm, channelName, text) {
       const handleInput = document.getElementById("send-handle");
       const agent = (handleInput?.value || "").trim().replace(/^@/, "");
-      const cleanText = (text || "").trim();
-      const swarm = state.activeSwarm;
-      if (!swarm) throw new Error("Select a swarm before updating the pin.");
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
-        handleInput?.focus();
-        throw new Error("Enter your handle in the bottom bar (1–32 letters, digits, dashes, or underscores) to update the pin.");
-      }
-      if (!cleanText) throw new Error("Pin text cannot be empty.");
-      const existingAgent = (state.view?.agents || []).find((a) => a.handle === agent);
-      if (existingAgent && existingAgent.model !== "human") {
-        throw new Error(`@${existingAgent.handle} is an agent in this swarm; pick your own handle.`);
-      }
-      localStorage.setItem("chorus_handle", agent);
-      const ch = (state.view?.channels || []).find((c) => c.name === channelName);
-      const alreadyMember = Boolean(existingAgent) && existingAgent.model === "human" && Boolean(ch) && (ch.positions || []).some((p) => p.handle === agent);
-      if (!alreadyMember) {
-        await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [channelName], tail: 1 });
-      }
-      await callMCPTool("send", { agent, to: channelName, text: cleanText, pin: true, wait_sec: 0 });
+      await publishHumanMessage(swarm, { agent, to: channelName, text, pin: true, wait_sec: 0 });
       if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     },
   };
@@ -679,6 +663,41 @@
     }
   }
 
+  // publishHumanMessage validates the chosen human against the loaded swarm,
+  // joins the target when necessary, and publishes through the existing MCP
+  // send tool. Both forms supply their own captured target and original text.
+  async function publishHumanMessage(swarm, args) {
+    const { agent, to, text } = args;
+    if (!swarm) throw new Error("Select a swarm before sending.");
+    if (state.activeSwarm !== swarm || state.view?.swarm !== swarm) {
+      throw new Error(`Return to swarm ${swarm} and wait for it to load before sending.`);
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
+      throw new Error("Enter your handle in the bottom bar (1–32 letters, digits, dashes, or underscores).");
+    }
+    if (!/^(#|@)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(to)) {
+      throw new Error("Target must start with #channel or @agent.");
+    }
+    if (!text.trim()) throw new Error("Enter text before sending.");
+    const existingAgent = state.view.agents.find((a) => a.handle === agent);
+    if (existingAgent && existingAgent.model !== "human") {
+      throw new Error(`@${existingAgent.handle} is an agent in this swarm; pick your own handle.`);
+    }
+    localStorage.setItem("chorus_handle", agent);
+    if (to.startsWith("#")) {
+      const channel = state.view.channels.find((item) => item.name === to);
+      const alreadyMember = existingAgent && channel?.positions.some((p) => p.handle === agent);
+      if (!alreadyMember) {
+        await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [to], tail: 1 });
+      }
+    } else if (!existingAgent) {
+      await callMCPTool("who", { swarm, agent, model: "human", role: "human" });
+    }
+    await callMCPTool("send", args);
+  }
+
+  // sendMessage reads and resets only the message composer; pin editing owns
+  // a different form and calls the same registration/publication function.
   async function sendMessage() {
     const handleInput = document.getElementById("send-handle");
     const targetInput = document.getElementById("send-target");
@@ -692,37 +711,12 @@
     const pin = Boolean(pinCheck.checked && to.startsWith("#"));
     const swarm = state.activeSwarm;
 
-    if (!swarm) { setComposerFeedback("Select a swarm before sending.", "error"); return; }
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(agent)) {
-      setComposerFeedback("Handle must be 1–32 letters, digits, dashes, or underscores.", "error"); return;
-    }
-    if (!/^(#|@)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(to)) {
-      setComposerFeedback("Target must start with #channel or @agent.", "error"); return;
-    }
-    if (!text) { setComposerFeedback("Enter a message before sending.", "error"); return; }
-
-    const existingAgent = (state.view?.agents || []).find((a) => a.handle === agent);
-    if (existingAgent && existingAgent.model !== "human") {
-      setComposerFeedback([handleBadge(existingAgent.handle, existingAgent.model), " is an agent in this swarm; pick your own handle."], "error");
-      return;
-    }
-
-    localStorage.setItem("chorus_handle", agent);
     sendBtn.disabled = true;
     setComposerFeedback("");
     try {
-      if (to.startsWith("#")) {
-        const ch = (state.view?.channels || []).find((c) => c.name === to);
-        const alreadyMember = Boolean(existingAgent) && existingAgent.model === "human" && Boolean(ch) && (ch.positions || []).some((p) => p.handle === agent);
-        if (!alreadyMember) {
-          await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [to], tail: 1 });
-        }
-      } else if (!existingAgent || existingAgent.model !== "human") {
-        await callMCPTool("who", { swarm, agent, model: "human", role: "human" });
-      }
       const sendArgs = { agent, to, text, pin, wait_sec: 0 };
       if (state.replyToSeq > 0 && to.startsWith("#")) sendArgs.reply_to = state.replyToSeq;
-      await callMCPTool("send", sendArgs);
+      await publishHumanMessage(swarm, sendArgs);
 
       textInput.value = "";
       pinCheck.checked = false;
