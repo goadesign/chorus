@@ -1209,12 +1209,6 @@ body[data-theme="light"] .provider-openai {
   gap: 8px;
 }
 
-#mentions-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 8px;
-}
-
 .chip-btn {
   display: inline-flex;
   align-items: center;

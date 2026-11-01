@@ -225,14 +225,12 @@
     return { swarm: params.get("swarm") || "", target: params.get("target") || "", mode: params.get("mode") || "" };
   }
 
-  function writeHashState(preservePendingTarget = false) {
-    const currentHash = readHashState();
+  function writeHashState() {
     const params = new URLSearchParams();
     if (state.activeSwarm) params.set("swarm", state.activeSwarm);
     if (state.selectedTarget?.kind === "channel") params.set("target", state.selectedTarget.name);
     else if (state.selectedTarget?.kind === "dm") params.set("target", `dm:${state.selectedTarget.pairKey}`);
     else if (state.selectedTarget?.kind === "all") params.set("target", "all");
-    else if (preservePendingTarget && currentHash.target) params.set("target", currentHash.target);
     if (state.viewMode !== "threaded") params.set("mode", state.viewMode);
     const nextHash = `#${params.toString()}`;
     if (window.location.hash !== nextHash) history.replaceState(null, "", nextHash);
@@ -242,6 +240,7 @@
     const sendTarget = document.getElementById("send-target");
     if (!sendTarget || !targetObj) return;
     if (onlyIfNotEdited && sendTarget.dataset.userEdited) return;
+    if (!onlyIfNotEdited) delete sendTarget.dataset.userEdited;
     const pinCheck = document.getElementById("send-pin");
     const pinLabel = document.getElementById("pin-toggle-label");
     if (targetObj.kind === "channel") {
@@ -255,6 +254,19 @@
     }
   }
 
+  function resolveTargetFromHash(hashTarget, channels, pairedDMs) {
+    if (!hashTarget) return null;
+    if (hashTarget === "all") return { kind: "all" };
+    if (hashTarget.startsWith("dm:")) {
+      const found = pairedDMs.find((p) => p.pairKey === hashTarget.slice(3));
+      if (found) return { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
+    }
+    if (hashTarget.startsWith("#") && channels.some((c) => c.name === hashTarget)) {
+      return { kind: "channel", name: hashTarget };
+    }
+    return null;
+  }
+
   function reconcileSelectedTarget(view, pairedDMs) {
     if (!view) return;
     const channels = view.channels || [];
@@ -263,41 +275,18 @@
       if (state.selectedTarget.kind === "channel" && channels.some((c) => c.name === state.selectedTarget.name)) return;
       if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
     }
-    const hash = readHashState();
-    if (hash.target === "all") {
-      state.selectedTarget = { kind: "all" };
-      writeHashState();
-      return;
-    }
-    if (hash.target.startsWith("dm:")) {
-      const found = pairedDMs.find((p) => p.pairKey === hash.target.slice(3));
-      if (found) {
-        state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
-        syncComposerTarget(state.selectedTarget, true);
-        writeHashState();
-        return;
-      }
-    }
-    if (hash.target.startsWith("#") && channels.some((c) => c.name === hash.target)) {
-      state.selectedTarget = { kind: "channel", name: hash.target };
-      syncComposerTarget(state.selectedTarget, true);
-      writeHashState();
-      return;
-    }
-    if (channels.length > 0) {
+    const fromHash = resolveTargetFromHash(readHashState().target, channels, pairedDMs);
+    if (fromHash) {
+      state.selectedTarget = fromHash;
+    } else if (channels.length > 0) {
       state.selectedTarget = { kind: "channel", name: channels[0].name };
-      syncComposerTarget(state.selectedTarget, true);
-      writeHashState();
-      return;
-    }
-    if (pairedDMs.length > 0) {
+    } else if (pairedDMs.length > 0) {
       const p = pairedDMs[0];
       state.selectedTarget = { kind: "dm", pairKey: p.pairKey, a: p.a, b: p.b };
-      syncComposerTarget(state.selectedTarget, true);
-      writeHashState();
-      return;
+    } else {
+      state.selectedTarget = { kind: "all" };
     }
-    state.selectedTarget = { kind: "all" };
+    syncComposerTarget(state.selectedTarget, true);
     writeHashState();
   }
 
@@ -548,7 +537,7 @@
 
   // Long-poll loop for GET /swarms/{swarm}/view with single-source ETag header
   // validation and bounded 1s -> 30s error backoff.
-  async function startSwarmLoop(swarmName, preservePendingTarget = false) {
+  async function startSwarmLoop(swarmName) {
     if (state.pollAbort) {
       state.pollAbort.abort();
     }
@@ -560,7 +549,6 @@
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
-    writeHashState(preservePendingTarget);
     if (switchedSwarm) {
       state.replyTo = null;
       renderReplyChip();
@@ -801,6 +789,7 @@
         state.selectedMessage = null;
         state.timeWindow = null;
         startSwarmLoop(next);
+        writeHashState();
       }
     });
 
@@ -883,7 +872,8 @@
     window.addEventListener("hashchange", () => {
       const h = readHashState();
       const nextMode = h.mode === "stream" ? "stream" : "threaded";
-      if (state.viewMode !== nextMode) {
+      const modeChanged = state.viewMode !== nextMode;
+      if (modeChanged) {
         state.viewMode = nextMode;
         document.getElementById("mode-stream")?.classList.toggle("active", nextMode === "stream");
         document.getElementById("mode-threaded")?.classList.toggle("active", nextMode !== "stream");
@@ -892,14 +882,21 @@
         state.selectedTarget = null;
         state.selectedMessage = null;
         state.timeWindow = null;
-        startSwarmLoop(h.swarm, Boolean(h.target));
+        startSwarmLoop(h.swarm);
         return;
       }
       if (state.view) {
-        if (h.target) {
-          state.selectedTarget = null;
-          reconcileSelectedTarget(state.view, state.pairedDMs);
+        const nextTarget = resolveTargetFromHash(h.target, state.view.channels || [], state.pairedDMs);
+        if (nextTarget) {
+          actions.selectTarget(nextTarget);
+          if (modeChanged) {
+            writeHashState();
+            renderAll();
+          }
+          return;
         }
+        state.selectedTarget = null;
+        reconcileSelectedTarget(state.view, state.pairedDMs);
         renderAll();
       }
     });
@@ -918,18 +915,23 @@
 
   async function boot() {
     initEvents();
-    const hash = readHashState();
-    if (hash.mode === "stream") {
+    const initialMode = readHashState().mode;
+    if (initialMode === "stream") {
       state.viewMode = "stream";
       document.getElementById("mode-stream").classList.add("active");
       document.getElementById("mode-threaded").classList.remove("active");
     }
     try {
       const swarms = await fetchSwarms();
-      const initialSwarm = hash.swarm || swarms[0] || "default";
-      startSwarmLoop(initialSwarm, true);
+      if (!state.pollAbort) {
+        const currentHash = readHashState();
+        startSwarmLoop(currentHash.swarm || swarms[0] || "default");
+      }
     } catch {
-      startSwarmLoop(hash.swarm || "default", true);
+      if (!state.pollAbort) {
+        const currentHash = readHashState();
+        startSwarmLoop(currentHash.swarm || "default");
+      }
     }
   }
 
