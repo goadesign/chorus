@@ -28,11 +28,22 @@
 // too) until "Jump to latest" (actions.jumpToLatest) returns both the
 // timeline and the message list to the newest messages.
 //
-// Keyboard: the timeline is one focusable control. Left/Right move the
-// selection to the previous/next retained message (the view follows it),
-// Home/End jump to the first/last, PageUp/PageDown move the view by its own
-// duration, and Enter opens the selected message. Clicking the overview
-// strip moves the view there.
+// Inspecting: clicking a message dot, the pin landmark, or a member's read
+// mark selects it in place (actions.selectMessage with reveal: false) and
+// shows one preview card next to it; the tab, filters, and page scroll stay
+// as they are. Only the card's "Show in conversation" button (or Enter)
+// opens the message in the conversation. The card is rebuilt from
+// state.selectedMessage on every render, so it never outlives the data it
+// describes. A read-mark card names the reader it was opened for; when that
+// reader's position moves, the card closes instead of describing a new spot.
+// The card closes with its close button, Escape, a second click on the same
+// mark, or a click on empty chart space.
+//
+// Keyboard: the timeline is one focusable control. Left/Right select the
+// previous/next retained message (the view follows it), Home/End jump to the
+// first/last, PageUp/PageDown move the view by its own duration, Enter shows
+// the selected message in the conversation, and Escape closes the preview.
+// Clicking the overview strip moves the view there.
 (function () {
   "use strict";
 
@@ -82,10 +93,14 @@
    * (null while showing the latest messages), filterAgent, searchQuery.
    * selectedTarget is {kind: "channel", name: "#x"} or
    * {kind: "dm", pairKey: "a↔b", a, b} with a and b sorted.
-   * selectedMessage is null or {target: "#channel" | "@recipient", seq}.
-   * actions used: selectTarget(selectedTarget), selectMessage(target, seq)
-   * where target is "#channel" or the recipient inbox "@handle",
-   * setTimeWindow({startMs, endMs} | null), and jumpToLatest(), which returns
+   * selectedMessage is null or {target: "#channel" | "@recipient", seq,
+   * reader?} where reader is set when a member's read mark was picked.
+   * actions used: selectMessage(target, seq, opts) where target is
+   * "#channel" or the recipient inbox "@handle" and opts.reveal === false
+   * inspects in place (opts.reader names a picked read mark) while the default
+   * shows the message in the conversation; setReplyTo(channel, seq, sender,
+   * human) and composeDM(handle) for the card's Reply button;
+   * setTimeWindow({startMs, endMs} | null); and jumpToLatest(), which returns
    * both the timeline and the message list to the newest messages.
    */
   function render(rootEl, state, actions) {
@@ -97,6 +112,8 @@
     const focused = document.activeElement;
     const hadFocus = rootEl.contains(focused);
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
+    // A focused preview-card button is found again by its data-tl-card name.
+    const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
     clear(rootEl);
     if (!view) {
       // app.js clears the view when it switches swarms, before loading the
@@ -149,6 +166,14 @@
     const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
     const pan = (next) => actions.setTimeWindow(next);
+    // inspect selects a message, pin, or read mark in place; picking the
+    // one already shown closes its preview.
+    const inspect = (target, seq, reader) => {
+      const same = picked != null && picked.target === target && picked.seq === seq &&
+        (picked.reader || "") === (reader || "");
+      if (same) actions.selectMessage(null, 0, { reveal: false });
+      else actions.selectMessage(target, seq, reader ? { reveal: false, reader } : { reveal: false });
+    };
     installDrag(rootEl);
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
@@ -166,9 +191,9 @@
       ? (view.channels || []).find((c) => c.name === sel.name)
       : null;
     if (channel) {
-      drawPin(svg, channel, mx, inWindow, laneTop, lanes.length);
+      drawPin(svg, channel, mx, inWindow, laneTop, lanes.length, inspect);
       drawReplies(svg, channel, mx, inWindow, laneY, colors);
-      drawReadPositions(svg, channel, mx, inWindow, laneY);
+      drawReadPositions(svg, channel, mx, inWindow, laneY, picked, inspect);
     }
 
     const order = events;
@@ -188,15 +213,42 @@
       const title = el("title", {});
       title.textContent = `${e.target} #${e.seq} · @${e.sender} · ${clock(e.t)} — ${firstLine(e.text, 120)}`;
       dot.appendChild(title);
-      dot.addEventListener("click", () => openEvent(e, actions));
+      dot.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        inspect(e.target, e.seq, "");
+      });
       svg.appendChild(dot);
     }
 
     const chosen = order.find(isSelected);
     if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
 
-    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, axis, win, pan));
+    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, picked, actions, axis, win, pan));
+    // A click on empty plot space (below the overview strip, not on a dot or
+    // mark, whose handlers stop the click) closes the preview.
+    svg.addEventListener("click", (ev) => {
+      if (!picked || ev.clientY - svg.getBoundingClientRect().top < OVERVIEW_H + PAD) return;
+      actions.selectMessage(null, 0, { reveal: false });
+    });
     rootEl.appendChild(svg);
+
+    // The preview card for the picked message or read mark.
+    const found = cardAnchor(picked, order, channel, inWindow);
+    let card = null;
+    if (found && found.stale) {
+      // The picked reader moved on: close the preview once this render ends,
+      // unless something else replaced the selection first.
+      queueMicrotask(() => {
+        if (state.selectedMessage === picked) actions.selectMessage(null, 0, { reveal: false });
+      });
+    } else if (found) {
+      const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
+      if (y != null) {
+        const lane = lanes.find((l) => l.handle === found.e.sender);
+        card = buildCard(found, lane, channel, actions, svg);
+        placeCard(rootEl, svg, card, mx(found.e.t), y, width);
+      }
+    }
     // While an earlier interval is shown, one quiet button returns the whole
     // page to the latest messages; it is a real button so keyboards and
     // screen readers reach it.
@@ -209,8 +261,12 @@
       rootEl.appendChild(jump);
       if (jumpHadFocus) jump.focus({ preventScroll: true });
     }
-    // Restoring focus must not scroll the page under the reader.
-    if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
+    // Restoring focus must not scroll the page under the reader. A focused
+    // card button keeps focus when its card is drawn again; when the card is
+    // gone, focus returns to the chart.
+    const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
+    if (cardTarget) cardTarget.focus({ preventScroll: true });
+    else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
   // collectEvents flattens every retained channel message and DM into one
@@ -234,7 +290,7 @@
   // (Chorus handles are case-sensitive, so @API and @api are different
   // agents), sorted, joined by ↔.
   function toEvent(target, m) {
-    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to };
+    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true };
     if (target.startsWith("@")) {
       const [a, b] = [m.sender, target.slice(1)].sort();
       e.pair = { a, b, pairKey: a + "↔" + b };
@@ -249,15 +305,110 @@
     return sel.kind === "channel" ? e.target === sel.name : !!e.pair && e.pair.pairKey === sel.pairKey;
   }
 
-  // openEvent selects the event's channel or DM conversation, then the
-  // message itself.
-  function openEvent(e, actions) {
-    if (e.pair) {
-      actions.selectTarget({ kind: "dm", pairKey: e.pair.pairKey, a: e.pair.a, b: e.pair.b });
-    } else {
-      actions.selectTarget({ kind: "channel", name: e.target });
+  // cardAnchor returns what the preview card describes: {e} for a picked
+  // message, {e, reader} for a picked read mark whose reader is still at that
+  // message, {stale: true} when the picked reader's position has moved or is
+  // gone, or null when nothing is picked or the message is outside the view.
+  function cardAnchor(picked, order, channel, inWindow) {
+    if (!picked) return null;
+    let reader = null;
+    if (picked.reader) {
+      reader = channel && channel.name === picked.target
+        ? (channel.positions || []).find((p) => p.handle === picked.reader && p.read_seq === picked.seq)
+        : null;
+      if (!reader) return { stale: true };
     }
-    actions.selectMessage(e.target, e.seq);
+    const e = order.find((x) => x.target === picked.target && x.seq === picked.seq);
+    if (!e || !inWindow(e.t)) return null;
+    return reader ? { e, reader } : { e };
+  }
+
+  // buildCard returns the preview card for found (see cardAnchor): who sent
+  // the message, where and when, why it is picked (pin, reply, or a reader's
+  // position), the start of its text, and the Show in conversation, Reply,
+  // and close controls. Each control carries a data-tl-card name so focus can
+  // return to it after the next render.
+  function buildCard(found, lane, channel, actions, svg) {
+    const e = found.e;
+    const close = () => {
+      actions.selectMessage(null, 0, { reveal: false });
+      svg.focus({ preventScroll: true });
+    };
+    const card = html("div", "tl-card");
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", `Preview of ${e.target} #${e.seq} from @${e.sender}`);
+    card.style.touchAction = "pan-y";
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      close();
+    });
+
+    const header = html("div", "tl-card-header");
+    const meta = html("div", "tl-card-meta");
+    // The badge follows the message's own human flag. The sender's current
+    // model only picks the provider logo for a message not sent as a person,
+    // and never marks such a message as a person's when the sender has since
+    // declared "human".
+    const current = lane ? lane.model : "";
+    const nowHuman = current.trim().toLowerCase() === "human";
+    const ui = window.ChorusUI;
+    meta.appendChild(ui && ui.handleBadge && (e.human || !nowHuman)
+      ? ui.handleBadge(e.sender, e.human ? "" : current, "", e.human)
+      : html("span", "", "@" + e.sender));
+    meta.appendChild(html("span", "", e.pair ? `${e.pair.a} ↔ ${e.pair.b} #${e.seq}` : `${e.target} #${e.seq}`));
+    meta.appendChild(html("span", "", clock(e.t)));
+    header.appendChild(meta);
+    const closeBtn = button("tl-card-close", "×", "close", close);
+    closeBtn.setAttribute("aria-label", "Close preview");
+    header.appendChild(closeBtn);
+    card.appendChild(header);
+
+    const notes = [];
+    if (found.reader) {
+      const p = found.reader;
+      notes.push(p.behind > 0 ? `@${p.handle} read through #${p.read_seq} · ${p.behind} behind` : `@${p.handle} is caught up`);
+    }
+    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
+    if (e.replyTo) notes.push(`↩ #${e.replyTo}`);
+    if (notes.length) card.appendChild(html("span", "tl-card-note", notes.join(" · ")));
+
+    card.appendChild(html("p", "tl-card-body", preview(e.text)));
+
+    const row = html("div", "tl-card-actions");
+    row.appendChild(button("", "Show in conversation", "show", () => actions.selectMessage(e.target, e.seq)));
+    row.appendChild(button("", "Reply", "reply", () => {
+      if (e.pair) actions.composeDM(e.sender);
+      else actions.setReplyTo(e.target, e.seq, e.sender, e.human);
+    }));
+    card.appendChild(row);
+    return card;
+  }
+
+  // placeCard adds card to rootEl and positions it next to the anchor at
+  // (x, y) in chart coordinates, kept horizontally inside the chart. It opens
+  // below the anchor, over the lanes below and the page under the chart, so
+  // it hides as few other messages as possible; it opens above only when
+  // below would run past the bottom of the browser window and above fits.
+  // The card floats above the page, so placing it never moves layout.
+  function placeCard(rootEl, svg, card, x, y, width) {
+    card.style.visibility = "hidden";
+    rootEl.appendChild(card);
+    const rootBox = rootEl.getBoundingClientRect();
+    const svgBox = svg.getBoundingClientRect();
+    const ox = svgBox.left - rootBox.left - rootEl.clientLeft;
+    const oy = svgBox.top - rootBox.top - rootEl.clientTop;
+    const cw = card.offsetWidth;
+    const ch = card.offsetHeight;
+    const gap = DOT_R_SELECTED + 6;
+    const left = Math.max(PAD, Math.min(x - cw / 2, width - cw - PAD));
+    const anchorTop = svgBox.top + y;
+    const fitsBelow = anchorTop + gap + ch <= window.innerHeight;
+    const fitsAbove = anchorTop - gap - ch >= 0;
+    const top = fitsBelow || !fitsAbove ? y + gap : y - gap - ch;
+    card.style.left = `${Math.round(ox + left)}px`;
+    card.style.top = `${Math.round(oy + top)}px`;
+    card.style.visibility = "";
   }
 
   // laneList returns the lanes to draw: every registered agent and every
@@ -576,14 +727,22 @@
 
   // drawPin places the single current-pin landmark at the pinned message's
   // stored time when that message is still retained in the channel.
-  function drawPin(svg, channel, mx, inWindow, laneTop, laneCount) {
+  // Clicking the line or its label inspects the pinned message.
+  function drawPin(svg, channel, mx, inWindow, laneTop, laneCount, inspect) {
     if (!channel.pin) return;
     const msg = (channel.messages || []).find((m) => m.seq === channel.pin.seq);
     if (!msg || !inWindow(msg.sent_at_ms)) return;
     const x = mx(msg.sent_at_ms).toFixed(1);
-    svg.appendChild(el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) }));
+    const pick = (ev) => {
+      ev.stopPropagation();
+      inspect(channel.name, channel.pin.seq, "");
+    };
+    const line = el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) });
+    line.addEventListener("click", pick);
+    svg.appendChild(line);
     const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
     lbl.textContent = `Pin #${channel.pin.seq}`;
+    lbl.addEventListener("click", pick);
     svg.appendChild(lbl);
   }
 
@@ -612,8 +771,9 @@
   // drawReadPositions marks, on each member's own lane, the message that
   // member last read, sent, or joined at in this channel, when that message
   // is retained and inside the view. Positions elsewhere are not drawn; the
-  // participant cards report every member's read state.
-  function drawReadPositions(svg, channel, mx, inWindow, laneY) {
+  // participant cards report every member's read state. Clicking a mark
+  // inspects that member's position; the picked mark is drawn selected.
+  function drawReadPositions(svg, channel, mx, inWindow, laneY, picked, inspect) {
     const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
     for (const p of channel.positions || []) {
       const y = laneY.get(p.handle);
@@ -622,8 +782,9 @@
       // A short bar centered on the member's own lane line, so it cannot be
       // read as belonging to the lane above or below.
       const x = mx(m.sent_at_ms);
+      const chosen = picked != null && picked.reader === p.handle && picked.target === channel.name && picked.seq === p.read_seq;
       const mark = el("rect", {
-        class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
+        class: "tl-read" + (p.behind > 0 ? " is-behind" : "") + (chosen ? " is-selected" : ""),
         x: (x - 1.5).toFixed(1),
         y: String(y - LANE_H / 2 + 6),
         width: "3",
@@ -635,6 +796,10 @@
         ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
         : `@${p.handle} is caught up to #${p.read_seq}`;
       mark.appendChild(title);
+      mark.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        inspect(channel.name, p.read_seq, p.handle);
+      });
       svg.appendChild(mark);
     }
   }
@@ -677,8 +842,15 @@
   // onKey implements the keyboard contract in the file comment. order holds
   // every retained message with a lane, oldest first, so earlier history is
   // reachable; when the new selection is outside the view, the view is
-  // centered on it.
-  function onKey(ev, order, isSelected, actions, axis, win, pan) {
+  // centered on it. Moving the selection inspects in place; only Enter shows
+  // the message in the conversation.
+  function onKey(ev, order, isSelected, picked, actions, axis, win, pan) {
+    if (ev.key === "Escape") {
+      if (!picked) return;
+      ev.preventDefault();
+      actions.selectMessage(null, 0, { reveal: false });
+      return;
+    }
     if (ev.key === "PageUp" || ev.key === "PageDown") {
       ev.preventDefault();
       const dur = win.endMs - win.startMs;
@@ -693,13 +865,13 @@
     else if (ev.key === "End") i = order.length - 1;
     else if (ev.key === "Enter" && i >= 0) {
       ev.preventDefault();
-      openEvent(order[i], actions);
+      actions.selectMessage(order[i].target, order[i].seq);
       return;
     } else return;
     ev.preventDefault();
     const e = order[i];
     if (e.t < win.startMs || e.t > win.endMs) pan(centerWindow(axis, win, e.t));
-    openEvent(e, actions);
+    actions.selectMessage(e.target, e.seq, { reveal: false });
   }
 
   function quietLabel(ms) {
@@ -716,6 +888,29 @@
   function firstLine(text, max) {
     const line = String(text || "").split("\n")[0];
     return line.length > max ? line.slice(0, max - 1) + "…" : line;
+  }
+
+  // preview returns the first two lines of text, at most 280 characters.
+  function preview(text) {
+    const lines = String(text || "").split("\n").slice(0, 2).join("\n");
+    return lines.length > 280 ? lines.slice(0, 279) + "…" : lines;
+  }
+
+  // html creates an HTML element with an optional class and text.
+  function html(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  // button creates a card button named by data-tl-card that runs onClick.
+  function button(className, text, name, onClick) {
+    const b = html("button", className, text);
+    b.type = "button";
+    b.dataset.tlCard = name;
+    b.addEventListener("click", onClick);
+    return b;
   }
 
   function el(name, attrs) {
