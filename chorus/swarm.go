@@ -104,8 +104,7 @@ func openSwarm(
 	onlineWindow time.Duration,
 	clock func() time.Time,
 ) (*swarmHandle, error) {
-	mapName := fmt.Sprintf("chorus:%s:state", name)
-	state, err := rmap.Join(ctx, mapName, rdb, rmap.WithSlidingTTL(swarmTTL))
+	state, err := rmap.Join(ctx, swarmStateMapName(name), rdb, rmap.WithSlidingTTL(swarmTTL))
 	if err != nil {
 		return nil, fmt.Errorf("join swarm %q state map: %w", name, err)
 	}
@@ -119,6 +118,12 @@ func openSwarm(
 		clock:        clock,
 		watching:     make(map[string]struct{}),
 	}, nil
+}
+
+// swarmStateMapName returns the name of the Pulse replicated map that holds
+// the named swarm's agents, subscriptions, read positions, and pins.
+func swarmStateMapName(name string) string {
+	return fmt.Sprintf("chorus:%s:state", name)
 }
 
 // close stops the swarm's replicated map subscription.
