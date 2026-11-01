@@ -1397,6 +1397,13 @@ body[data-theme="light"] .provider-openai {
   white-space: nowrap;
 }
 
+/* Expanded messages retain their author and coordinates above the full text;
+   their collapsed excerpts would repeat that same text. */
+.message-disclosure[open] > .message-summary .message-headline,
+.message-disclosure[open] > .message-summary .message-supporting {
+  display: none;
+}
+
 .pin-meta {
   display: inline-flex;
   align-items: center;

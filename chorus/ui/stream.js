@@ -196,7 +196,7 @@
       const cardChildren = [headerRow];
       if (agent.role && agent.role !== "human") cardChildren.push(element("span", "agent-role-inline", agent.role));
       cardChildren.push(element("span", "agent-latest",
-        entry ? `${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): ${headline(entry.message.text)}` : "No retained messages"));
+        ...(entry ? [`${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): `, formattedPreview(entry.message.text)] : ["No retained messages"])));
       const button = element("button",
         `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
         ...cardChildren);
@@ -288,7 +288,7 @@
     ];
     if (agent.role) nodes.push(element("p", "agent-role", agent.role));
     nodes.push(facts);
-    if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): ${headline(latest.message.text)}`));
+    if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): `, formattedPreview(latest.message.text)));
     nodes.push(element("div", "detail-actions",
       actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
       actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
@@ -609,18 +609,25 @@
     previewObserver.disconnect();
     for (const summary of previewObserver.root.querySelectorAll("summary.has-unshown-preview")) {
       previewObserver.observe(summary);
+      if (summary.classList.contains("message-summary")) {
+        previewObserver.observe(summary.nextElementSibling);
+      }
     }
   }
 
-  // exposePreviews settles cues only for summaries inside the visible stage.
-  // A collapsed thread never exposes the summaries of its hidden children.
+  // exposePreviews settles cues when collapsed previews or expanded message
+  // text enter the visible stage. Closed threads never expose hidden replies.
   function exposePreviews(changes, observer) {
     if (observer !== previewObserver || document.visibilityState !== "visible") return;
     for (const change of changes) {
       if (!change.isIntersecting || change.intersectionRect.width <= 0
         || change.intersectionRect.height <= 0) continue;
-      const summary = change.target;
-      let parent = summary.parentElement.parentElement;
+      const summary = change.target.tagName === "SUMMARY"
+        ? change.target : change.target.previousElementSibling;
+      if (change.target === summary && summary.classList.contains("message-summary")
+        && summary.parentElement.open) continue;
+      let parent = change.target === summary
+        ? summary.parentElement.parentElement : change.target.parentElement;
       while (parent && (parent.tagName !== "DETAILS" || parent.open)) parent = parent.parentElement;
       if (parent) continue;
       displayedPreviews.add(summary.dataset.previewKey);
@@ -629,7 +636,10 @@
     // A thread preview and an individual message can show the same text. Keep
     // their dots consistent without retaining another map of rendered rows.
     for (const summary of observer.root.querySelectorAll("summary[data-preview-key]")) {
-      if (!updatePreviewCue(summary)) observer.unobserve(summary);
+      if (!updatePreviewCue(summary)) {
+        observer.unobserve(summary);
+        if (summary.classList.contains("message-summary")) observer.unobserve(summary.nextElementSibling);
+      }
     }
   }
 
@@ -811,8 +821,8 @@
 
     const contentCol = element("span", "row-main",
       metaRow,
-      element("strong", "thread-title", headline(first.message.text)),
-      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman), ` #${last.message.seq}): ${headline(last.message.text)}`));
+      element("strong", "thread-title", formattedPreview(first.message.text)),
+      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman), ` #${last.message.seq}): `, formattedPreview(last.message.text)));
 
     const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, "", lastFromHuman), contentCol);
     summary.dataset.focusKey = key;
@@ -826,7 +836,7 @@
     for (const entry of entries.toReversed()) body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
     const controls = element("div", "message-actions");
     const reply = actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply-thread:${key}`, () => {
-      actions.setReplyTo(last.target, last.message.seq, last.message.sender);
+      actions.setReplyTo(last.target, last.message.seq, last.message.sender, isFromHumanMessage(last.message));
     });
     reply.setAttribute("aria-label", `Reply to @${last.message.sender} in ${last.target} message #${last.message.seq}`);
     controls.append(reply);
@@ -859,8 +869,8 @@
     const second = secondLine(message.text);
     const contentCol = element("span", "row-main",
       meta,
-      element("span", "message-headline", headline(message.text)),
-      ...(second ? [element("span", "message-supporting", second)] : []));
+      element("span", "message-headline", formattedPreview(message.text)),
+      ...(second ? [element("span", "message-supporting", formattedPreview(message.text, 1))] : []));
 
     const summary = element("summary", "message-summary", avatarNode(message.sender, state, "", fromHuman), contentCol);
     summary.dataset.focusKey = `message:${key}`;
@@ -874,7 +884,7 @@
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
       controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply:${key}`, () => {
-        actions.setReplyTo(entry.target, message.seq, message.sender);
+        actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman);
       }));
       const parent = byTarget.get(entry.target)?.get(message.reply_to);
       if (parent) {
@@ -922,7 +932,7 @@
     ];
     if (entry.target.startsWith("#")) {
       nodes.push(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], "reply-selected",
-        () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender)));
+        () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender, isFromHumanMessage(entry.message))));
     }
     replaceKeepingFocus(root, nodes);
   }
@@ -988,19 +998,68 @@
     return [...result];
   }
 
+  // formattedText decorates prose mentions while keeping inline and fenced
+  // code literal. The same code boundaries govern the collapsed previews.
   function formattedText(text) {
     const fragment = document.createDocumentFragment();
-    for (const part of text.split(/(```[\s\S]*?```)/g)) {
-      if (part.startsWith("```") && part.endsWith("```")) {
-        fragment.append(element("pre", "message-code", element("code", "", part.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\n/, ""))));
+    for (const part of textParts(text)) {
+      if (part.kind === "block") {
+        fragment.append(element("pre", "message-code", element("code", "", part.text.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\n/, ""))));
+      } else if (part.kind === "inline") {
+        fragment.append(element("code", "", part.text.slice(1, -1)));
       } else {
-        for (const inline of part.split(/(`[^`\n]+`)/g)) {
-          if (inline.startsWith("`") && inline.endsWith("`")) fragment.append(element("code", "", inline.slice(1, -1)));
-          else appendTextWithMentions(fragment, inline);
-        }
+        appendTextWithMentions(fragment, part.text);
       }
     }
     return fragment;
+  }
+
+  // formattedPreview selects a nonblank source line without losing its code
+  // context. For example, an @mention inside a fence stays plain in line two.
+  function formattedPreview(text, lineNumber = 0) {
+    const fragment = document.createDocumentFragment();
+    let line = null;
+    let index = 0;
+    for (const match of text.matchAll(/[^\n]+/g)) {
+      if (!match[0].trim()) continue;
+      if (index++ === lineNumber) {
+        line = match;
+        break;
+      }
+    }
+    if (!line) {
+      if (lineNumber === 0) fragment.append("Empty message");
+      return fragment;
+    }
+    const start = line.index + line[0].search(/\S/);
+    const end = line.index + line[0].trimEnd().length;
+    let offset = 0;
+    for (const part of textParts(text)) {
+      if (offset >= end) break;
+      const from = Math.max(0, start - offset);
+      const to = Math.min(part.text.length, end - offset);
+      if (from < to) {
+        const excerpt = part.text.slice(from, to);
+        if (part.kind === "text") appendTextWithMentions(fragment, excerpt);
+        else fragment.append(excerpt);
+      }
+      offset += part.text.length;
+    }
+    return fragment;
+  }
+
+  // textParts preserves the original delimiters and offsets so all text
+  // surfaces can distinguish prose from code before decorating mentions.
+  function* textParts(text) {
+    for (const part of text.split(/(```[\s\S]*?```)/g)) {
+      if (part.startsWith("```") && part.endsWith("```")) {
+        yield { kind: "block", text: part };
+      } else {
+        for (const inline of part.split(/(`[^`\n]+`)/g)) {
+          yield { kind: inline.startsWith("`") && inline.endsWith("`") ? "inline" : "text", text: inline };
+        }
+      }
+    }
   }
 
   function appendTextWithMentions(target, text) {
