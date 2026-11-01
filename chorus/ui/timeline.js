@@ -16,21 +16,22 @@
 //     current pin, so there is one landmark, placed at the pinned message
 //     when it is still retained), each member's read position, and
 //     reply_to curves between messages of that channel;
-//   - highlights for messages matching the search, agent, or artifact filter.
+//   - highlights for messages matching the search or agent filter.
 // Direct-message reply_to values are ambiguous across the two inboxes, so
 // no reply curves are drawn for DMs.
 //
-// Viewport: the visible interval is state.timeWindow when app.js has set an
-// explicit time filter (the message list applies it too). Otherwise, while
-// following live, it is the last LIVE_WINDOW_MS; when the page pauses
-// (followLive false) the timeline keeps showing the interval it last showed
-// live, so later arrivals do not move what the user is looking at.
+// Viewport: the page is always live. While state.timeWindow is null the
+// timeline shows the last LIVE_WINDOW_MS and moves with new messages. The
+// user picks an earlier interval by dragging or clicking the overview strip,
+// paging, or selecting a message outside the view; each sets
+// state.timeWindow, which holds the view still (the message list applies it
+// too) until "Jump to latest" sets it back to null.
 //
 // Keyboard: the timeline is one focusable control. Left/Right move the
 // selection to the previous/next retained message (the view follows it),
 // Home/End jump to the first/last, PageUp/PageDown move the view by one
-// window width, Enter opens the selected message, and "f" toggles Follow
-// live. Clicking the overview strip moves the view there.
+// window width, and Enter opens the selected message. Clicking the overview
+// strip moves the view there.
 (function () {
   "use strict";
 
@@ -63,12 +64,9 @@
   const DOT_R = 6;
   const DOT_R_SELECTED = 8;
 
-  // Per-root viewport memory. It is interaction state, never swarm data:
-  // swarm is the swarm it belongs to (memory is reset when the swarm
-  // changes, kept across channel and DM switches within a swarm), lastLive
-  // is the interval most recently shown while following live, and frozen is
-  // the interval shown while paused without an explicit filter.
-  const viewports = new WeakMap();
+  // Per-root swarm memory: the swarm each root last drew. When it changes, a
+  // drag started on the previous swarm's chart is dropped.
+  const drawnSwarm = new WeakMap();
 
   // Per-root drag state while the overview window is being dragged. The
   // pointer is captured on rootEl, which survives re-renders, so a drag keeps
@@ -79,14 +77,14 @@
 
   /**
    * render draws the timeline into rootEl.
-   * state fields read: view, selectedTarget, selectedMessage, timeWindow,
-   * followLive, filterAgent, filterArtifact, searchQuery.
+   * state fields read: view, selectedTarget, selectedMessage, timeWindow
+   * (null while showing the latest messages), filterAgent, searchQuery.
    * selectedTarget is {kind: "channel", name: "#x"} or
    * {kind: "dm", pairKey: "a↔b", a, b} with a and b sorted.
    * selectedMessage is null or {target: "#channel" | "@recipient", seq}.
    * actions used: selectTarget(selectedTarget), selectMessage(target, seq)
    * where target is "#channel" or the recipient inbox "@handle",
-   * setTimeWindow({startMs, endMs}), setFollowLive(bool).
+   * setTimeWindow({startMs, endMs} | null), where null jumps to latest.
    */
   function render(rootEl, state, actions) {
     const view = state && state.view;
@@ -105,8 +103,8 @@
       return;
     }
     // Record which swarm this view belongs to before anything else, so an
-    // empty swarm still resets the paused interval of the previous one.
-    const mem = swarmMemory(rootEl, view.swarm);
+    // empty swarm still drops a drag started on the previous one.
+    noteSwarm(rootEl, view.swarm);
     const events = collectEvents(view);
     if (events.length === 0) {
       rootEl.appendChild(note("No messages yet. Agents' messages will appear here as they arrive."));
@@ -117,15 +115,12 @@
     const sel = state.selectedTarget || null;
     const picked = state.selectedMessage || null;
     const axis = buildAxis(events);
-    const win = viewport(mem, state, axis);
+    const win = state.timeWindow || liveWindow(axis);
     const inWindow = (t) => t >= win.startMs && t <= win.endMs;
     const lanes = laneList(view, events, inWindow, picked);
     const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
-    // While reviewing earlier messages, one extra row under the lanes holds
-    // the notice, so it never overlaps the axis labels.
-    const noticeH = state.followLive ? 0 : 18;
-    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3 + noticeH;
+    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
 
     const svg = el("svg", {
       class: "tl",
@@ -147,7 +142,7 @@
     const match = matcher(state);
     const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
-    const pan = (next) => panTo(rootEl, state, actions, next);
+    const pan = (next) => actions.setTimeWindow(next);
     installDrag(rootEl);
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
@@ -194,16 +189,20 @@
     const chosen = order.find(isSelected);
     if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
 
-    if (!state.followLive) {
-      const back = el("text", { class: "tl-review", x: String(width - PLOT_PAD), y: String(height - PAD), "text-anchor": "end" });
-      back.textContent = "Reviewing earlier messages · press F to follow live";
-      svg.appendChild(back);
-    }
-
-    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, state, axis, win, pan));
+    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, axis, win, pan));
     rootEl.appendChild(svg);
-    // Restoring focus must not scroll the page: app.js treats scrolling as
-    // the user reading older messages and would stop following live.
+    // While an earlier interval is shown, one quiet button returns to the
+    // latest messages; it is a real button so keyboards and screen readers
+    // reach it.
+    if (state.timeWindow) {
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.className = "tl-jump";
+      jump.textContent = "Jump to latest";
+      jump.addEventListener("click", () => actions.setTimeWindow(null));
+      rootEl.appendChild(jump);
+    }
+    // Restoring focus must not scroll the page under the reader.
     if (hadFocus) svg.focus({ preventScroll: true });
   }
 
@@ -322,44 +321,12 @@
     return { startMs: Math.max(axis.first, endMs - LIVE_WINDOW_MS), endMs };
   }
 
-  // swarmMemory returns rootEl's viewport memory for swarm, starting fresh
-  // when the timeline shows a different swarm than last time.
-  function swarmMemory(rootEl, swarm) {
-    let mem = viewports.get(rootEl);
-    if (!mem || mem.swarm !== swarm) {
-      mem = { swarm, lastLive: null, frozen: null };
-      viewports.set(rootEl, mem);
-      // A drag started in another swarm must not apply its window here.
-      dropDrag(rootEl);
-    }
-    return mem;
-  }
-
-  // viewport returns the interval to draw (see the file comment) and updates
-  // mem, the memory that keeps a paused view still.
-  function viewport(mem, state, axis) {
-    if (state.timeWindow) return state.timeWindow;
-    if (state.followLive) {
-      mem.frozen = null;
-      mem.lastLive = liveWindow(axis);
-      return mem.lastLive;
-    }
-    if (!mem.frozen) mem.frozen = mem.lastLive || liveWindow(axis);
-    return mem.frozen;
-  }
-
-  // panTo shows the interval next. With an explicit filter it updates that
-  // filter through app.js; otherwise it moves the timeline's own paused view
-  // and pauses following live.
-  function panTo(rootEl, state, actions, next) {
-    if (state.timeWindow) {
-      actions.setTimeWindow(next);
-      return;
-    }
-    // render has already created this root's memory for the current swarm.
-    viewports.get(rootEl).frozen = next;
-    if (state.followLive) actions.setFollowLive(false);
-    else render(rootEl, state, actions);
+  // noteSwarm records the swarm rootEl is drawing and drops any drag started
+  // while it showed a different swarm, so that drag never applies here.
+  function noteSwarm(rootEl, swarm) {
+    if (drawnSwarm.get(rootEl) === swarm) return;
+    drawnSwarm.set(rootEl, swarm);
+    dropDrag(rootEl);
   }
 
   // shiftWindow moves win by delta compressed-axis units, keeping its length.
@@ -377,17 +344,15 @@
     return shiftWindow(axis, win, axis.pos(t) - len / 2 - axis.pos(win.startMs));
   }
 
-  // matcher returns a predicate for the active search, agent, and artifact
-  // filters, or null when none is set.
+  // matcher returns a predicate for the active search and agent filters, or
+  // null when neither is set.
   function matcher(state) {
     const q = (state.searchQuery || "").trim().toLowerCase();
     const agent = state.filterAgent || "";
-    const art = state.filterArtifact || "";
-    if (!q && !agent && !art) return null;
+    if (!q && !agent) return null;
     return (e) =>
       (!q || e.text.toLowerCase().includes(q) || e.sender.toLowerCase().includes(q)) &&
-      (!agent || e.sender === agent) &&
-      (!art || e.text.includes(art));
+      (!agent || e.sender === agent);
   }
 
   // drawOverview draws the whole-history strip and the draggable window.
@@ -432,7 +397,6 @@
         startX: ev.clientX,
         base: win,
         original: state.timeWindow || null,
-        originalFollow: state.followLive,
         axis,
         plotW,
         actions,
@@ -481,10 +445,9 @@
       dropDrag(rootEl);
       if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
       if (cancelled) {
-        // An interrupted drag restores exactly what was set before it: the
-        // filter and the follow mode (setTimeWindow also pauses following).
+        // An interrupted drag restores exactly the interval set before it
+        // (null when the latest messages were showing).
         d.actions.setTimeWindow(d.original);
-        d.actions.setFollowLive(d.originalFollow);
       } else if (d.next) {
         d.actions.setTimeWindow(d.next);
       }
@@ -693,12 +656,7 @@
   // every retained message with a lane, oldest first, so earlier history is
   // reachable; when the new selection is outside the view, the view is
   // centered on it.
-  function onKey(ev, order, isSelected, actions, state, axis, win, pan) {
-    if (ev.key === "f" || ev.key === "F") {
-      ev.preventDefault();
-      actions.setFollowLive(!state.followLive);
-      return;
-    }
+  function onKey(ev, order, isSelected, actions, axis, win, pan) {
     const len = axis.pos(win.endMs) - axis.pos(win.startMs);
     if (ev.key === "PageUp" || ev.key === "PageDown") {
       ev.preventDefault();
