@@ -401,14 +401,16 @@
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
     const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
-    const ox = svgBox.left - rootBox.left - rootEl.clientLeft;
-    const oy = svgBox.top - rootBox.top - rootEl.clientTop;
+    // The browser scales the chart to the section's width, so chart
+    // coordinates are converted to the pixels actually on screen.
+    const scale = svgBox.width / width;
+    const ax = svgBox.left + x * scale;
+    const ay = svgBox.top + y * scale;
     const cw = card.offsetWidth;
     const ch = card.offsetHeight;
-    const gap = DOT_R_SELECTED + 6;
-    const anchorTop = svgBox.top + y;
-    const roomBelow = area.bottom - (anchorTop + gap) - PAD;
-    const roomAbove = anchorTop - gap - area.top - PAD;
+    const gap = (DOT_R_SELECTED + 6) * scale;
+    const roomBelow = area.bottom - (ay + gap) - PAD;
+    const roomAbove = ay - gap - area.top - PAD;
     const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
     const room = below ? roomBelow : roomAbove;
     if (ch > room) {
@@ -416,10 +418,11 @@
       card.style.overflowY = "auto";
     }
     const shown = Math.min(ch, Math.max(0, room));
-    const left = Math.max(PAD, Math.min(x - cw / 2, width - cw - PAD));
-    const top = below ? y + gap : y - gap - shown;
-    card.style.left = `${Math.round(ox + left)}px`;
-    card.style.top = `${Math.round(oy + top)}px`;
+    const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
+    const top = below ? ay + gap : ay - gap - shown;
+    // Absolute positions are measured from the section's padding edge.
+    card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
+    card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
     card.style.visibility = "";
   }
 
