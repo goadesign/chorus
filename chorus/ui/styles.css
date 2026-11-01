@@ -530,14 +530,7 @@ body[data-theme="light"] .provider-openai {
   border: 1px solid var(--border);
   padding: 6px 13px;
   border-radius: 999px;
-  cursor: pointer;
   white-space: nowrap;
-}
-
-.live-pill.reviewing {
-  background: var(--amber-soft);
-  color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
 }
 
 .live-pill.reconnecting {
@@ -843,6 +836,14 @@ body[data-theme="light"] .provider-openai {
   color: var(--text-primary);
 }
 
+.details-message-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
 .detail-actions,
 .pin-actions,
 .message-actions {
@@ -852,9 +853,79 @@ body[data-theme="light"] .provider-openai {
   flex-wrap: wrap;
 }
 
-.pin-actions,
-.message-actions {
+.pin-actions {
   padding: 0 18px 12px;
+}
+
+.message-detail-pane {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 14px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-actions {
+  padding: 2px 0 0;
+}
+
+.message-reply-badge {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.message-parent-quote {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 75ch;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-parent-quote:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+  border-left-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.message-parent-quote.is-unretained {
+  cursor: default;
+  border-left-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+.message-parent-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.message-parent-excerpt {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 44ch;
 }
 
 /* 3. Interactive Sliding Swarm Timeline */
@@ -1046,10 +1117,26 @@ body[data-theme="light"] .provider-openai {
   opacity: 0.15;
 }
 
-.tl-review {
-  fill: var(--amber);
+.tl-jump {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-family: var(--font-sans);
   font-size: 12.5px;
   font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.tl-jump:hover {
+  background: var(--accent-soft);
+}
+
+.tl-jump:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .tl-empty {
@@ -1172,7 +1259,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure,
 .mentions-disclosure,
-.artifact-disclosure,
 .message-disclosure,
 .thread-disclosure {
   width: 100%;
@@ -1187,7 +1273,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure[open],
 .mentions-disclosure[open],
-.artifact-disclosure[open],
 .message-disclosure[open],
 .thread-disclosure[open] {
   border-color: var(--border-strong);
@@ -1195,7 +1280,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure[open] > summary,
 .mentions-disclosure[open] > summary,
-.artifact-disclosure[open] > summary,
 .message-disclosure[open] > summary,
 .thread-disclosure[open] > summary {
   background: color-mix(in srgb, var(--bg-elevated) 60%, var(--bg-surface));
@@ -1242,7 +1326,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure > summary:hover,
 .mentions-disclosure > summary:hover,
-.artifact-disclosure > summary:hover,
 .message-disclosure > summary:hover,
 .thread-disclosure > summary:hover {
   background: var(--bg-elevated);
@@ -1250,10 +1333,8 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure > summary,
 .mentions-disclosure > summary,
-.artifact-disclosure > summary,
 .pin-summary,
-.mentions-summary,
-.artifact-summary {
+.mentions-summary {
   position: relative;
   list-style: none;
   cursor: pointer;
@@ -1317,10 +1398,6 @@ body[data-theme="light"] .provider-openai {
   opacity: 0.7;
 }
 
-.thread-disclosure > .message-actions {
-  padding-top: 12px;
-}
-
 .row-main {
   display: flex;
   flex-direction: column;
@@ -1332,7 +1409,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure > summary::after,
 .mentions-disclosure > summary::after,
-.artifact-disclosure > summary::after,
 .thread-disclosure > summary::after,
 .message-disclosure > summary::after {
   content: "";
@@ -1355,7 +1431,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure[open] > summary::after,
 .mentions-disclosure[open] > summary::after,
-.artifact-disclosure[open] > summary::after,
 .thread-disclosure[open] > summary::after,
 .message-disclosure[open] > summary::after {
   transform: translateY(-25%) rotate(-135deg);
@@ -1364,7 +1439,6 @@ body[data-theme="light"] .provider-openai {
 
 .pin-disclosure > summary::-webkit-details-marker,
 .mentions-disclosure > summary::-webkit-details-marker,
-.artifact-disclosure > summary::-webkit-details-marker,
 .message-disclosure > summary::-webkit-details-marker,
 .thread-disclosure > summary::-webkit-details-marker {
   display: none;
@@ -1627,8 +1701,7 @@ body[data-theme="light"] .provider-openai {
   margin: 8px 0;
 }
 
-.mention-list,
-.artifact-filters {
+.mention-list {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1639,7 +1712,6 @@ body[data-theme="light"] .provider-openai {
 }
 
 .mention-row,
-.artifact-filter,
 .stream-action {
   display: inline-flex;
   align-items: center;
@@ -1654,13 +1726,11 @@ body[data-theme="light"] .provider-openai {
   cursor: pointer;
 }
 
-.stream-action:hover,
-.artifact-filter:hover {
+.stream-action:hover {
   background: var(--bg-subtle);
   color: var(--text-primary);
 }
 
-.artifact-filter.is-selected,
 .message-disclosure.is-selected,
 .thread-disclosure.is-selected {
   border-color: var(--accent);
@@ -1700,13 +1770,18 @@ body[data-theme="light"] .provider-openai {
 }
 
 .message-body {
-  padding: 12px 18px 16px 60px;
-  max-width: calc(75ch + 78px);
-  border-top: 1px solid var(--border);
+  padding: 0;
+  max-width: 75ch;
   font-size: 15px;
   line-height: 24px;
+  color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-body.is-standalone {
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
 }
 
 .message-body code {

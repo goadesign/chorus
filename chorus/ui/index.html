@@ -47,10 +47,10 @@
         <input type="search" id="search-input" placeholder="Filter messages or @agent…" aria-label="Filter messages">
       </div>
 
-      <button type="button" class="live-pill" id="btn-follow-live" title="Toggle live latest window vs history view">
+      <div class="live-pill" id="live-status" role="status" aria-live="polite" title="Live connection status">
         <span class="status-dot" id="live-dot"></span>
         <span id="live-text">Connecting…</span>
-      </button>
+      </div>
 
       <select id="theme-select" class="btn-tonal" aria-label="Color theme">
         <option value="auto">Auto</option>

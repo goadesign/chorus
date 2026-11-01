@@ -53,7 +53,7 @@
     const selectionChanged = renderMessages(els.streamEl, visible, targetEntries, state, actions);
     renderSelection(els.detailsEl, state, actions, entries, visible);
 
-    restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot, state);
+    restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
     revealSelectedMessage(els.streamEl, state, selectionChanged);
     previewObserver = new IntersectionObserver(exposePreviews, { root: els.scrollEl });
     observeUnshownPreviews();
@@ -116,7 +116,6 @@
         && entry.target !== `@${handle}`
         && !mentionedHandles(message.text).some((mention) => mention.toLowerCase() === handle.toLowerCase())) return false;
     }
-    if (state.filterArtifact && !artifacts(message.text).includes(state.filterArtifact)) return false;
     const query = state.searchQuery.toLowerCase();
     return !query || `${entry.target} ${message.sender} #${message.seq} ${message.text}`
       .toLowerCase().includes(query);
@@ -519,8 +518,7 @@
     return clauses;
   }
 
-  // renderMentions shows written mentions of known participants and @all, plus
-  // clickable references for commits, PRs, and files.
+  // renderMentions shows written mentions of known participants and @all.
   function renderMentions(root, entries, state, actions, allEntries) {
     const mentionTargets = new Set(["all", ...state.view.agents.map((agent) => agent.handle.toLowerCase())]);
     for (const entry of allEntries) {
@@ -560,24 +558,7 @@
       list.append(row);
     }
     disclosure.append(list);
-    const references = [...new Set(entries.flatMap((entry) => artifacts(entry.message.text)))];
-    const filters = element("details", "artifact-disclosure");
-    filters.open = root.querySelector(".artifact-disclosure")?.open === true;
-    const artifactSummary = element("summary", "artifact-summary", `Referenced files, commits & PRs (${references.length})`);
-    artifactSummary.dataset.focusKey = "artifact-summary";
-    filters.append(artifactSummary);
-    const buttons = element("div", "artifact-filters");
-    for (const reference of references) {
-      const button = actionButton(reference, `artifact:${reference}`, () => actions.setFilterArtifact(reference === state.filterArtifact ? "" : reference));
-      button.classList.add("artifact-filter");
-      button.setAttribute("aria-pressed", String(reference === state.filterArtifact));
-      buttons.append(button);
-    }
-    filters.append(buttons);
-    replaceKeepingFocus(root, [
-      ...(mentions.length > 0 ? [disclosure] : []),
-      ...(references.length > 0 ? [filters] : []),
-    ]);
+    replaceKeepingFocus(root, mentions.length > 0 ? [disclosure] : []);
   }
 
   // preparePreviewCue names only the text actually shown in this summary: one
@@ -659,32 +640,46 @@
   // captureScrollSnapshot records the scroll offset and visible reading rows
   // before any section in the scrollable stage replaces its DOM children.
   function captureScrollSnapshot(root, scrollEl) {
-    if (!root || !scrollEl) return { oldTop: 0, candidates: [] };
+    if (!root || !scrollEl) return { oldTop: 0, hasOpenDisclosure: false, candidates: [] };
     const oldTop = scrollEl.scrollTop;
+    const hasOpenDisclosure = Boolean(root.querySelector("details[open]"));
     const rootTop = scrollEl.getBoundingClientRect().top;
+    const rootBottom = scrollEl.getBoundingClientRect().bottom;
     const candidates = [...root.querySelectorAll("[data-disclosure-key]")]
-      .filter((node) => isVisibleAnchorRow(node, root) && node.getBoundingClientRect().bottom >= rootTop)
+      .filter((node) => {
+        if (!isVisibleAnchorRow(node, root)) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.bottom >= rootTop && rect.top <= rootBottom;
+      })
       .map((node) => ({
         key: node.dataset.disclosureKey,
         version: node.dataset.anchorVersion || "",
         offset: node.getBoundingClientRect().top - rootTop,
+        priority: Boolean(node.open || node.classList.contains("is-selected")),
       }));
-    return { oldTop, candidates };
+    return { oldTop, hasOpenDisclosure, candidates };
   }
 
-  // restoreScrollSnapshot restores the reader's visible anchor row offset after
-  // all stage sections have updated their DOM.
-  function restoreScrollSnapshot(root, scrollEl, snapshot, state) {
-    if (!root || !scrollEl || !snapshot || state.followLive) return;
+  // restoreScrollSnapshot keeps the reader's visible anchor row stationary when
+  // scrolled down or reading an open/selected disclosure, while staying at the
+  // newest edge when at the top with no open disclosure.
+  function restoreScrollSnapshot(root, scrollEl, snapshot) {
+    if (!root || !scrollEl || !snapshot) return;
+    const hasPriority = snapshot.candidates.some((c) => c.priority);
+    if (snapshot.oldTop <= 4 && !snapshot.hasOpenDisclosure && !hasPriority) return;
     scrollEl.scrollTop = snapshot.oldTop;
     const afterRows = [...root.querySelectorAll("[data-disclosure-key]")].filter((node) => isVisibleAnchorRow(node, root));
+    const ordered = [
+      ...snapshot.candidates.filter((c) => c.priority),
+      ...snapshot.candidates.filter((c) => !c.priority),
+    ];
     let match = null;
-    for (const cand of snapshot.candidates) {
+    for (const cand of ordered) {
       const node = afterRows.find((row) => row.dataset.disclosureKey === cand.key && (row.dataset.anchorVersion || "") === cand.version);
       if (node) { match = { cand, node }; break; }
     }
     if (!match) {
-      for (const cand of snapshot.candidates) {
+      for (const cand of ordered) {
         const node = afterRows.find((row) => row.dataset.disclosureKey === cand.key);
         if (node) { match = { cand, node }; break; }
       }
@@ -834,18 +829,58 @@
 
     const body = element("div", "thread-messages");
     for (const entry of entries.toReversed()) body.append(messageDisclosure(entry, state, actions, byTarget, openKeys));
-    const controls = element("div", "message-actions");
-    const reply = actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply-thread:${key}`, () => {
-      actions.setReplyTo(last.target, last.message.seq, last.message.sender, isFromHumanMessage(last.message));
-    });
-    reply.setAttribute("aria-label", `Reply to @${last.message.sender} in ${last.target} message #${last.message.seq}`);
-    controls.append(reply);
-    details.append(controls, body);
+    details.append(body);
     return details;
   }
 
-  // messageDisclosure renders a single message row with its Reply action inside
-  // the expanded .message-actions bar so collapsed rows stay uncluttered.
+  // renderParentContext builds a clickable quoted-parent banner when a message
+  // replies to an earlier message in the same channel or DM stream.
+  function renderParentContext(entry, state, actions, byTarget, keyPrefix) {
+    const message = entry.message;
+    if (!message.reply_to) return null;
+    if (entry.target.startsWith("#")) {
+      const parent = byTarget?.get(entry.target)?.get(message.reply_to);
+      if (parent) {
+        const parentFromHuman = isFromHumanMessage(parent.message);
+        const btn = element("button", "message-parent-quote",
+          svgIcon("reply", "icon icon-xs"),
+          element("span", "message-parent-label", "In reply to"),
+          handleBadgeNode(parent.message.sender, state, "", parentFromHuman),
+          element("span", "message-coordinate", `#${parent.message.seq}`),
+          element("span", "message-parent-excerpt", formattedPreview(parent.message.text)));
+        btn.type = "button";
+        btn.dataset.focusKey = `parent:${keyPrefix}`;
+        btn.addEventListener("click", () => actions.selectMessage(entry.target, parent.message.seq));
+        return btn;
+      }
+      return element("div", "message-parent-quote is-unretained",
+        svgIcon("reply", "icon icon-xs"),
+        `In reply to #${message.reply_to} (older than retained history)`);
+    }
+    return element("div", "message-parent-quote is-unretained",
+      svgIcon("reply", "icon icon-xs"),
+      `In reply to #${message.reply_to}`);
+  }
+
+  // copyTextButton creates a compact action button that copies text to the
+  // clipboard with inline confirmation.
+  function copyTextButton(text, focusKey) {
+    return actionButton([svgIcon("copy", "icon icon-xs"), "Copy text"], focusKey, (ev) => {
+      const btn = ev.currentTarget;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(text).then(() => {
+          btn.replaceChildren(svgIcon("check", "icon icon-xs"), "Copied");
+          setTimeout(() => {
+            if (btn.isConnected) btn.replaceChildren(svgIcon("copy", "icon icon-xs"), "Copy text");
+          }, 2000);
+        }).catch(() => {});
+      }
+    });
+  }
+
+  // messageDisclosure renders a single message row with a structured M3 detail
+  // pane (quoted reply context, full formatted text, and Reply/Copy actions)
+  // aligned to the author's content column.
   function messageDisclosure(entry, state, actions, byTarget, openKeys) {
     const message = entry.message;
     const key = coordinate(entry);
@@ -863,6 +898,7 @@
       element("strong", `message-sender ${senderColor}`.trim(), `@${message.sender}`),
       ...(fromHuman ? [element("span", "human-pill", "Human")] : []),
       ...(toHumanBadge ? [element("span", "human-response-pill", toHumanBadge)] : []),
+      ...(!toHumanBadge && message.reply_to > 0 ? [element("span", "message-reply-badge", `↩ #${message.reply_to}`)] : []),
       element("span", "message-coordinate", `${entry.target}#${message.seq}`),
       element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`));
 
@@ -880,30 +916,24 @@
       if (!details.open && selected(entry, state)) actions.selectMessage(null, 0);
     });
 
-    const body = element("div", "message-body", formattedText(message.text));
+    const detailPane = element("div", "message-detail-pane");
+    const parentQuote = renderParentContext(entry, state, actions, byTarget, key);
+    if (parentQuote) detailPane.append(parentQuote);
+    detailPane.append(element("div", "message-body", formattedText(message.text)));
+
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
       controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply:${key}`, () => {
         actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman);
       }));
-      const parent = byTarget.get(entry.target)?.get(message.reply_to);
-      if (parent) {
-        controls.append(actionButton(
-          [`In reply to #${parent.message.seq} (`, handleBadgeNode(parent.message.sender, state, "", isFromHumanMessage(parent.message)), ")"],
-          `parent:${key}`,
-          () => actions.selectMessage(entry.target, parent.message.seq)
-        ));
-      } else if (message.reply_to) {
-        controls.append(element("span", "message-reference", `In reply to #${message.reply_to} (older than retained history)`));
-      }
-    } else if (message.reply_to) {
-      controls.append(element("span", "message-reference", `Reply reference #${message.reply_to}`));
+    } else {
+      controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman)], `dm-reply:${key}`, () => {
+        actions.composeDM(message.sender);
+      }));
     }
-    for (const reference of artifacts(message.text)) {
-      controls.append(actionButton(reference, `message-artifact:${key}:${reference}`, () => actions.setFilterArtifact(reference)));
-    }
-    details.append(body);
-    if (controls.childElementCount > 0) details.append(controls);
+    controls.append(copyTextButton(message.text, `copy:${key}`));
+    detailPane.append(controls);
+    details.append(detailPane);
     return details;
   }
 
@@ -923,17 +953,41 @@
       root.replaceChildren(empty("Message is no longer retained", "Choose another message from the timeline."));
       return;
     }
+    const byTarget = new Map();
+    for (const item of entries) {
+      if (!byTarget.has(item.target)) byTarget.set(item.target, new Map());
+      byTarget.get(item.target).set(item.message.seq, item);
+    }
+    const fromHuman = isFromHumanMessage(entry.message);
+    const toHumanBadge = humanResponseBadge(entry, byTarget);
+    const senderColor = senderColorClass(entry.message.sender, state, fromHuman);
+    const headerLeft = element("div", "details-message-header",
+      avatarNode(entry.message.sender, state, "", fromHuman),
+      element("span", "message-meta",
+        element("strong", `message-sender ${senderColor}`.trim(), `@${entry.message.sender}`),
+        ...(fromHuman ? [element("span", "human-pill", "Human")] : []),
+        ...(toHumanBadge ? [element("span", "human-response-pill", toHumanBadge)] : []),
+        element("span", "message-coordinate", `${entry.target}#${entry.message.seq}`),
+        element("time", "message-time", `${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`)));
+
     const nodes = [
       element("div", "details-heading",
-        element("h3", "", `${entry.target}#${entry.message.seq}`),
+        headerLeft,
         iconButton("close", "Close", "close-message", () => actions.selectMessage(null, 0))),
-      element("p", "message-meta", handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message)), ` · ${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`),
-      element("div", "message-body", formattedText(entry.message.text)),
     ];
+    const parentQuote = renderParentContext(entry, state, actions, byTarget, `selected:${coordinate(entry)}`);
+    if (parentQuote) nodes.push(parentQuote);
+    nodes.push(element("div", "message-body is-standalone", formattedText(entry.message.text)));
+    const controls = element("div", "detail-actions");
     if (entry.target.startsWith("#")) {
-      nodes.push(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], "reply-selected",
-        () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender, isFromHumanMessage(entry.message))));
+      controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], "reply-selected",
+        () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender, fromHuman)));
+    } else {
+      controls.append(actionButton(["Message ", handleBadgeNode(entry.message.sender, state, "", fromHuman)], "dm-selected",
+        () => actions.composeDM(entry.message.sender)));
     }
+    controls.append(copyTextButton(entry.message.text, "copy-selected"));
+    nodes.push(controls);
     replaceKeepingFocus(root, nodes);
   }
 
@@ -989,13 +1043,6 @@
       if (!result.has(match[2].toLowerCase())) result.set(match[2].toLowerCase(), match[2]);
     }
     return [...result.values()];
-  }
-
-  function artifacts(text) {
-    const result = new Set();
-    const patterns = [/\bPR\s+#\d+\b/g, /\b[0-9a-f]{7,40}\b/gi, /\b(?:[a-zA-Z0-9_.-]+\/)+[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+\b/g];
-    for (const pattern of patterns) for (const match of text.matchAll(pattern)) result.add(match[0]);
-    return [...result];
   }
 
   // formattedText decorates prose mentions while keeping inline and fenced

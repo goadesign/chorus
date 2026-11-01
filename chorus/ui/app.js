@@ -20,11 +20,9 @@
     selectedMessage: null,
     // timeWindow: null | { startMs: number, endMs: number }
     timeWindow: null,
-    followLive: true,
     viewMode: "threaded", // "threaded" | "stream"
     expandAllMessages: false,
     filterAgent: "",
-    filterArtifact: "",
     searchQuery: "",
     // A pending reply retains only its destination and original author facts.
     replyTo: null, // null | { target, seq, sender, human }
@@ -285,36 +283,35 @@
 
     selectMessage(target, seq) {
       if (!target || !seq || seq <= 0) state.selectedMessage = null;
-      else { state.selectedMessage = { target, seq }; state.followLive = false; }
+      else state.selectedMessage = { target, seq };
       renderAll();
     },
 
     setTimeWindow(win) {
       if (!win || typeof win.startMs !== "number" || typeof win.endMs !== "number") state.timeWindow = null;
-      else { state.timeWindow = { startMs: win.startMs, endMs: win.endMs }; state.followLive = false; }
+      else state.timeWindow = { startMs: win.startMs, endMs: win.endMs };
       renderAll();
     },
 
-    setFollowLive(follow) {
-      state.followLive = Boolean(follow);
-      if (state.followLive) {
-        state.timeWindow = null;
-        state.selectedMessage = null;
-        const stageEl = document.getElementById("stage-container");
-        if (stageEl) stageEl.scrollTop = 0;
+    jumpToLatest() {
+      state.timeWindow = null;
+      state.selectedMessage = null;
+      if (!state.expandAllMessages) {
+        const streamEl = document.getElementById("message-stream");
+        if (streamEl) {
+          for (const d of streamEl.querySelectorAll("details[open]")) d.open = false;
+        }
       }
+      const stageEl = document.getElementById("stage-container");
+      if (stageEl) stageEl.scrollTop = 0;
       renderAll();
+      if (stageEl) stageEl.scrollTop = 0;
+      renderActiveFiltersBar();
     },
 
     setFilterAgent(handle) {
       const clean = String(handle || "").replace(/^@/, "");
       state.filterAgent = state.filterAgent === clean ? "" : clean;
-      renderAll();
-    },
-
-    setFilterArtifact(artifact) {
-      const clean = String(artifact || "");
-      state.filterArtifact = state.filterArtifact === clean ? "" : clean;
       renderAll();
     },
 
@@ -375,24 +372,20 @@
   }
 
   function renderLiveStatus() {
-    const btn = document.getElementById("btn-follow-live");
+    const pill = document.getElementById("live-status");
     const dot = document.getElementById("live-dot");
     const txt = document.getElementById("live-text");
-    if (!btn || !dot || !txt) return;
+    if (!pill || !dot || !txt) return;
     if (state.connectionState === "error") {
-      btn.className = "live-pill reconnecting";
+      pill.className = "live-pill reconnecting";
       dot.className = "status-dot warn";
       txt.textContent = state.retryCountdownSec > 0 ? `Reconnecting (${state.retryCountdownSec}s)` : "Reconnecting…";
     } else if (state.connectionState === "connecting") {
-      btn.className = "live-pill";
+      pill.className = "live-pill";
       dot.className = "status-dot warn";
       txt.textContent = "Connecting…";
-    } else if (!state.followLive) {
-      btn.className = "live-pill reviewing";
-      dot.className = "status-dot warn";
-      txt.textContent = "History view · Return to live";
     } else {
-      btn.className = "live-pill";
+      pill.className = "live-pill";
       dot.className = "status-dot";
       txt.textContent = "Live";
     }
@@ -448,23 +441,29 @@
     );
     tabsEl.replaceChildren(...tabNodes);
 
+    renderActiveFiltersBar();
+  }
+
+  function renderActiveFiltersBar() {
     const filtersBar = document.getElementById("active-filters-bar");
-    if (filtersBar) {
-      const chips = [];
-      if (state.filterAgent) {
-        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear agent filter @${state.filterAgent}`, onClick: () => actions.setFilterAgent("") },
-          "Agent: ", handleBadge(state.filterAgent), svgIcon("close", "icon icon-xs")));
-      }
-      if (state.filterArtifact) {
-        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear artifact filter ${state.filterArtifact}`, onClick: () => actions.setFilterArtifact("") },
-          `Artifact: ${state.filterArtifact}`, svgIcon("close", "icon icon-xs")));
-      }
-      if (state.timeWindow) {
-        chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": "Clear time window filter", onClick: () => actions.setTimeWindow(null) },
-          "Time window active", svgIcon("close", "icon icon-xs")));
-      }
-      filtersBar.replaceChildren(...chips);
+    if (!filtersBar) return;
+    const stageEl = document.getElementById("stage-container");
+    const scrolledDown = Boolean(stageEl && stageEl.scrollTop > 4);
+    const chips = [];
+    if (state.filterAgent) {
+      chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear agent filter @${state.filterAgent}`, onClick: () => actions.setFilterAgent("") },
+        "Agent: ", handleBadge(state.filterAgent), svgIcon("close", "icon icon-xs")));
     }
+    if (state.timeWindow || scrolledDown) {
+      chips.push(el("button", {
+        type: "button",
+        id: "btn-jump-latest",
+        className: "chip-btn active",
+        "aria-label": "Jump to latest messages",
+        onClick: () => actions.jumpToLatest(),
+      }, state.timeWindow ? "Viewing time range · Jump to latest" : "↑ Jump to latest"));
+    }
+    filtersBar.replaceChildren(...chips);
   }
 
   function renderAll() {
@@ -501,6 +500,7 @@
         actions
       );
     }
+    renderActiveFiltersBar();
   }
 
   async function fetchSwarms() {
@@ -759,7 +759,6 @@
         state.selectedTarget = null;
         state.selectedMessage = null;
         state.timeWindow = null;
-        state.followLive = true;
         startSwarmLoop(next);
       }
     });
@@ -776,12 +775,7 @@
       state.selectedTarget = null;
       state.selectedMessage = null;
       state.timeWindow = null;
-      state.followLive = true;
       startSwarmLoop(clean);
-    });
-
-    document.getElementById("btn-follow-live").addEventListener("click", () => {
-      actions.setFollowLive(!state.followLive);
     });
 
     document.getElementById("search-input").addEventListener("input", (e) => {
@@ -841,28 +835,12 @@
     const stageEl = document.getElementById("stage-container");
     if (stageEl) {
       stageEl.addEventListener(
-        "wheel",
-        (e) => {
-          if (e.deltaY > 0 && state.followLive) {
-            actions.setFollowLive(false);
-          }
-        },
-        { passive: true }
-      );
-      stageEl.addEventListener(
-        "touchmove",
-        () => {
-          if (state.followLive) {
-            actions.setFollowLive(false);
-          }
-        },
-        { passive: true }
-      );
-      stageEl.addEventListener(
         "scroll",
         () => {
-          if (stageEl.scrollTop > 0 && state.followLive) {
-            actions.setFollowLive(false);
+          const hasJumpBtn = Boolean(document.getElementById("btn-jump-latest"));
+          const needsJumpBtn = Boolean(state.timeWindow) || stageEl.scrollTop > 4;
+          if (hasJumpBtn !== needsJumpBtn) {
+            renderActiveFiltersBar();
           }
         },
         { passive: true }
