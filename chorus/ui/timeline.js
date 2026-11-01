@@ -65,9 +65,12 @@
   const MENTION_RE = /(^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?![A-Za-z0-9_-])/g;
   // Layout constants in px.
   const OVERVIEW_H = 34;
-  // The axis has two rows: window edge clocks on top, quiet-break labels
-  // below, so a quiet label never covers a clock.
-  const AXIS_H = 30;
+  // The axis has three rows of text 16px apart (the measured height of a
+  // rendered label), so labels never overlap at any width: the window length
+  // and its edge clocks, then quiet-break labels, then the pin label just
+  // above the lanes.
+  const AXIS_ROW = 16;
+  const AXIS_H = AXIS_ROW * 3;
   const LANE_H = 38;
   const LABEL_W = 160;
   const PAD = 8;
@@ -163,7 +166,8 @@
     const lanes = laneList(view, events, inWindow, channel, picked);
     const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
-    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
+    // A range with no activity keeps one row for its "No activity" note.
+    const height = OVERVIEW_H + AXIS_H + Math.max(1, lanes.length) * LANE_H + PAD * 3;
 
     const svg = el("svg", {
       class: "tl",
@@ -207,6 +211,11 @@
       laneY.set(lane.handle, y);
       drawLane(svg, lane, y, width, colors);
     });
+    if (lanes.length === 0) {
+      const empty = el("text", { class: "tl-label tl-empty-range", x: (PLOT_X0 + plotW / 2).toFixed(1), y: String(laneTop + LANE_H / 2 + 4), "text-anchor": "middle" });
+      empty.textContent = "No activity in this window";
+      svg.appendChild(empty);
+    }
 
     if (channel) {
       drawPin(svg, channel, mx, inWindow, laneTop, lanes.length, inspect);
@@ -491,10 +500,10 @@
   // laneList returns the lanes to draw for the current range: each known
   // handle (registered agents and senders of retained messages) that has
   // something drawn there, namely a message in the range, its read mark in
-  // the selected channel, or a mention from the selected message. When none
-  // has, every registered agent (or every sender, if none is registered) is
-  // shown so the plot is never empty. Lanes change as the range moves; the
-  // page keeps the chart itself still while that happens. Humans come first,
+  // the selected channel, or a mention from the selected message. A range
+  // with no activity has no lanes (render shows a note instead). Lanes
+  // change as the range moves; the page keeps the chart itself still while
+  // that happens. Humans come first,
   // then handles in order. A sender with no current registration keeps its
   // messages but is drawn muted; the data cannot tell whether it left,
   // expired, or disconnected, so the lane makes no claim about why. The human
@@ -515,8 +524,7 @@
     if (chosen && inWindow(chosen.t)) {
       for (const h of mentionTargets(chosen, view, known)) shown.add(h);
     }
-    const handles = shown.size > 0 ? shown : (live.size > 0 ? new Set(live.keys()) : known);
-    const lanes = [...handles].map((h) => {
+    const lanes = [...shown].map((h) => {
       const a = live.get(h);
       return {
         handle: h,
@@ -743,8 +751,8 @@
   // (the view's own start and end times) on the upper line of the axis row;
   // the pin badge uses the lower line.
   function drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height) {
-    const y = top + 11;
-    const quietY = top + 24;
+    const y = top + AXIS_ROW - 4;
+    const quietY = top + 2 * AXIS_ROW - 4;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
