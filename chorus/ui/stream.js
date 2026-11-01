@@ -7,6 +7,7 @@
     render,
     captureScrollSnapshot,
     restoreScrollSnapshot,
+    resetDisclosures,
   });
 
   // Displayed previews belong only to this page visit and the retained messages
@@ -159,11 +160,16 @@
         ? element("span", "agent-status-inline is-watching", element("span", "presence-dot"), "Watching")
         : element("span", "agent-status-inline",
             agent.registered ? `Active ${age(agent.last_seen_unix * 1000)} ago` : (entry ? `Last post ${age(entry.message.sent_at_ms)} ago` : "Earlier"));
+      let modelNode = null;
+      if (agent.model && agent.model !== "human") {
+        modelNode = element("span", "agent-model-inline", agent.model);
+        modelNode.title = agent.model;
+      }
       const headerRow = element("span", "agent-card-top",
         avatarNode(agent.handle, state, agent.registered ? agent.model || "" : "", human),
         element("strong", `agent-name ${colorClass}`.trim(), `@${agent.handle}`),
         ...(human ? [element("span", "human-pill", "Human")] : []),
-        ...(agent.model && agent.model !== "human" ? [element("span", "agent-model-inline", agent.model)] : []),
+        ...(modelNode ? [modelNode] : []),
         statusNode);
 
       if (!human && pos && pos.behind > 0) {
@@ -268,14 +274,22 @@
       element("dd", "", posSummaries.join(" · ") || "No channel watermarks"));
 
     const watchCmd = `chorus watch ${agent.handle}`;
-    const copyWatchBtn = actionButton([svgIcon("copy", "icon icon-xs"), `Copy: ${watchCmd}`], `copy-watch:${agent.handle}`, (ev) => {
+    const copyWatchBtn = actionButton([svgIcon("copy", "icon icon-xs"), `Copy: ${watchCmd}`], `copy-watch:${agent.handle}`, async (ev) => {
       const btn = ev.currentTarget;
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText(watchCmd).then(() => {
-          btn.replaceChildren(svgIcon("check", "icon icon-xs"), `Copied: ${watchCmd}`);
-        }).catch(() => {});
+      try {
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+          throw new Error("clipboard unavailable");
+        }
+        await navigator.clipboard.writeText(watchCmd);
+        btn.replaceChildren(svgIcon("check", "icon icon-xs"), `Copied: ${watchCmd}`);
+      } catch {
+        btn.textContent = "Copy unavailable";
       }
+      setTimeout(() => {
+        if (btn.isConnected) btn.replaceChildren(svgIcon("copy", "icon icon-xs"), `Copy: ${watchCmd}`);
+      }, 2000);
     });
+    copyWatchBtn.setAttribute("aria-live", "polite");
 
     const isHuman = Boolean(agent.registered && agent.model === "human");
     const nodes = [
@@ -700,6 +714,17 @@
       const thread = node.closest(".thread-disclosure");
       if (thread) thread.open = true;
       if (selectionChanged) node.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // resetDisclosures resets the stream's disclosure state when Jump to latest
+  // returns to the live head, collapsing rows unless Expand All is active.
+  function resetDisclosures(root, state) {
+    if (!root) return;
+    if (state?.expandAllMessages) {
+      delete root.dataset.expandAll;
+    } else {
+      for (const d of root.querySelectorAll("details[open]")) d.open = false;
     }
   }
 

@@ -225,15 +225,34 @@
     return { swarm: params.get("swarm") || "", target: params.get("target") || "", mode: params.get("mode") || "" };
   }
 
-  function writeHashState() {
+  function writeHashState(preservePendingTarget = false) {
+    const currentHash = readHashState();
     const params = new URLSearchParams();
     if (state.activeSwarm) params.set("swarm", state.activeSwarm);
     if (state.selectedTarget?.kind === "channel") params.set("target", state.selectedTarget.name);
     else if (state.selectedTarget?.kind === "dm") params.set("target", `dm:${state.selectedTarget.pairKey}`);
     else if (state.selectedTarget?.kind === "all") params.set("target", "all");
+    else if (preservePendingTarget && currentHash.target) params.set("target", currentHash.target);
     if (state.viewMode !== "threaded") params.set("mode", state.viewMode);
     const nextHash = `#${params.toString()}`;
     if (window.location.hash !== nextHash) history.replaceState(null, "", nextHash);
+  }
+
+  function syncComposerTarget(targetObj, onlyIfNotEdited = false) {
+    const sendTarget = document.getElementById("send-target");
+    if (!sendTarget || !targetObj) return;
+    if (onlyIfNotEdited && sendTarget.dataset.userEdited) return;
+    const pinCheck = document.getElementById("send-pin");
+    const pinLabel = document.getElementById("pin-toggle-label");
+    if (targetObj.kind === "channel") {
+      sendTarget.value = targetObj.name;
+      pinLabel?.classList.remove("disabled");
+    } else if (targetObj.kind === "dm") {
+      const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim();
+      sendTarget.value = `@${targetObj.a === myHandle ? targetObj.b : targetObj.a}`;
+      if (pinCheck) pinCheck.checked = false;
+      pinLabel?.classList.add("disabled");
+    }
   }
 
   function reconcileSelectedTarget(view, pairedDMs) {
@@ -245,26 +264,41 @@
       if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
     }
     const hash = readHashState();
-    if (hash.target === "all") { state.selectedTarget = { kind: "all" }; return; }
+    if (hash.target === "all") {
+      state.selectedTarget = { kind: "all" };
+      writeHashState();
+      return;
+    }
     if (hash.target.startsWith("dm:")) {
       const found = pairedDMs.find((p) => p.pairKey === hash.target.slice(3));
-      if (found) { state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b }; return; }
+      if (found) {
+        state.selectedTarget = { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
+        syncComposerTarget(state.selectedTarget, true);
+        writeHashState();
+        return;
+      }
     }
     if (hash.target.startsWith("#") && channels.some((c) => c.name === hash.target)) {
-      state.selectedTarget = { kind: "channel", name: hash.target }; return;
+      state.selectedTarget = { kind: "channel", name: hash.target };
+      syncComposerTarget(state.selectedTarget, true);
+      writeHashState();
+      return;
     }
     if (channels.length > 0) {
       state.selectedTarget = { kind: "channel", name: channels[0].name };
-      const sendTarget = document.getElementById("send-target");
-      if (sendTarget && !sendTarget.dataset.userEdited) sendTarget.value = channels[0].name;
+      syncComposerTarget(state.selectedTarget, true);
+      writeHashState();
       return;
     }
     if (pairedDMs.length > 0) {
       const p = pairedDMs[0];
       state.selectedTarget = { kind: "dm", pairKey: p.pairKey, a: p.a, b: p.b };
+      syncComposerTarget(state.selectedTarget, true);
+      writeHashState();
       return;
     }
     state.selectedTarget = { kind: "all" };
+    writeHashState();
   }
 
   const actions = {
@@ -278,15 +312,7 @@
       state.selectedMessage = null;
       state.replyTo = null;
       renderReplyChip();
-      const sendTarget = document.getElementById("send-target");
-      const pinCheck = document.getElementById("send-pin");
-      if (targetObj.kind === "channel" && sendTarget) {
-        sendTarget.value = targetObj.name;
-      } else if (targetObj.kind === "dm" && sendTarget) {
-        const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim();
-        sendTarget.value = `@${targetObj.a === myHandle ? targetObj.b : targetObj.a}`;
-        if (pinCheck) pinCheck.checked = false;
-      }
+      syncComposerTarget(targetObj, false);
       writeHashState();
       renderAll();
     },
@@ -307,12 +333,8 @@
       state.timeWindow = null;
       state.selectedMessage = null;
       const streamEl = document.getElementById("message-stream");
-      if (streamEl) {
-        if (state.expandAllMessages) {
-          delete streamEl.dataset.expandAll;
-        } else {
-          for (const d of streamEl.querySelectorAll("details[open]")) d.open = false;
-        }
+      if (window.ChorusStream && typeof window.ChorusStream.resetDisclosures === "function") {
+        window.ChorusStream.resetDisclosures(streamEl, state);
       }
       const stageEl = document.getElementById("stage-container");
       if (stageEl) stageEl.scrollTop = 0;
@@ -526,7 +548,7 @@
 
   // Long-poll loop for GET /swarms/{swarm}/view with single-source ETag header
   // validation and bounded 1s -> 30s error backoff.
-  async function startSwarmLoop(swarmName) {
+  async function startSwarmLoop(swarmName, preservePendingTarget = false) {
     if (state.pollAbort) {
       state.pollAbort.abort();
     }
@@ -538,7 +560,7 @@
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
-    writeHashState();
+    writeHashState(preservePendingTarget);
     if (switchedSwarm) {
       state.replyTo = null;
       renderReplyChip();
@@ -857,6 +879,30 @@
         window.ChorusTimeline.render(timelineRoot, state, actions);
       }
     });
+
+    window.addEventListener("hashchange", () => {
+      const h = readHashState();
+      const nextMode = h.mode === "stream" ? "stream" : "threaded";
+      if (state.viewMode !== nextMode) {
+        state.viewMode = nextMode;
+        document.getElementById("mode-stream")?.classList.toggle("active", nextMode === "stream");
+        document.getElementById("mode-threaded")?.classList.toggle("active", nextMode !== "stream");
+      }
+      if (h.swarm && h.swarm !== state.activeSwarm) {
+        state.selectedTarget = null;
+        state.selectedMessage = null;
+        state.timeWindow = null;
+        startSwarmLoop(h.swarm, Boolean(h.target));
+        return;
+      }
+      if (state.view) {
+        if (h.target) {
+          state.selectedTarget = null;
+          reconcileSelectedTarget(state.view, state.pairedDMs);
+        }
+        renderAll();
+      }
+    });
   }
 
   window.ChorusUI = {
@@ -881,9 +927,9 @@
     try {
       const swarms = await fetchSwarms();
       const initialSwarm = hash.swarm || swarms[0] || "default";
-      startSwarmLoop(initialSwarm);
+      startSwarmLoop(initialSwarm, true);
     } catch {
-      startSwarmLoop(hash.swarm || "default");
+      startSwarmLoop(hash.swarm || "default", true);
     }
   }
 

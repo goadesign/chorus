@@ -35,12 +35,12 @@
   --accent-soft-light: #eff6ff;
   --accent-soft-dark: rgba(59, 130, 246, 0.16);
 
-  --teal-light: #0d9488;
-  --teal-dark: #14b8a6;
+  --teal-light: #0f766e;
+  --teal-dark: #2dd4bf;
   --teal-soft-light: #f0fdfa;
   --teal-soft-dark: rgba(20, 184, 166, 0.16);
 
-  --amber-light: #b45309;
+  --amber-light: #92400e;
   --amber-dark: #fbbf24;
   --amber-soft-light: #fffbeb;
   --amber-soft-dark: rgba(245, 158, 11, 0.18);
@@ -480,33 +480,6 @@ body[data-theme="light"] .provider-openai {
   max-inline-size: 24ch;
 }
 
-.btn-icon {
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  padding: 4px 8px;
-  min-width: 32px;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 15px;
-}
-
-#btn-custom-swarm {
-  min-width: 48px;
-  min-height: 48px;
-  margin: -6px -6px -6px 0;
-}
-
-.btn-icon:hover {
-  background: var(--bg-subtle);
-  color: var(--text-primary);
-}
-
 /* Channel & DM Conversation Tabs in Header */
 .target-tabs {
   display: flex;
@@ -727,7 +700,8 @@ body[data-theme="light"] .provider-openai {
 }
 
 .agent-summary.is-historical {
-  opacity: 0.86;
+  border-style: dashed;
+  background: var(--bg-canvas);
 }
 
 .agent-summary.is-human-agent {
@@ -764,6 +738,11 @@ body[data-theme="light"] .provider-openai {
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text-muted);
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-status-inline {
@@ -890,6 +869,9 @@ body[data-theme="light"] .provider-openai {
   margin: 0;
   font-family: var(--font-mono);
   color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .details-message-header {
@@ -1113,7 +1095,8 @@ body[data-theme="light"] .provider-openai {
 }
 
 .tl-lane-label.is-left {
-  opacity: 0.55;
+  fill: var(--text-secondary);
+  font-weight: 500;
 }
 
 .tl-pin {
