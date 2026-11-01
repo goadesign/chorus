@@ -113,8 +113,10 @@
   // Roots whose hover-tracking listeners are installed (once per root).
   const hoverRoots = new WeakSet();
   // Per-root hover state: the pending timer that hides the label after the
-  // pointer leaves its mark, and the text of a label the user dismissed with
-  // Escape, which stays hidden until the pointer enters another mark.
+  // pointer leaves its mark, the text of the label on show (so a redraw can
+  // restore it for the same mark even while the pointer rests on the label
+  // itself), and the text of a label the user dismissed with Escape, which
+  // stays hidden until the pointer enters another mark.
   const hoverState = new WeakMap();
   // Per-root work that must wait until the whole page has finished updating
   // after a render (placing the preview card and restoring the hover label).
@@ -600,7 +602,12 @@
     node.dataset.tlItem = item;
     node.addEventListener("pointerenter", (ev) => {
       if (ev.pointerType === "touch") return;
-      hoverOf(rootEl).dismissed = "";
+      // Browsers also send pointerenter when a redraw puts a new mark under a
+      // pointer that has not moved, so entering the mark whose label the user
+      // dismissed keeps it dismissed; entering any other mark ends that.
+      const st = hoverOf(rootEl);
+      if (node.dataset.tlHover === st.dismissed) return;
+      st.dismissed = "";
       showHover(rootEl, node);
     });
     node.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
@@ -616,7 +623,7 @@
   function hoverOf(rootEl) {
     let st = hoverState.get(rootEl);
     if (!st) {
-      st = { timer: 0, dismissed: "" };
+      st = { timer: 0, leaving: false, dismissed: "", shown: "" };
       hoverState.set(rootEl, st);
     }
     return st;
@@ -640,8 +647,9 @@
       if (ev.key !== "Escape") return;
       const label = rootEl.querySelector(".tl-hover");
       if (!label) return;
-      hoverOf(rootEl).dismissed = label.textContent;
+      const dismissed = label.textContent;
       hideHover(rootEl);
+      hoverOf(rootEl).dismissed = dismissed;
     });
   }
 
@@ -649,11 +657,29 @@
   // mark after a redraw replaced it (redraws happen on every live update),
   // unless the user dismissed that label.
   function rehover(rootEl) {
+    const st = hoverOf(rootEl);
+    // The label shown before the redraw belongs to a mark the redraw
+    // replaced; show it again on that mark's replacement. This also covers a
+    // pointer resting on the label, where hit-testing would find whatever
+    // lies under the label instead.
+    if (st.leaving) {
+      // The pointer had already left the mark and its label when the redraw
+      // removed them; let the label go rather than bring it back.
+      hideHover(rootEl);
+      return;
+    }
+    if (st.shown) {
+      const same = [...rootEl.querySelectorAll("[data-tl-hover]")].find((n) => n.dataset.tlHover === st.shown);
+      if (same) {
+        showHover(rootEl, same);
+        return;
+      }
+    }
     const at = pointers.get(rootEl);
     if (!at) return;
     const node = document.elementFromPoint(at.x, at.y);
     if (!node || !node.dataset || !node.dataset.tlHover || !rootEl.contains(node)) return;
-    if (node.dataset.tlHover === hoverOf(rootEl).dismissed) return;
+    if (node.dataset.tlHover === st.dismissed) return;
     showHover(rootEl, node);
   }
 
@@ -665,10 +691,15 @@
     hideHover(rootEl);
     const open = rootEl.querySelector(".tl-card");
     if (open && node.dataset.tlItem && open.dataset.tlItem === node.dataset.tlItem) return;
+    hoverOf(rootEl).shown = node.dataset.tlHover;
     const label = html("div", "tl-hover", node.dataset.tlHover);
     label.setAttribute("aria-hidden", "true");
     label.style.visibility = "hidden";
-    label.addEventListener("pointerenter", () => clearTimeout(hoverOf(rootEl).timer));
+    label.addEventListener("pointerenter", () => {
+      const st = hoverOf(rootEl);
+      clearTimeout(st.timer);
+      st.leaving = false;
+    });
     label.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
     rootEl.appendChild(label);
     const rootBox = rootEl.getBoundingClientRect();
@@ -691,13 +722,17 @@
   function hideHoverSoon(rootEl) {
     const st = hoverOf(rootEl);
     clearTimeout(st.timer);
+    st.leaving = true;
     st.timer = setTimeout(() => hideHover(rootEl), HOVER_GRACE_MS);
   }
 
   // hideHover removes the hover label, if one is shown, and any pending
   // timer that would hide it.
   function hideHover(rootEl) {
-    clearTimeout(hoverOf(rootEl).timer);
+    const st = hoverOf(rootEl);
+    clearTimeout(st.timer);
+    st.leaving = false;
+    st.shown = "";
     const label = rootEl.querySelector(".tl-hover");
     if (label) label.remove();
   }
@@ -1271,7 +1306,10 @@
     }
     const card = rootEl.querySelector(".tl-card");
     const place = card && cardPlacers.get(card);
-    if (place) place();
+    if (place) {
+      place();
+      if (card.contains(document.activeElement)) revealInCard(card, document.activeElement);
+    }
     rehover(rootEl);
   }
 
