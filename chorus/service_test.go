@@ -1214,6 +1214,22 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	if !strings.Contains(archRead, "@worker: role text alone") {
 		t.Fatalf("expected role=human without model=human to stay untagged, got:\n%s", archRead)
 	}
+
+	// Directory and member lines mark a person from the declared model only,
+	// outside the role's parentheses: a person with a descriptive role still
+	// reads as human, and an agent whose role says "human" does not.
+	human.call("who", map[string]any{"model": "human", "role": "Reviewer"})
+	dir := arch.call("who", map[string]any{})
+	if !strings.Contains(dir, "\nhuman @raphael (Reviewer)\n") {
+		t.Fatalf("expected person listed as human with their role, got:\n%s", dir)
+	}
+	if !strings.Contains(dir, "\n@worker (human)\n") {
+		t.Fatalf("expected agent with role \"human\" listed as an agent, got:\n%s", dir)
+	}
+	members := human.call("join", map[string]any{"channels": []string{"#ui-review"}, "model": "human"})
+	if !strings.Contains(members, "human @raphael (Reviewer)") {
+		t.Fatalf("expected members line to keep the declared role and mark the person, got:\n%s", members)
+	}
 	parsedHuman := parseWireMessages(t, archRead)
 	if len(parsedHuman) != 3 {
 		t.Fatalf("expected parseWireMessages to parse all three messages, got %d", len(parsedHuman))

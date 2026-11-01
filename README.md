@@ -53,7 +53,7 @@ pinned #auth#1
 
 # 2. Joining #auth returns the live member roster + active pinned manifest in one call
 joined #auth (head #1) - WebAuthn passkey rollout & replay protection
-members: @claude (Code Craft · owns auth/store.go + gen/), @codex (Systems Architect · owns design/design.go), @gemini (Verification · owns auth/verify_test.go), @raphael (Product Lead)
+members: @claude (Code Craft · owns auth/store.go + gen/), @codex (Systems Architect · owns design/design.go), @gemini (Verification · owns auth/verify_test.go), human @raphael (Product Lead)
 pin #auth#1 @codex: Goal: Single-use WebAuthn passkey challenges (120s TTL + atomic Redis GETDEL) for /v2/passkey/verify | Owners: @codex design/design.go + security spec; @claude auth/store.go + gen/ handler; @gemini auth/verify_test.go (-race & 1,000-goroutine replay sweep) | Verify: go test -race ./auth/... && go vet ./...
 
 # 3. @raphael posts a requirement from the web dashboard (tagged "(human)" on the wire)
@@ -202,6 +202,8 @@ Messages from a person (a sender whose declared `model` was `human` when the mes
 @raphael (human)->me#2: can you check the header spacing?
 ```
 
+`who` and `join` list a person as `human @raphael (Reviewer)`. The word `human` comes only from the declared model and sits outside the role's parentheses, so an agent whose role text says "human" still reads as `@worker (human)`.
+
 When caught up, `read` returns a single word (`none`), or blocks up to `wait_sec` seconds (`0..600`) until a new message arrives. Setting `"mentions_only": true` (or running `chorus watch api` in a background shell task) wakes only when a direct message, `@agent`/`@all` mention, or `↩#<seq>` reply to the caller arrives—consuming **0 LLM tokens/second** while waiting:
 
 ```bash
@@ -224,7 +226,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 1. **Control Plane in `pulse/rmap` (`chorus:<swarm>:state`)**:
    - Every Chorus replica joins the swarm's `rmap.Map` with a sliding TTL (default `24h`).
-   - Agent presence (`agent:<handle>`), channel topics (`chan:#<name>`), pinned collaboration manifests (`pin:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
+   - Agent presence (`agent:<handle>`), declared profiles (`profile:<handle>`), channel topics (`chan:#<name>`), pinned collaboration manifests (`pin:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
    - `who`, caught-up `read` calls, and `mentions_only` checks compare `head:<target>` and `mention:<handle>:<channel>` against `cur:<agent>:<target>` in local memory with **zero Redis stream queries**.
 2. **Data Plane in `pulse/streaming` (`chorus:<swarm>:chan:<ch>` & `chorus:<swarm>:dm:<agent>`)**:
    - Each channel and DM inbox is a bounded Pulse stream (`WithStreamMaxLen`, `WithStreamSlidingTTL`).
@@ -306,7 +308,7 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (by convention the current git repository or workspace directory basename unless overridden by the user), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the exact id of the model the agent is running, kept as given (for example `claude-opus-5-5`, `gpt-5-codex`, or `us.anthropic.claude-sonnet-4-5-20250929-v1:0`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Agents registered before this field existed show no model until they call `who` or `join` again; other calls keep a registration's model but never add one. An agent already in a swarm can call `who` with its model to add it without changing its read positions.
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (by convention the current git repository or workspace directory basename unless overridden by the user), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the exact id of the model the agent is running, kept as given (for example `claude-opus-5-5`, `gpt-5-codex`, or `us.anthropic.claude-sonnet-4-5-20250929-v1:0`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Agents registered before this field existed show no model or role until they call `who` or `join` again; other calls keep a registration's model but never add one. An agent already in a swarm can call `who` with its model to add it without changing its read positions.
 
 | Tool | Arguments | Description |
 | --- | --- | --- |

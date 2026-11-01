@@ -229,27 +229,17 @@ func (s *swarmHandle) hasActiveWatch(agent string) bool {
 }
 
 // touchAgent ensures the calling agent is registered in the swarm's replicated
-// map and refreshes its role, declared model, and LastSeenUnix timestamp when
-// needed. who and join pass the role and model; every other caller passes ""
-// for both, which keeps the stored values. When forceSync is true or the agent
-// record is newly created or its role or model changes, touchAgent waits for
-// the local rmap replica to observe the committed revision.
-func (s *swarmHandle) touchAgent(ctx context.Context, agent, role, model string, now time.Time, forceSync bool) error {
+// map and refreshes its LastSeenUnix presence timestamp when needed. It never
+// writes the agent's declared role or model (see declareProfile). When
+// forceSync is true or the presence record is newly created, touchAgent waits
+// for the local rmap replica to observe the committed revision.
+func (s *swarmHandle) touchAgent(ctx context.Context, agent string, now time.Time, forceSync bool) error {
 	key := agentMapKey(agent)
 	raw, ok := s.state.Get(key)
 	rec, valid := parseAgentRecord(raw)
 
-	// who and join pass the declared role and model; every other call passes
-	// "" for both and only refreshes presence, keeping the stored values.
-	changed := (role != "" && role != rec.Role) || (model != "" && model != rec.Model)
-	if role != "" {
-		rec.Role = role
-	}
-	if model != "" {
-		rec.Model = model
-	}
 	stale := now.Unix()-rec.LastSeenUnix >= int64(touchInterval.Seconds())
-	if ok && valid && !changed && !stale && !forceSync {
+	if ok && valid && !stale && !forceSync {
 		return nil
 	}
 
@@ -258,7 +248,7 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role, model string,
 	if err != nil {
 		return err
 	}
-	if !ok || !valid || changed || forceSync {
+	if !ok || !valid || forceSync {
 		if _, err := s.state.SetAndWait(ctx, key, encoded); err != nil {
 			return fmt.Errorf("sync agent %q presence: %w", agent, err)
 		}
@@ -270,15 +260,45 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role, model string,
 	return nil
 }
 
+// declareProfile saves the role and model agent declared on join or who under
+// its own key, which presence updates never write. model is always set (the
+// tool contract requires it); an empty role keeps the previously declared
+// role. It waits for the local replica only when the saved values change, so
+// the caller's own response and later messages see the new declaration.
+func (s *swarmHandle) declareProfile(ctx context.Context, agent, role, model string) error {
+	key := profileMapKey(agent)
+	raw, _ := s.state.Get(key)
+	current := parseProfile(raw)
+	next := profileRecord{Role: current.Role, Model: model}
+	if role != "" {
+		next.Role = role
+	}
+	if raw != "" && next == current {
+		return nil
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return fmt.Errorf("encode profile for %q: %w", agent, err)
+	}
+	if _, err := s.state.SetAndWait(ctx, key, string(encoded)); err != nil {
+		return fmt.Errorf("save profile for %q: %w", agent, err)
+	}
+	return nil
+}
+
 // directory returns the formatted swarm snapshot for caller after reaping any
-// expired agents and refreshing caller's presence and optional role.
+// expired agents, saving caller's declared role and model, and refreshing its
+// presence.
 func (s *swarmHandle) directory(ctx context.Context, caller, role, model string) (string, error) {
 	now := s.clock()
 	reaped, err := s.reapExpiredAgents(ctx, now)
 	if err != nil {
 		return "", err
 	}
-	if err := s.touchAgent(ctx, caller, role, model, now, reaped); err != nil {
+	if err := s.declareProfile(ctx, caller, role, model); err != nil {
+		return "", err
+	}
+	if err := s.touchAgent(ctx, caller, now, reaped); err != nil {
 		return "", err
 	}
 	snap := s.state.Map()
@@ -342,7 +362,10 @@ func (s *swarmHandle) joinChannels(
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, role, model, now, true); err != nil {
+	if err := s.declareProfile(ctx, agent, role, model); err != nil {
+		return "", err
+	}
+	if err := s.touchAgent(ctx, agent, now, true); err != nil {
 		return "", err
 	}
 
@@ -434,6 +457,9 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 		if _, err := s.state.Delete(ctx, subMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired subscriptions for %q: %w", handle, err)
 		}
+		if _, err := s.state.Delete(ctx, profileMapKey(handle)); err != nil {
+			return false, fmt.Errorf("delete expired profile %q: %w", handle, err)
+		}
 		if _, err := s.state.Delete(ctx, agentMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
 		}
@@ -497,6 +523,9 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 		if _, err := s.state.Delete(ctx, subMapKey(agent)); err != nil {
 			return "", fmt.Errorf("delete empty subscription key for %q: %w", agent, err)
 		}
+		if _, err := s.state.Delete(ctx, profileMapKey(agent)); err != nil {
+			return "", fmt.Errorf("delete profile of departed agent %q: %w", agent, err)
+		}
 		if err := s.deleteAndWait(ctx, agentMapKey(agent)); err != nil {
 			return "", fmt.Errorf("unregister departed agent %q: %w", agent, err)
 		}
@@ -506,7 +535,7 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, "", "", now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, now, true); err != nil {
 		return "", err
 	}
 	return "left " + strings.Join(unique, ", "), nil
@@ -593,7 +622,7 @@ func (s *swarmHandle) publish(
 		}
 		defer s.releaseWatch(sender)
 	}
-	if err := s.touchAgent(ctx, sender, "", "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, sender, s.clock(), false); err != nil {
 		return "", err
 	}
 
@@ -691,12 +720,12 @@ func (s *swarmHandle) appendUnderSemaphore(
 	// The sender's declared model at publication time decides, once and for
 	// good, whether this message came from a person; the role is free text and
 	// never decides it.
-	rawSender, _ := s.state.Get(agentMapKey(sender))
-	senderRec, _ := parseAgentRecord(rawSender)
+	rawProfile, _ := s.state.Get(profileMapKey(sender))
+	senderProfile := parseProfile(rawProfile)
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
-		Human:   senderRec.Model == humanModel,
+		Human:   senderProfile.Model == humanModel,
 		Text:    text,
 		ReplyTo: replyTo,
 	})
@@ -803,7 +832,7 @@ func (s *swarmHandle) readUnread(
 		}
 		defer s.releaseWatch(agent)
 	}
-	if err := s.touchAgent(ctx, agent, "", "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, agent, s.clock(), false); err != nil {
 		return "", err
 	}
 	if limit <= 0 {
@@ -868,7 +897,7 @@ func (s *swarmHandle) waitForUnread(
 			if !s.isLiveAgent(agent) {
 				return nil, nil
 			}
-			if err := s.touchAgent(ctx, agent, "", "", s.clock(), false); err != nil {
+			if err := s.touchAgent(ctx, agent, s.clock(), false); err != nil {
 				return nil, err
 			}
 		case _, ok := <-notifyCh:
