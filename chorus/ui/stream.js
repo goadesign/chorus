@@ -13,9 +13,10 @@
   // data. Disclosure choices and reading position belong to the existing DOM.
   function render(els, state, actions) {
     if (state.view === null) {
-      for (const root of [els.agentStripEl, els.pinEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) {
+      for (const root of [els.agentStripEl, els.mentionsEl, els.newSinceEl, els.detailsEl]) {
         root.replaceChildren();
       }
+      renderPin(els.pinEl, state, actions);
       delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
       els.subtitleEl.textContent = "Loading swarm…";
@@ -275,17 +276,26 @@
     replaceKeepingFocus(root, nodes);
   }
 
-  // renderPin renders the channel pin with a clean summary bar, a structured
-  // M3 Lists layout (full-width Goal, per-Owner rows with avatar + handle and
-  // wrapping monospace scope, and a Verify command row with Copy), a pencil
-  // icon button in the header, and an in-place M3 editor with Cancel / Update pin.
+  // renderPin shows the selected channel's pin without rebuilding an open
+  // editor. The one editor owns its draft and original swarm/channel until
+  // the reader cancels or the server confirms the update.
   function renderPin(root, state, actions) {
+    const editor = root.querySelector(".pin-editor");
+    if (editor) {
+      const pending = editor.getAttribute("aria-busy") === "true";
+      const sameSwarm = state.activeSwarm === editor.dataset.swarm
+        && state.view?.swarm === editor.dataset.swarm;
+      editor.querySelector("[type=submit]").disabled = pending || !sameSwarm;
+      const scopeNotice = editor.querySelector(".pin-edit-scope-notice");
+      scopeNotice.hidden = sameSwarm;
+      scopeNotice.textContent = `Return to swarm ${editor.dataset.swarm} to update this pin.`;
+      return;
+    }
     const channel = state.selectedTarget?.kind === "channel"
-      ? state.view.channels.find((item) => item.name === state.selectedTarget.name) : null;
+      ? state.view?.channels.find((item) => item.name === state.selectedTarget.name) : null;
     if (!channel?.pin) {
       root.replaceChildren();
       delete root.dataset.pinKey;
-      delete root.dataset.editing;
       return;
     }
     const pin = channel.pin;
@@ -293,17 +303,12 @@
     const previous = root.querySelector("details");
     const sameChannel = root.dataset.pinKey === key;
     if (!sameChannel) {
-      delete root.dataset.editing;
       root.dataset.pinMode = "fields";
-    }
-    const editing = sameChannel && root.dataset.editing === "true";
-    if (editing && root.querySelector(".pin-editor")) {
-      return;
     }
     const changed = sameChannel && root.dataset.pinSeq !== String(pin.seq);
     const updated = changed || (sameChannel && root.dataset.updated === "true");
     const disclosure = element("details", "pin-disclosure");
-    disclosure.open = editing || (sameChannel && previous ? previous.open : false);
+    disclosure.open = sameChannel && previous ? previous.open : false;
     disclosure.dataset.disclosureKey = `pin:${key}`;
     const newer = channel.messages.filter((message) => message.seq > pin.seq).length;
     const pinFromHuman = pin.human === true;
@@ -315,31 +320,27 @@
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
 
-    if (editing) {
-      disclosure.append(renderPinEditor(root, channel.name, pin.text, key, state, actions));
-    } else {
-      const clauses = pinClauses(pin.text);
-      const raw = element("pre", "pin-raw-text", pin.text);
-      const structured = renderPinStructured(clauses, state);
-      const rawMode = sameChannel && root.dataset.pinMode === "raw";
-      raw.hidden = clauses.length > 0 && !rawMode;
-      structured.hidden = clauses.length === 0 || rawMode;
-      const body = element("div", "pin-body", structured, raw);
-      if (clauses.length > 0) {
-        const toggleBtn = element("button", "pin-raw-toggle", rawMode ? "Show structured view" : "Show original text");
-        toggleBtn.type = "button";
-        toggleBtn.dataset.focusKey = `pin-mode:${key}`;
-        toggleBtn.addEventListener("click", () => {
-          const showRaw = root.dataset.pinMode !== "raw";
-          root.dataset.pinMode = showRaw ? "raw" : "fields";
-          raw.hidden = !showRaw;
-          structured.hidden = showRaw;
-          toggleBtn.textContent = showRaw ? "Show structured view" : "Show original text";
-        });
-        body.append(toggleBtn);
-      }
-      disclosure.append(body);
+    const clauses = pinClauses(pin.text);
+    const raw = element("pre", "pin-raw-text", pin.text);
+    const structured = renderPinStructured(clauses);
+    const rawMode = sameChannel && root.dataset.pinMode === "raw";
+    raw.hidden = clauses.length > 0 && !rawMode;
+    structured.hidden = clauses.length === 0 || rawMode;
+    const body = element("div", "pin-body", structured, raw);
+    if (clauses.length > 0) {
+      const toggleBtn = element("button", "pin-raw-toggle", rawMode ? "Show structured view" : "Show original text");
+      toggleBtn.type = "button";
+      toggleBtn.dataset.focusKey = `pin-mode:${key}`;
+      toggleBtn.addEventListener("click", () => {
+        const showRaw = root.dataset.pinMode !== "raw";
+        root.dataset.pinMode = showRaw ? "raw" : "fields";
+        raw.hidden = !showRaw;
+        structured.hidden = showRaw;
+        toggleBtn.textContent = showRaw ? "Show structured view" : "Show original text";
+      });
+      body.append(toggleBtn);
     }
+    disclosure.append(body);
 
     disclosure.addEventListener("toggle", () => {
       if (disclosure.open && root.contains(disclosure)) {
@@ -352,70 +353,85 @@
     root.dataset.updated = String(updated);
 
     const wrapper = element("div", "disclosure-item pin-item", disclosure);
-    if (!editing) {
-      const editBtn = iconButton("edit", "Edit pin", `edit-pin:${key}`, () => {
-        root.dataset.editing = "true";
-        renderPin(root, state, actions);
-        root.querySelector(".pin-edit-textarea")?.focus();
-      }, "pin-edit-btn");
-      wrapper.append(editBtn);
-    }
+    const editBtn = iconButton("edit", "Edit pin", `edit-pin:${key}`, () => {
+      root.replaceChildren(renderPinEditor(root, state.activeSwarm, channel.name, pin.text, key, state, actions));
+      root.querySelector(".pin-edit-textarea")?.focus();
+    }, "pin-edit-btn");
+    wrapper.append(editBtn);
     replaceKeepingFocus(root, [wrapper]);
   }
 
-  function renderPinStructured(clauses, state) {
+  // renderPinStructured separates the documented fields for reading. Owners
+  // remain authored text: known handles receive badges without inferred work
+  // assignments, removed punctuation, or a new ownership grammar.
+  function renderPinStructured(clauses) {
     const container = element("div", "pin-structured");
     for (const clause of clauses) {
       const kind = clause.key.toLowerCase();
       if (kind === "goal") {
         container.append(element("div", "pin-section",
-          element("div", "pin-section-label", "Goal"),
+          element("h3", "pin-section-label", "Goal"),
           element("div", "pin-goal-block", formattedText(clause.value))));
       } else if (kind === "owners") {
-        const list = element("div", "pin-owners-list");
-        for (const item of clause.value.split(";").map((s) => s.trim()).filter(Boolean)) {
-          const m = /^@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})\s+([\s\S]+)$/.exec(item);
-          if (m) {
-            list.append(element("div", "pin-owner-row",
-              element("span", "pin-owner-who", avatarNode(m[1], state), handleBadgeNode(m[1], state)),
-              element("span", "pin-owner-scope", formattedText(m[2].trim()))));
-          } else {
-            list.append(element("div", "pin-owner-row", element("span", "pin-owner-scope", formattedText(item))));
-          }
-        }
-        container.append(element("div", "pin-section", element("div", "pin-section-label", "Owners"), list));
+        container.append(element("div", "pin-section",
+          element("h3", "pin-section-label", "Owners"),
+          element("div", "pin-owner-text", formattedText(clause.value))));
       } else if (kind === "verify") {
-        const copyBtn = iconButton("copy", "Copy verification command", `copy-verify:${clause.value}`, (ev) => {
+        const copyBtn = actionButton("Copy command", `copy-verify:${clause.value}`, async (ev) => {
           const btn = ev.currentTarget;
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-            navigator.clipboard.writeText(clause.value).then(() => {
-              btn.replaceChildren(svgIcon("check"));
-            }).catch(() => {});
+          try {
+            await navigator.clipboard.writeText(clause.value);
+            btn.textContent = "Copied";
+          } catch {
+            btn.textContent = "Copy unavailable";
           }
         });
+        copyBtn.setAttribute("aria-live", "polite");
         container.append(element("div", "pin-section",
-          element("div", "pin-section-label", "Verify"),
+          element("h3", "pin-section-label", "Verify"),
           element("div", "pin-verify-row", element("code", "pin-verify-code", clause.value), copyBtn)));
       }
     }
     return container;
   }
 
-  function renderPinEditor(root, channelName, originalText, key, state, actions) {
+  // renderPinEditor keeps text in one form, independent of the chat composer.
+  // Cancel and Escape perform no request; after submit they are disabled until
+  // the server responds because removing a form cannot undo a published pin.
+  function renderPinEditor(root, swarm, channelName, originalText, key, state, actions) {
+    const form = element("form", "pin-editor pin-disclosure");
+    form.dataset.swarm = swarm;
+    form.setAttribute("aria-label", `Edit pin in ${channelName}, swarm ${swarm}`);
+    const label = element("label", "pin-edit-label", `Edit pin in ${channelName} · ${swarm}`);
+    label.htmlFor = "pin-edit-text";
     const textarea = element("textarea", "pin-edit-textarea", originalText);
-    textarea.rows = 3;
+    textarea.id = "pin-edit-text";
+    textarea.rows = 5;
     textarea.dataset.focusKey = `pin-textarea:${key}`;
+    textarea.setAttribute("aria-describedby", "pin-edit-help pin-edit-error");
+    const help = element("p", "pin-edit-help", "Updating replaces this channel’s pinned message. Your message draft stays separate.");
+    help.id = "pin-edit-help";
+    const scopeNotice = element("p", "pin-edit-scope-notice");
+    scopeNotice.hidden = true;
     const errEl = element("p", "pin-edit-error");
+    errEl.id = "pin-edit-error";
+    errEl.setAttribute("role", "alert");
     errEl.hidden = true;
+    const status = element("p", "pin-edit-status");
+    status.setAttribute("role", "status");
 
+    // Closing discards only this unsent form and restores a visible control.
     const closeEditor = () => {
-      delete root.dataset.editing;
+      if (form.getAttribute("aria-busy") === "true") return;
+      root.replaceChildren();
       renderPin(root, state, actions);
-      root.querySelector(".pin-summary")?.focus();
+      root.querySelector("details.pin-disclosure")?.setAttribute("open", "");
+      const returnTo = root.querySelector(".pin-edit-btn") || document.getElementById("swarm-select");
+      returnTo?.focus({ preventScroll: true });
     };
 
-    textarea.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !e.isComposing) {
         e.preventDefault();
         closeEditor();
       }
@@ -427,30 +443,50 @@
     cancelBtn.addEventListener("click", closeEditor);
 
     const saveBtn = element("button", "btn-primary pin-save-btn", "Update pin");
-    saveBtn.type = "button";
+    saveBtn.type = "submit";
     saveBtn.dataset.focusKey = `pin-save:${key}`;
-    saveBtn.addEventListener("click", async () => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (saveBtn.disabled) return;
       errEl.hidden = true;
+      textarea.removeAttribute("aria-invalid");
+      form.setAttribute("aria-busy", "true");
       saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      textarea.readOnly = true;
+      status.textContent = "Updating pin…";
       try {
-        await actions.updatePin(channelName, textarea.value);
-        delete root.dataset.editing;
+        await actions.updatePin(swarm, channelName, textarea.value);
+        root.replaceChildren();
         renderPin(root, state, actions);
+        root.querySelector(".pin-edit-btn")?.focus({ preventScroll: true });
       } catch (err) {
         errEl.textContent = err.message || "Failed to update pin.";
         errEl.hidden = false;
+        textarea.setAttribute("aria-invalid", "true");
+        status.textContent = "Your changes are kept here. Check the error before trying again.";
       } finally {
-        saveBtn.disabled = false;
+        form.setAttribute("aria-busy", "false");
+        cancelBtn.disabled = false;
+        textarea.readOnly = false;
+        if (root.contains(form)) renderPin(root, state, actions);
       }
     });
 
-    return element("div", "pin-editor", textarea, errEl, element("div", "pin-edit-actions", cancelBtn, saveBtn));
+    form.append(label, help, scopeNotice, textarea, errEl, status,
+      element("div", "pin-edit-actions", cancelBtn, saveBtn));
+    return form;
   }
 
+  // cleanPinHeadline removes only the display convention's Goal label; the
+  // original message remains unchanged in its text view and edit form.
   function cleanPinHeadline(text) {
-    return headline(text).replace(/^\s*Goal\s*:\s*/i, "");
+    const goal = pinClauses(text).find((clause) => clause.key.toLowerCase() === "goal");
+    return headline(goal?.value || text).replace(/^\s*Goal\s*:\s*/i, "");
   }
 
+  // pinClauses recognizes complete labelled segments for display only. Any
+  // unrecognized segment leaves the entire original message in the text view.
   function pinClauses(text) {
     const segments = text.split("|");
     if (segments.length < 2) return [];
