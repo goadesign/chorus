@@ -25,7 +25,8 @@
 // user picks an earlier interval by dragging or clicking the overview strip,
 // paging, or selecting a message outside the view; each sets
 // state.timeWindow, which holds the view still (the message list applies it
-// too) until "Jump to latest" sets it back to null.
+// too) until "Jump to latest" (actions.jumpToLatest) returns both the
+// timeline and the message list to the newest messages.
 //
 // Keyboard: the timeline is one focusable control. Left/Right move the
 // selection to the previous/next retained message (the view follows it),
@@ -84,7 +85,8 @@
    * selectedMessage is null or {target: "#channel" | "@recipient", seq}.
    * actions used: selectTarget(selectedTarget), selectMessage(target, seq)
    * where target is "#channel" or the recipient inbox "@handle",
-   * setTimeWindow({startMs, endMs} | null), where null jumps to latest.
+   * setTimeWindow({startMs, endMs} | null), and jumpToLatest(), which returns
+   * both the timeline and the message list to the newest messages.
    */
   function render(rootEl, state, actions) {
     const view = state && state.view;
@@ -191,15 +193,15 @@
 
     svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, axis, win, pan));
     rootEl.appendChild(svg);
-    // While an earlier interval is shown, one quiet button returns to the
-    // latest messages; it is a real button so keyboards and screen readers
-    // reach it.
+    // While an earlier interval is shown, one quiet button returns the whole
+    // page to the latest messages; it is a real button so keyboards and
+    // screen readers reach it.
     if (state.timeWindow) {
       const jump = document.createElement("button");
       jump.type = "button";
       jump.className = "tl-jump";
       jump.textContent = "Jump to latest";
-      jump.addEventListener("click", () => actions.setTimeWindow(null));
+      jump.addEventListener("click", () => actions.jumpToLatest());
       rootEl.appendChild(jump);
     }
     // Restoring focus must not scroll the page under the reader.
