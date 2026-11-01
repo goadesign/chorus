@@ -81,9 +81,9 @@ var _ = Service("chorus", func() {
 			// model is an opaque identifier kept exactly as given. Chorus has no
 			// request size limit at its HTTP edge, so this cap is what bounds the
 			// saved profile that every server replica keeps in memory and every
-			// dashboard refresh returns. 2048 is the longest model id a provider
-			// is known to accept (AWS Bedrock modelId, including full ARNs), so
-			// no real id is refused.
+			// dashboard refresh returns. 2048 characters is Chorus's budget for
+			// that profile; it admits the documented AWS Bedrock modelId forms,
+			// including full ARNs.
 			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
 				MaxLength(2048)
@@ -132,9 +132,9 @@ var _ = Service("chorus", func() {
 			// model is an opaque identifier kept exactly as given. Chorus has no
 			// request size limit at its HTTP edge, so this cap is what bounds the
 			// saved profile that every server replica keeps in memory and every
-			// dashboard refresh returns. 2048 is the longest model id a provider
-			// is known to accept (AWS Bedrock modelId, including full ARNs), so
-			// no real id is refused.
+			// dashboard refresh returns. 2048 characters is Chorus's budget for
+			// that profile; it admits the documented AWS Bedrock modelId forms,
+			// including full ARNs.
 			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
 				MaxLength(2048)
