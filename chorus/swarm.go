@@ -690,6 +690,17 @@ func (s *swarmHandle) appendUnderSemaphore(
 		_ = lease.Release(context.Background())
 	}()
 
+	// The sender's declared model at publication time decides, once and for
+	// good, whether this message came from a person; the role is free text and
+	// never decides it. Sync first brings this server's copy up to date with
+	// every write that completed before the send, so a who or join that just
+	// finished through another server is included. It runs before the sequence
+	// number is taken, so a failure leaves no gap in the numbering.
+	if err := s.state.Sync(ctx); err != nil {
+		return 0, fmt.Errorf("sync swarm state before publishing to %s: %w", target, err)
+	}
+	senderModel, _ := s.state.Get(modelMapKey(sender))
+
 	seq, err := s.state.Inc(ctx, seqMapKey(target), 1)
 	if err != nil {
 		return 0, fmt.Errorf("increment sequence for %s: %w", target, err)
@@ -715,10 +726,6 @@ func (s *swarmHandle) appendUnderSemaphore(
 		}
 	}
 
-	// The sender's declared model at publication time decides, once and for
-	// good, whether this message came from a person; the role is free text and
-	// never decides it.
-	senderModel, _ := s.state.Get(modelMapKey(sender))
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
