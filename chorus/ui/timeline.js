@@ -6,12 +6,16 @@
 // data between renders except layout caches keyed by the view's identity.
 //
 // What it draws, all from fields the server returns (GET /swarms/{s}/view):
-//   - an overview strip of every retained message in the swarm, with a
+//   - an "Overview" strip of every retained message in the swarm, with a
 //     draggable window that selects the time range shown below it;
-//   - one lane per message sender (live agents and senders that have left),
-//     with lanes of people (declared model "human") styled apart;
-//   - a time axis on which idle stretches longer than QUIET_MS are shrunk to
-//     a fixed-width "quiet" break so bursts of activity stay readable;
+//   - one lane per agent with something drawn in that range (a message, a
+//     read mark, or a mention from the selected message), including senders
+//     that have left, with lanes of people (declared model "human") styled
+//     apart;
+//   - a time axis labelled with the window's length and its start and end
+//     times, on which idle stretches longer than QUIET_MS are shrunk to a
+//     fixed-width "quiet" break (labelled on a row of its own) so bursts of
+//     activity stay readable;
 //   - for the selected channel only: the current pin (Chorus stores only the
 //     current pin, so there is one landmark, placed at the pinned message
 //     when it is still retained), each member's read position, and
@@ -61,7 +65,9 @@
   const MENTION_RE = /(^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?![A-Za-z0-9_-])/g;
   // Layout constants in px.
   const OVERVIEW_H = 34;
-  const AXIS_H = 26;
+  // The axis has two rows: window edge clocks on top, quiet-break labels
+  // below, so a quiet label never covers a clock.
+  const AXIS_H = 30;
   const LANE_H = 38;
   const LABEL_W = 160;
   const PAD = 8;
@@ -151,7 +157,10 @@
     const axis = buildAxis(events);
     const win = state.timeWindow || liveWindow(axis);
     const inWindow = (t) => t >= win.startMs && t <= win.endMs;
-    const lanes = laneList(view, events);
+    const channel = sel && sel.kind === "channel"
+      ? (view.channels || []).find((c) => c.name === sel.name)
+      : null;
+    const lanes = laneList(view, events, inWindow, channel, picked);
     const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
     const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
@@ -199,9 +208,6 @@
       drawLane(svg, lane, y, width, colors);
     });
 
-    const channel = sel && sel.kind === "channel"
-      ? (view.channels || []).find((c) => c.name === sel.name)
-      : null;
     if (channel) {
       drawPin(svg, channel, mx, inWindow, laneTop, lanes.length, inspect);
       drawReplies(svg, channel, mx, inWindow, laneY, colors);
@@ -482,16 +488,34 @@
     else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
   }
 
-  // laneList returns the lanes to draw: every registered agent and every
-  // sender of a retained message, so the chart keeps the same lanes (and
-  // height) while the window is dragged across history. Humans come first,
-  // then handles in order. A sender with no current registration
-  // keeps its messages but is drawn muted; the data cannot tell whether it
-  // left, expired, or disconnected, so the lane makes no claim about why.
-  // The human mark reflects the agent's current declared model only.
-  function laneList(view, events) {
+  // laneList returns the lanes to draw for the current range: each known
+  // handle (registered agents and senders of retained messages) that has
+  // something drawn there, namely a message in the range, its read mark in
+  // the selected channel, or a mention from the selected message. When none
+  // has, every registered agent (or every sender, if none is registered) is
+  // shown so the plot is never empty. Lanes change as the range moves; the
+  // page keeps the chart itself still while that happens. Humans come first,
+  // then handles in order. A sender with no current registration keeps its
+  // messages but is drawn muted; the data cannot tell whether it left,
+  // expired, or disconnected, so the lane makes no claim about why. The human
+  // mark reflects the agent's current declared model only.
+  function laneList(view, events, inWindow, channel, picked) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
-    const handles = new Set([...live.keys(), ...events.map((e) => e.sender)]);
+    const known = new Set([...live.keys(), ...events.map((e) => e.sender)]);
+    const shown = new Set();
+    for (const e of events) if (inWindow(e.t)) shown.add(e.sender);
+    if (channel) {
+      const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
+      for (const p of channel.positions || []) {
+        const m = bySeq.get(p.read_seq);
+        if (m && inWindow(m.sent_at_ms)) shown.add(p.handle);
+      }
+    }
+    const chosen = picked ? events.find((e) => e.target === picked.target && e.seq === picked.seq) : null;
+    if (chosen && inWindow(chosen.t)) {
+      for (const h of mentionTargets(chosen, view, known)) shown.add(h);
+    }
+    const handles = shown.size > 0 ? shown : (live.size > 0 ? new Set(live.keys()) : known);
     const lanes = [...handles].map((h) => {
       const a = live.get(h);
       return {
@@ -616,7 +640,7 @@
       }));
     }
     const label = el("text", { class: "tl-label", x: String(PAD), y: String(y0 + 17) });
-    label.textContent = "Whole history";
+    label.textContent = "Overview";
     svg.appendChild(label);
 
     // The window rectangle can be dragged. While it moves, the new range is
@@ -720,13 +744,14 @@
   // the pin badge uses the lower line.
   function drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height) {
     const y = top + 11;
+    const quietY = top + 24;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
       const xb = mx(g.to);
       svg.appendChild(el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) }));
-      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(y), "text-anchor": "middle" });
-      lbl.textContent = quietLabel(g.to - g.from);
+      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(quietY), "text-anchor": "middle" });
+      lbl.textContent = `${duration(g.to - g.from)} quiet`;
       svg.appendChild(lbl);
     }
     // Clock labels at both window edges.
@@ -736,6 +761,10 @@
     right.textContent = clock(win.endMs);
     svg.appendChild(left);
     svg.appendChild(right);
+    // The gutter names how much real time the plot below shows.
+    const span = el("text", { class: "tl-label", x: String(PAD), y: String(y) });
+    span.textContent = `${duration(win.endMs - win.startMs)} window`;
+    svg.appendChild(span);
   }
 
   // drawLane draws a lane line and its @handle label, clipped to the label
@@ -883,20 +912,28 @@
   function drawMentions(svg, e, view, mx, laneY, colors) {
     const x = mx(e.t).toFixed(1);
     const y0 = laneY.get(e.sender);
-    // The server matches mentions case-insensitively, so @api reaches both
-    // @API and @api when both exist; every lane whose handle matches gets a
-    // connector, except the sender's own.
-    // "all" is reserved: it never matches a handle by name and expands only
-    // to the members of the message's channel.
+    for (const handle of mentionTargets(e, view, laneY.keys())) {
+      const y1 = laneY.get(handle);
+      svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
+      svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
+    }
+  }
+
+  // mentionTargets returns the handles among candidates that message e
+  // literally @-mentions, other than its sender. The server matches mentions
+  // case-insensitively, so @api reaches both @API and @api when both exist.
+  // "all" is reserved: it never matches a handle by name and expands only to
+  // the members of the message's channel, as the server treats it.
+  function mentionTargets(e, view, candidates) {
     const mentioned = new Set(mentionedHandles(e.text));
     const broadcast = mentioned.delete("all");
     const channel = e.pair ? null : (view.channels || []).find((c) => c.name === e.target);
     const members = new Set(broadcast && channel ? (channel.positions || []).map((p) => p.handle) : []);
-    for (const [handle, y1] of laneY) {
-      if (handle === e.sender || !(mentioned.has(handle.toLowerCase()) || members.has(handle))) continue;
-      svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
-      svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
+    const out = [];
+    for (const h of candidates) {
+      if (h !== e.sender && (mentioned.has(h.toLowerCase()) || members.has(h))) out.push(h);
     }
+    return out;
   }
 
   // mentionedHandles returns the lowercased handles @-mentioned in text, in
@@ -945,11 +982,12 @@
     actions.selectMessage(e.target, e.seq, { reveal: false });
   }
 
-  function quietLabel(ms) {
+  // duration writes a length of time as "45m", "2h", or "2h 15m".
+  function duration(ms) {
     const min = Math.round(ms / 60000);
-    if (min < 60) return `${min}m quiet`;
+    if (min < 60) return `${min}m`;
     const h = Math.floor(min / 60);
-    return `${h}h${min % 60 ? " " + (min % 60) + "m" : ""} quiet`;
+    return `${h}h${min % 60 ? " " + (min % 60) + "m" : ""}`;
   }
 
   function clock(ms) {
