@@ -32,7 +32,6 @@
       <div class="swarm-control">
         <label for="swarm-select">Swarm</label>
         <select id="swarm-select" aria-label="Select swarm"></select>
-        <button type="button" class="btn-icon" id="btn-custom-swarm" title="Switch to another swarm by name" aria-label="Switch to another swarm by name">+</button>
       </div>
 
       <nav class="target-tabs scroller" id="target-tabs" aria-label="Channels and Direct Messages"></nav>
@@ -70,10 +69,10 @@
       <!-- 2. Interactive Sliding Swarm Timeline (Live-scrubbing overview + swimlanes) -->
       <section class="timeline-section" id="timeline-root" aria-label="Swarm timeline"></section>
 
-      <!-- 3. Collapsible Pinned Goal + Mentions & Referenced Artifacts -->
+      <!-- 3. Collapsible Pinned Goal + Recent Mentions -->
       <section class="context-strips">
         <div id="pin-container"></div>
-        <div id="mentions-artifacts-container"></div>
+        <div id="mentions-container"></div>
       </section>
 
       <!-- 4. Stream Controls & Newest-First Progressive Disclosure Feed -->

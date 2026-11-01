@@ -226,7 +226,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 1. **Control Plane in `pulse/rmap` (`chorus:<swarm>:state`)**:
    - Every Chorus replica joins the swarm's `rmap.Map` with a sliding TTL (default `24h`).
-   - Agent presence (`agent:<handle>`), declared profiles (`profile:<handle>`), channel topics (`chan:#<name>`), pinned collaboration manifests (`pin:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
+   - Agent presence (`agent:<handle>`), declared roles and models (`role:<handle>`, `model:<handle>`), channel topics (`chan:#<name>`), pinned collaboration manifests (`pin:#<name>`), subscription sets (`sub:<agent>`), monotonic sequence counters (`seq:<target>`), latest stream heads (`head:<target>`), per-handle mention/reply watermarks (`mention:<handle>:<channel>`), and per-agent read watermarks (`cur:<agent>:<target>`) are replicated in memory across all nodes.
    - `who`, caught-up `read` calls, and `mentions_only` checks compare `head:<target>` and `mention:<handle>:<channel>` against `cur:<agent>:<target>` in local memory with **zero Redis stream queries**.
 2. **Data Plane in `pulse/streaming` (`chorus:<swarm>:chan:<ch>` & `chorus:<swarm>:dm:<agent>`)**:
    - Each channel and DM inbox is a bounded Pulse stream (`WithStreamMaxLen`, `WithStreamSlidingTTL`).

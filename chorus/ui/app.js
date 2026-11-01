@@ -64,9 +64,19 @@
     return `agent-c${Math.abs(hash) % 8}`;
   }
 
+  function isDarkThemeActive() {
+    const attr = document.documentElement.dataset.theme;
+    if (attr === "dark") return true;
+    if (attr === "light") return false;
+    return Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+
   function agentColorHex(handle, model) {
-    if (model === "human") return "#F43F5E";
-    const palette = ["#3B82F6", "#14B8A6", "#F59E0B", "#F43F5E", "#6366F1", "#10B981", "#EC4899", "#06B6D4"];
+    const dark = isDarkThemeActive();
+    if (model === "human") return dark ? "#fb7185" : "#be123c";
+    const palette = dark
+      ? ["#60a5fa", "#2dd4bf", "#fbbf24", "#fb7185", "#a5b4fc", "#34d399", "#f472b6", "#22d3ee"]
+      : ["#1d4ed8", "#0f766e", "#92400e", "#be123c", "#4338ca", "#047857", "#be185d", "#0e7490"];
     const h = String(handle || "").toLowerCase();
     let hash = 2166136261;
     for (let i = 0; i < h.length; i++) {
@@ -296,9 +306,11 @@
     jumpToLatest() {
       state.timeWindow = null;
       state.selectedMessage = null;
-      if (!state.expandAllMessages) {
-        const streamEl = document.getElementById("message-stream");
-        if (streamEl) {
+      const streamEl = document.getElementById("message-stream");
+      if (streamEl) {
+        if (state.expandAllMessages) {
+          delete streamEl.dataset.expandAll;
+        } else {
           for (const d of streamEl.querySelectorAll("details[open]")) d.open = false;
         }
       }
@@ -395,8 +407,9 @@
     const select = document.getElementById("swarm-select");
     const sendBtn = document.getElementById("btn-send");
     if (sendBtn) sendBtn.disabled = !state.activeSwarm;
-    const allSwarms = new Set(["default", ...state.swarms]);
+    const allSwarms = new Set(state.swarms);
     if (state.activeSwarm) allSwarms.add(state.activeSwarm);
+    if (allSwarms.size === 0) allSwarms.add("default");
     select.replaceChildren(...Array.from(allSwarms).sort().map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
     renderLiveStatus();
 
@@ -490,7 +503,7 @@
           agentStripEl: document.getElementById("agent-strip"),
           detailsEl: document.getElementById("agent-details"),
           pinEl: document.getElementById("pin-container"),
-          mentionsEl: document.getElementById("mentions-artifacts-container"),
+          mentionsEl: document.getElementById("mentions-container"),
           streamEl,
           titleEl: document.getElementById("active-title"),
           subtitleEl: document.getElementById("active-subtitle"),
@@ -751,7 +764,13 @@
     themeSelect.addEventListener("change", () => {
       applyTheme(themeSelect.value);
       localStorage.setItem("chorus_theme", themeSelect.value);
+      renderAll();
     });
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        if (!document.documentElement.dataset.theme) renderAll();
+      });
+    }
 
     document.getElementById("swarm-select").addEventListener("change", (e) => {
       const next = e.target.value;
@@ -761,21 +780,6 @@
         state.timeWindow = null;
         startSwarmLoop(next);
       }
-    });
-
-    document.getElementById("btn-custom-swarm").addEventListener("click", () => {
-      const name = window.prompt("Enter swarm name:", state.activeSwarm || "default");
-      if (!name) return;
-      const clean = name.trim();
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(clean)) {
-        setComposerFeedback("Invalid swarm name.", "error");
-        return;
-      }
-      if (!state.swarms.includes(clean)) state.swarms.push(clean);
-      state.selectedTarget = null;
-      state.selectedMessage = null;
-      state.timeWindow = null;
-      startSwarmLoop(clean);
     });
 
     document.getElementById("search-input").addEventListener("input", (e) => {

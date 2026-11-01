@@ -707,15 +707,19 @@
   // feed so the latest conversation is immediately visible below the timeline
   // without scrolling to the bottom of the page.
   function renderMessages(root, entries, targetEntries, state, actions) {
+    const prevRenderedKeys = new Set([...root.querySelectorAll("details[data-disclosure-key]")].map((node) => node.dataset.disclosureKey));
     const openKeys = new Set([...root.querySelectorAll("details[open][data-disclosure-key]")].map((node) => node.dataset.disclosureKey));
     const expandAll = state.expandAllMessages === true;
     if (root.dataset.expandAll !== String(expandAll)) {
       openKeys.clear();
-      if (expandAll) {
-        for (const entry of targetEntries) {
-          openKeys.add(`message:${coordinate(entry)}`);
-          openKeys.add(`thread:${coordinate(entry)}`);
-        }
+      prevRenderedKeys.clear();
+    }
+    if (expandAll) {
+      for (const entry of targetEntries) {
+        const msgKey = `message:${coordinate(entry)}`;
+        const threadKey = `thread:${coordinate(entry)}`;
+        if (!prevRenderedKeys.has(msgKey)) openKeys.add(msgKey);
+        if (!prevRenderedKeys.has(threadKey)) openKeys.add(threadKey);
       }
     }
     const selectionKey = state.selectedMessage ? `${state.selectedMessage.target}:${state.selectedMessage.seq}` : "";
@@ -802,7 +806,7 @@
     const details = element("details", `thread-disclosure${rootFromHuman ? " is-human-message" : ""}${latestReplyToHuman ? " is-human-response" : ""}`);
     details.dataset.disclosureKey = key;
     details.dataset.anchorVersion = `${entries.length}:${last.message.seq}`;
-    details.open = openKeys.has(key) || entries.some((entry) => selected(entry, state));
+    details.open = openKeys.has(key) || entries.some((entry) => openKeys.has(`message:${coordinate(entry)}`) || selected(entry, state));
 
     const lastFromHuman = isFromHumanMessage(last.message);
     const senderColor = senderColorClass(last.message.sender, state, lastFromHuman);
@@ -824,7 +828,10 @@
     preparePreviewCue(summary, first, last);
     details.append(summary);
     details.addEventListener("toggle", () => {
-      if (!details.open && entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
+      if (!details.open) {
+        for (const child of details.querySelectorAll("details[open]")) child.open = false;
+        if (entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
+      }
     });
 
     const body = element("div", "thread-messages");
@@ -863,19 +870,25 @@
   }
 
   // copyTextButton creates a compact action button that copies text to the
-  // clipboard with inline confirmation.
+  // clipboard with inline confirmation or accessible failure feedback.
   function copyTextButton(text, focusKey) {
-    return actionButton([svgIcon("copy", "icon icon-xs"), "Copy text"], focusKey, (ev) => {
-      const btn = ev.currentTarget;
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText(text).then(() => {
-          btn.replaceChildren(svgIcon("check", "icon icon-xs"), "Copied");
-          setTimeout(() => {
-            if (btn.isConnected) btn.replaceChildren(svgIcon("copy", "icon icon-xs"), "Copy text");
-          }, 2000);
-        }).catch(() => {});
+    const btn = actionButton([svgIcon("copy", "icon icon-xs"), "Copy text"], focusKey, async (ev) => {
+      const target = ev.currentTarget;
+      try {
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+          throw new Error("clipboard unavailable");
+        }
+        await navigator.clipboard.writeText(text);
+        target.replaceChildren(svgIcon("check", "icon icon-xs"), "Copied");
+      } catch {
+        target.textContent = "Copy unavailable";
       }
+      setTimeout(() => {
+        if (target.isConnected) target.replaceChildren(svgIcon("copy", "icon icon-xs"), "Copy text");
+      }, 2000);
     });
+    btn.setAttribute("aria-live", "polite");
+    return btn;
   }
 
   // messageDisclosure renders a single message row with a structured M3 detail
