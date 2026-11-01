@@ -481,6 +481,7 @@
     const reply = state.replyTo;
     if (!reply) {
       container.replaceChildren();
+      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       return;
     }
     container.replaceChildren(
@@ -495,6 +496,7 @@
           },
         }, svgIcon("close")))
     );
+    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
   }
 
   function renderLiveStatus() {
@@ -838,10 +840,12 @@
       ...parts.map((p) => (p instanceof Node ? p : document.createTextNode(String(p))))
     );
     clearTimeout(setComposerFeedback._timer);
+    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
     if (parts.length > 0 && kind === "ok") {
       setComposerFeedback._timer = setTimeout(() => {
         wrap.className = "composer-feedback";
         txt.replaceChildren();
+        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       }, 4000);
     }
   }
