@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,23 @@ func TestJoinRequiresDeclaredModel(t *testing.T) {
 	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
 	require.NotNil(t, doc.Agents[0].Model)
 	assert.Equal(t, bedrock, *doc.Agents[0].Model)
+
+	// The cap counts characters, not bytes: 2048 characters are accepted and
+	// kept exactly, including multibyte ones, and 2049 are rejected.
+	atCap := strings.Repeat("é", 2047) + "x"
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": atCap})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, atCap, *doc.Agents[0].Model)
+	below := strings.Repeat("m", 2047)
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": below})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, below, *doc.Agents[0].Model)
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": strings.Repeat("m", 2049)})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, below, *doc.Agents[0].Model)
 }
 
 // TestSwarmViewWaitsForChanges verifies the If-None-Match wait: it returns
