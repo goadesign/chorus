@@ -563,9 +563,12 @@
       const nextChartEl = timelineRoot.querySelector(".tl") || timelineRoot;
       const unscrolledChartTop = nextChartEl.getBoundingClientRect().top + stageEl.scrollTop;
       const targetScrollTop = Math.max(0, Math.round(unscrolledChartTop - prevChartTop));
-      const neededScrollHeight = stageEl.clientHeight + targetScrollTop;
-      if (streamEl && stageEl.scrollHeight < neededScrollHeight) {
-        streamEl.style.minHeight = `${streamEl.offsetHeight + (neededScrollHeight - stageEl.scrollHeight)}px`;
+      if (streamEl && targetScrollTop > 0) {
+        const streamTopInStage = streamEl.getBoundingClientRect().top - stageEl.getBoundingClientRect().top + stageEl.scrollTop;
+        const neededStreamHeight = Math.ceil(stageEl.clientHeight + targetScrollTop - streamTopInStage);
+        if (streamEl.offsetHeight < neededStreamHeight) {
+          streamEl.style.minHeight = `${neededStreamHeight}px`;
+        }
       }
       stageEl.scrollTop = targetScrollTop;
     }
