@@ -46,16 +46,20 @@
     }
     const targetEntries = selectedMessages(entries, state);
     const visible = targetEntries.filter((entry) => matches(entry, state));
-    const scrollSnapshot = els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl);
+    const scrollSnapshot = els.preserveScroll
+      ? null
+      : (els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl));
 
     renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
-    const selectionChanged = renderMessages(els.streamEl, visible, targetEntries, state, actions);
+    renderMessages(els.streamEl, visible, targetEntries, state, actions);
     renderSelection(els.detailsEl, state, actions, entries, visible);
 
-    restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
-    revealSelectedMessage(els.streamEl, state, selectionChanged);
+    if (!els.preserveScroll) {
+      restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
+    }
+    revealSelectedMessage(els.streamEl, state, Boolean(els.revealSelection));
     previewObserver = new IntersectionObserver(exposePreviews, { root: els.scrollEl });
     observeUnshownPreviews();
 
@@ -710,9 +714,10 @@
     }
   }
 
-  // revealSelectedMessage opens and scrolls to the explicitly selected message
-  // when selection changes.
-  function revealSelectedMessage(root, state, selectionChanged) {
+  // revealSelectedMessage keeps the selected message's disclosure (and parent
+  // thread disclosure) open, and scrolls it into view when shouldScroll is true
+  // (on explicit actions.selectMessage calls).
+  function revealSelectedMessage(root, state, shouldScroll) {
     const selected = state.selectedMessage;
     if (!selected || !root) return;
     const node = [...root.querySelectorAll("[data-message-key]")].find((item) => item.dataset.messageKey === `${selected.target}:${selected.seq}`);
@@ -720,7 +725,7 @@
       node.open = true;
       const thread = node.closest(".thread-disclosure");
       if (thread) thread.open = true;
-      if (selectionChanged) node.scrollIntoView({ block: "nearest" });
+      if (shouldScroll) node.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -754,8 +759,6 @@
         if (!prevRenderedKeys.has(threadKey)) openKeys.add(threadKey);
       }
     }
-    const selectionKey = state.selectedMessage ? `${state.selectedMessage.target}:${state.selectedMessage.seq}` : "";
-    const selectionChanged = root.dataset.selectedMessage !== selectionKey;
 
     const byTarget = new Map();
     for (const entry of targetEntries) {
@@ -783,9 +786,7 @@
     }
 
     replaceKeepingFocus(root, nodes);
-    root.dataset.selectedMessage = selectionKey;
     root.dataset.expandAll = String(expandAll);
-    return selectionChanged;
   }
 
   function threadGroups(entries, byTarget) {

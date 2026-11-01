@@ -735,5 +735,8 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
-  window.ChorusTimeline = { render };
+  window.ChorusTimeline = {
+    render,
+    isDragging: (rootEl) => drags.has(rootEl),
+  };
 })();

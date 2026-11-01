@@ -304,13 +304,13 @@
     selectMessage(target, seq) {
       if (!target || !seq || seq <= 0) state.selectedMessage = null;
       else state.selectedMessage = { target, seq };
-      renderAll();
+      renderAll({ revealSelection: Boolean(target && seq > 0) });
     },
 
     setTimeWindow(win) {
       if (!win || typeof win.startMs !== "number" || typeof win.endMs !== "number") state.timeWindow = null;
       else state.timeWindow = { startMs: win.startMs, endMs: win.endMs };
-      renderAll();
+      renderAll({ preserveChartPosition: true });
     },
 
     jumpToLatest() {
@@ -472,7 +472,7 @@
   // means at least this many. Failed sends can also leave
   // unused positions; the explanation never claims that messages were deleted.
   function formatMessageCount(count, sources) {
-    const mayHaveOlder = sources.some((source) => source?.messages[0]?.seq > 1);
+    const mayHaveOlder = sources.some((source) => source?.messages?.[0]?.seq > 1);
     return {
       text: `${count}${mayHaveOlder ? "+" : ""}`,
       title: mayHaveOlder ? `Showing ${count} messages. Older messages may not be available.` : "",
@@ -501,24 +501,39 @@
     filtersBar.replaceChildren(...chips);
   }
 
-  function renderAll() {
+  function renderAll(opts = {}) {
     state.pairedDMs = buildPairedDMs(state.view?.inboxes || []);
     reconcileSelectedTarget(state.view, state.pairedDMs);
     renderHeaderAndTabs();
 
     const stageEl = document.getElementById("stage-container");
     const streamEl = document.getElementById("message-stream");
+    const timelineRoot = document.getElementById("timeline-root");
+    const preserveChart = Boolean(
+      opts.preserveChartPosition ||
+      (timelineRoot && window.ChorusTimeline && typeof window.ChorusTimeline.isDragging === "function" && window.ChorusTimeline.isDragging(timelineRoot))
+    );
+    const prevChartEl = preserveChart && timelineRoot
+      ? timelineRoot.querySelector(".tl") || timelineRoot
+      : null;
+    const prevChartTop = prevChartEl ? prevChartEl.getBoundingClientRect().top : null;
     const scrollSnapshot =
-      window.ChorusStream && typeof window.ChorusStream.captureScrollSnapshot === "function"
+      !preserveChart && window.ChorusStream && typeof window.ChorusStream.captureScrollSnapshot === "function"
         ? window.ChorusStream.captureScrollSnapshot(streamEl, stageEl)
         : null;
 
-    const timelineRoot = document.getElementById("timeline-root");
     if (timelineRoot && window.ChorusTimeline && typeof window.ChorusTimeline.render === "function") {
       window.ChorusTimeline.render(timelineRoot, state, actions);
     }
 
     if (window.ChorusStream && typeof window.ChorusStream.render === "function") {
+      // Clear any previous scroll-height floor when recomputing chart position
+      // or when returning to the live stream (state.timeWindow === null) so
+      // normal feed height is restored while active time-window views keep
+      // their scroll floor across passive background polls.
+      if (streamEl && (preserveChart || !state.timeWindow)) {
+        streamEl.style.minHeight = "";
+      }
       window.ChorusStream.render(
         {
           scrollEl: stageEl,
@@ -530,10 +545,29 @@
           titleEl: document.getElementById("active-title"),
           subtitleEl: document.getElementById("active-subtitle"),
           scrollSnapshot,
+          preserveScroll: preserveChart,
+          revealSelection: Boolean(opts.revealSelection),
         },
         state,
         actions
       );
+    }
+    // Keep the timeline SVG at the exact same viewport Y (prevChartTop) during
+    // time-window changes and active pointer drags. When narrowing the time
+    // window filters out enough message rows below the timeline that
+    // stageEl.scrollHeight would fall below clientHeight + targetScrollTop, the
+    // browser would clamp scrollTop and pull the chart downward; setting
+    // streamEl.style.minHeight supplies the missing scroll height for the
+    // duration of the active timeWindow.
+    if (preserveChart && prevChartTop !== null && stageEl && timelineRoot) {
+      const nextChartEl = timelineRoot.querySelector(".tl") || timelineRoot;
+      const unscrolledChartTop = nextChartEl.getBoundingClientRect().top + stageEl.scrollTop;
+      const targetScrollTop = Math.max(0, Math.round(unscrolledChartTop - prevChartTop));
+      const neededScrollHeight = stageEl.clientHeight + targetScrollTop;
+      if (streamEl && stageEl.scrollHeight < neededScrollHeight) {
+        streamEl.style.minHeight = `${streamEl.offsetHeight + (neededScrollHeight - stageEl.scrollHeight)}px`;
+      }
+      stageEl.scrollTop = targetScrollTop;
     }
     renderActiveFiltersBar();
   }
