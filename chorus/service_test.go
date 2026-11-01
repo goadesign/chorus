@@ -6,6 +6,7 @@ package chorus_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1284,6 +1285,82 @@ func TestDeclarationOnStaleServer(t *testing.T) {
 			t.Fatalf("case %d: stored model/role = %v/%v, want %q/%q", i, stored[0], stored[1], tc.copyModel, "Lead")
 		}
 	}
+}
+
+// TestHumanMarkWaitsForDeclarationFromAnotherServer verifies that a message
+// is marked from the sender's latest completed declaration even when the
+// sending server has not yet applied it. The test saves a declaration in
+// Redis the way another server's write does (new value and revision) but
+// holds back its broadcast, so the sending server's copy is behind. The send
+// must wait for that revision, then mark the message human once the broadcast
+// arrives; in the other direction it must drop the mark.
+func TestHumanMarkWaitsForDeclarationFromAnotherServer(t *testing.T) {
+	cases := []struct {
+		// from is declared normally, so the server's copy holds it.
+		from string
+		// to is saved in Redis with its broadcast held back.
+		to    string
+		human bool
+	}{
+		{from: "gpt-5-codex", to: "human", human: true},
+		{from: "human", to: "gpt-5-codex", human: false},
+	}
+	for i, tc := range cases {
+		c := newTestCluster(t, 1, nil)
+		swarm := fmt.Sprintf("syncmark%d", i)
+		hashKey := "map:chorus:" + swarm + ":state:content"
+		updates := "map:chorus:" + swarm + ":state:updates"
+		ctx := context.Background()
+		reader := c.newAgent(0, swarm, "reader")
+		reader.call("join", map[string]any{"channels": []string{"#s"}})
+		sender := c.newAgent(0, swarm, "raphael")
+		sender.call("join", map[string]any{"channels": []string{"#s"}, "model": tc.from})
+
+		if err := c.rdb.HSet(ctx, hashKey, "model:raphael", tc.to).Err(); err != nil {
+			t.Fatalf("case %d: save held-back declaration: %v", i, err)
+		}
+		rev, err := c.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Result()
+		if err != nil {
+			t.Fatalf("case %d: commit held-back revision: %v", i, err)
+		}
+
+		sent := make(chan string, 1)
+		go sendInto(sender, "#s", "after switching", sent)
+		select {
+		case got := <-sent:
+			t.Fatalf("case %d: send finished before the server applied the declaration: %s", i, got)
+		case <-time.After(100 * time.Millisecond):
+		}
+		broadcast := "set:" + packStrings("model:raphael", tc.to, strconv.FormatInt(rev, 10))
+		if err := c.rdb.Publish(ctx, updates, broadcast).Err(); err != nil {
+			t.Fatalf("case %d: deliver held-back broadcast: %v", i, err)
+		}
+		select {
+		case <-sent:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("case %d: send did not finish after the broadcast arrived", i)
+		}
+		got := reader.call("read", map[string]any{})
+		if strings.Contains(got, "@raphael (human): after switching") != tc.human {
+			t.Fatalf("case %d: switched %q to %q, want human=%v, got:\n%s", i, tc.from, tc.to, tc.human, got)
+		}
+	}
+}
+
+// sendInto sends text to target as agent and reports the tool output on done.
+func sendInto(agent *emulatedAgent, target, text string, done chan<- string) {
+	done <- agent.call("send", map[string]any{"to": target, "text": text})
+}
+
+// packStrings encodes strings the way Pulse's replicated-map scripts publish
+// them: each as a little-endian uint32 length followed by its bytes.
+func packStrings(values ...string) string {
+	var out []byte
+	for _, v := range values {
+		out = binary.LittleEndian.AppendUint32(out, uint32(len(v)))
+		out = append(out, v...)
+	}
+	return string(out)
 }
 
 // newTestCluster flushes the shared Redis database and starts numReplicas
