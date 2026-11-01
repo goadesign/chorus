@@ -16,7 +16,7 @@
     //   { kind: "dm", pairKey: "codex↔opus", a: "codex", b: "opus" }
     //   { kind: "all" }
     selectedTarget: null,
-    // selectedMessage: null | { target: "#chorus" | "@recipient", seq: number }
+    // selectedMessage: null | { target: "#chorus" | "@recipient", seq: number, reader?: string }
     selectedMessage: null,
     // timeWindow: null | { startMs: number, endMs: number }
     timeWindow: null,
@@ -284,6 +284,43 @@
     writeHashState();
   }
 
+  // findViewMessage locates a message by its channel or inbox target and
+  // sequence number inside the current swarm view snapshot.
+  function findViewMessage(view, target, seq) {
+    if (!view || !target || !seq) return null;
+    if (target.startsWith("#")) {
+      const ch = (view.channels || []).find((c) => c.name === target);
+      return (ch?.messages || []).find((m) => m.seq === seq) || null;
+    }
+    if (target.startsWith("@")) {
+      const recipient = target.slice(1);
+      const ib = (view.inboxes || []).find((i) => i.recipient === recipient);
+      return (ib?.messages || []).find((m) => m.seq === seq) || null;
+    }
+    return null;
+  }
+
+  // viewTimeBounds returns the earliest and latest message timestamps across
+  // all channels and inboxes in the current swarm view snapshot.
+  function viewTimeBounds(view) {
+    if (!view) return null;
+    let first = Infinity;
+    let last = -Infinity;
+    for (const ch of view.channels || []) {
+      for (const m of ch.messages || []) {
+        if (m.sent_at_ms < first) first = m.sent_at_ms;
+        if (m.sent_at_ms > last) last = m.sent_at_ms;
+      }
+    }
+    for (const ib of view.inboxes || []) {
+      for (const m of ib.messages || []) {
+        if (m.sent_at_ms < first) first = m.sent_at_ms;
+        if (m.sent_at_ms > last) last = m.sent_at_ms;
+      }
+    }
+    return first <= last ? { first, last } : null;
+  }
+
   const actions = {
     selectTarget(targetObj) {
       if (!targetObj) return false;
@@ -301,10 +338,81 @@
       return true;
     },
 
-    selectMessage(target, seq) {
-      if (!target || !seq || seq <= 0) state.selectedMessage = null;
-      else state.selectedMessage = { target, seq };
-      renderAll({ revealSelection: Boolean(target && seq > 0) });
+    // selectMessage either inspects a timeline point or mark in place
+    // (opts.reveal === false: keeps active tab, filters, disclosures, and chart
+    // viewport position unchanged) or reveals the message in #message-stream
+    // (opts.reveal !== false: switches target tab if needed, moves an existing
+    // timeWindow while preserving its duration, clears excluding agent/search
+    // filters, and expands and scrolls the message disclosure into view).
+    selectMessage(target, seq, opts = {}) {
+      if (!target || !seq || seq <= 0) {
+        state.selectedMessage = null;
+        renderAll({ preserveChartPosition: opts?.reveal === false });
+        return;
+      }
+      state.selectedMessage = {
+        target,
+        seq,
+        ...(opts?.reader ? { reader: opts.reader } : {}),
+      };
+      if (opts?.reveal === false) {
+        renderAll({ revealSelection: false, preserveChartPosition: true });
+        return;
+      }
+      const msg = findViewMessage(state.view, target, seq);
+      if (state.selectedTarget?.kind !== "all") {
+        let nextTarget = null;
+        if (target.startsWith("#")) {
+          if (state.selectedTarget?.kind !== "channel" || state.selectedTarget.name !== target) {
+            nextTarget = { kind: "channel", name: target };
+          }
+        } else if (target.startsWith("@") && msg) {
+          const recipient = target.slice(1);
+          const [a, b] = msg.sender <= recipient ? [msg.sender, recipient] : [recipient, msg.sender];
+          const pairKey = `${a}↔${b}`;
+          if (state.selectedTarget?.kind !== "dm" || state.selectedTarget.pairKey !== pairKey) {
+            nextTarget = { kind: "dm", pairKey, a, b };
+          }
+        }
+        if (nextTarget) {
+          state.selectedTarget = nextTarget;
+          state.replyTo = null;
+          renderReplyChip();
+          syncComposerTarget(nextTarget, false);
+          writeHashState();
+        }
+      }
+      if (msg) {
+        if (state.timeWindow && (msg.sent_at_ms < state.timeWindow.startMs || msg.sent_at_ms > state.timeWindow.endMs)) {
+          const bounds = viewTimeBounds(state.view);
+          if (bounds) {
+            const dur = state.timeWindow.endMs - state.timeWindow.startMs;
+            const lastEnd = bounds.last + 60 * 1000;
+            const start = Math.max(
+              Math.min(bounds.first, lastEnd - dur),
+              Math.min(Math.round(msg.sent_at_ms - dur / 2), lastEnd - dur)
+            );
+            state.timeWindow = { startMs: start, endMs: start + dur };
+          }
+        }
+        if (state.filterAgent) {
+          const handle = state.filterAgent;
+          const mentioned = [...String(msg.text || "").matchAll(/(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g)]
+            .some((m) => m[2].toLowerCase() === handle.toLowerCase());
+          if (msg.sender !== handle && target !== `@${handle}` && !mentioned) {
+            state.filterAgent = "";
+          }
+        }
+        if (state.searchQuery) {
+          const haystack = `${target} ${msg.sender} #${msg.seq} ${msg.text}`.toLowerCase();
+          if (!haystack.includes(state.searchQuery.toLowerCase())) {
+            state.searchQuery = "";
+            const searchInput = document.getElementById("search-input");
+            if (searchInput) searchInput.value = "";
+          }
+        }
+      }
+      renderAll({ revealSelection: true });
     },
 
     setTimeWindow(win) {

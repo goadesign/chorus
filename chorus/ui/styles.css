@@ -879,14 +879,6 @@ body[data-theme="light"] .provider-openai {
   word-break: break-word;
 }
 
-.details-message-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  flex: 1;
-}
-
 .detail-actions,
 .pin-actions,
 .message-actions {
@@ -977,6 +969,7 @@ body[data-theme="light"] .provider-openai {
 
 /* 3. Interactive Sliding Swarm Timeline */
 .timeline-section {
+  position: relative;
   width: 100%;
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -1100,6 +1093,7 @@ body[data-theme="light"] .provider-openai {
   stroke: var(--brand-amber);
   stroke-width: 1.75;
   stroke-dasharray: 4 3;
+  cursor: pointer;
 }
 
 .tl-pin-label {
@@ -1107,6 +1101,7 @@ body[data-theme="light"] .provider-openai {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .tl-reply {
@@ -1119,6 +1114,11 @@ body[data-theme="light"] .provider-openai {
 .tl-read {
   fill: var(--teal);
   opacity: 0.9;
+  cursor: pointer;
+}
+
+.tl-read:hover {
+  opacity: 1;
 }
 
 .tl-read.is-behind {
@@ -1185,6 +1185,129 @@ body[data-theme="light"] .provider-openai {
 .tl-jump:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.tl-card {
+  position: absolute;
+  z-index: 10;
+  max-width: min(440px, calc(100% - 24px));
+  min-width: 240px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 20px;
+}
+
+.tl-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tl-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.tl-card-note {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.tl-card-body {
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 20px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tl-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.tl-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.tl-card-actions button:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+
+.tl-card-actions button:focus-visible,
+.tl-card-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tl-card-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tl-card-close:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .tl-empty {
@@ -1831,11 +1954,6 @@ body[data-theme="light"] .provider-openai {
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.message-body.is-standalone {
-  padding: 8px 0 4px;
-  border-top: 1px solid var(--border);
 }
 
 .message-body code {

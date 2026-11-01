@@ -54,7 +54,6 @@
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderMessages(els.streamEl, visible, targetEntries, state, actions);
-    renderSelection(els.detailsEl, state, actions, entries, visible);
 
     if (!els.preserveScroll) {
       restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
@@ -212,7 +211,7 @@
       const cardChildren = [headerRow];
       if (agent.role && agent.role !== "human") cardChildren.push(element("span", "agent-role-inline", agent.role));
       cardChildren.push(element("span", "agent-latest",
-        ...(entry ? [`${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): `, formattedPreview(entry.message.text)] : ["No retained messages"])));
+        ...(entry ? [`${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): `, formattedPreview(entry.message.text)] : ["No messages available"])));
       const button = element("button",
         `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
         ...cardChildren);
@@ -220,7 +219,6 @@
       button.dataset.focusKey = `agent:${agent.handle}`;
       button.setAttribute("aria-label", `Inspect @${agent.handle}`);
       button.addEventListener("click", () => {
-        actions.selectMessage(null, 0);
         if (els.detailsEl.dataset.agent === agent.handle) {
           delete els.detailsEl.dataset.agent;
           els.detailsEl.replaceChildren();
@@ -690,8 +688,7 @@
   // newest edge when at the top with no open disclosure.
   function restoreScrollSnapshot(root, scrollEl, snapshot) {
     if (!root || !scrollEl || !snapshot) return;
-    const hasPriority = snapshot.candidates.some((c) => c.priority);
-    if (snapshot.oldTop <= 4 && !snapshot.hasOpenDisclosure && !hasPriority) return;
+    if (snapshot.oldTop <= 4 && !snapshot.hasOpenDisclosure) return;
     scrollEl.scrollTop = snapshot.oldTop;
     const afterRows = [...root.querySelectorAll("[data-disclosure-key]")].filter((node) => isVisibleAnchorRow(node, root));
     const ordered = [
@@ -714,18 +711,22 @@
     }
   }
 
-  // revealSelectedMessage keeps the selected message's disclosure (and parent
-  // thread disclosure) open, and scrolls it into view when shouldScroll is true
-  // (on explicit actions.selectMessage calls).
+  // revealSelectedMessage opens the selected message's disclosure (and parent
+  // thread disclosure) and scrolls it into view when shouldScroll is true
+  // (on explicit navigation such as "Show in conversation" or Enter).
   function revealSelectedMessage(root, state, shouldScroll) {
+    if (!shouldScroll) return;
     const selected = state.selectedMessage;
     if (!selected || !root) return;
     const node = [...root.querySelectorAll("[data-message-key]")].find((item) => item.dataset.messageKey === `${selected.target}:${selected.seq}`);
     if (node) {
       node.open = true;
       const thread = node.closest(".thread-disclosure");
-      if (thread) thread.open = true;
-      if (shouldScroll) node.scrollIntoView({ block: "nearest" });
+      if (thread) {
+        thread.open = true;
+        thread.classList.remove("is-selected");
+      }
+      node.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -839,7 +840,8 @@
     const details = element("details", `thread-disclosure${rootFromHuman ? " is-human-message" : ""}${latestReplyToHuman ? " is-human-response" : ""}`);
     details.dataset.disclosureKey = key;
     details.dataset.anchorVersion = `${entries.length}:${last.message.seq}`;
-    details.open = openKeys.has(key) || entries.some((entry) => openKeys.has(`message:${coordinate(entry)}`) || selected(entry, state));
+    details.open = openKeys.has(key) || entries.some((entry) => openKeys.has(`message:${coordinate(entry)}`));
+    details.classList.toggle("is-selected", !details.open && entries.some((entry) => selected(entry, state)));
 
     const lastFromHuman = isFromHumanMessage(last.message);
     const senderColor = senderColorClass(last.message.sender, state, lastFromHuman);
@@ -895,7 +897,7 @@
       }
       return element("div", "message-parent-quote is-unretained",
         svgIcon("reply", "icon icon-xs"),
-        `In reply to #${message.reply_to} (older than retained history)`);
+        `In reply to #${message.reply_to} (earlier message unavailable)`);
     }
     return element("div", "message-parent-quote is-unretained",
       svgIcon("reply", "icon icon-xs"),
@@ -936,7 +938,7 @@
     details.dataset.messageKey = key;
     details.dataset.disclosureKey = `message:${key}`;
     details.dataset.anchorVersion = `1:${message.seq}`;
-    details.open = openKeys.has(`message:${key}`) || selected(entry, state);
+    details.open = openKeys.has(`message:${key}`);
     details.classList.toggle("is-selected", selected(entry, state));
 
     const senderColor = senderColorClass(message.sender, state, fromHuman);
@@ -981,60 +983,6 @@
     detailPane.append(controls);
     details.append(detailPane);
     return details;
-  }
-
-  function renderSelection(root, state, actions, entries, visible) {
-    const choice = state.selectedMessage;
-    if (!choice) {
-      if (!root.dataset.agent) root.replaceChildren();
-      return;
-    }
-    const entry = entries.find((item) => item.target === choice.target && item.message.seq === choice.seq);
-    delete root.dataset.agent;
-    if (visible.some((item) => selected(item, state))) {
-      root.replaceChildren();
-      return;
-    }
-    if (!entry) {
-      root.replaceChildren(empty("Message is no longer retained", "Choose another message from the timeline."));
-      return;
-    }
-    const byTarget = new Map();
-    for (const item of entries) {
-      if (!byTarget.has(item.target)) byTarget.set(item.target, new Map());
-      byTarget.get(item.target).set(item.message.seq, item);
-    }
-    const fromHuman = isFromHumanMessage(entry.message);
-    const toHumanBadge = humanResponseBadge(entry, byTarget);
-    const senderColor = senderColorClass(entry.message.sender, state, fromHuman);
-    const headerLeft = element("div", "details-message-header",
-      avatarNode(entry.message.sender, state, "", fromHuman),
-      element("span", "message-meta",
-        element("strong", `message-sender ${senderColor}`.trim(), `@${entry.message.sender}`),
-        ...(fromHuman ? [element("span", "human-pill", "Human")] : []),
-        ...(toHumanBadge ? [element("span", "human-response-pill", toHumanBadge)] : []),
-        element("span", "message-coordinate", `${entry.target}#${entry.message.seq}`),
-        element("time", "message-time", `${age(entry.message.sent_at_ms)} ago · ${clock(entry.message.sent_at_ms)}`)));
-
-    const nodes = [
-      element("div", "details-heading",
-        headerLeft,
-        iconButton("close", "Close", "close-message", () => actions.selectMessage(null, 0))),
-    ];
-    const parentQuote = renderParentContext(entry, state, actions, byTarget, `selected:${coordinate(entry)}`);
-    if (parentQuote) nodes.push(parentQuote);
-    nodes.push(element("div", "message-body is-standalone", formattedText(entry.message.text)));
-    const controls = element("div", "detail-actions");
-    if (entry.target.startsWith("#")) {
-      controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], "reply-selected",
-        () => actions.setReplyTo(entry.target, entry.message.seq, entry.message.sender, fromHuman)));
-    } else {
-      controls.append(actionButton(["Message ", handleBadgeNode(entry.message.sender, state, "", fromHuman)], "dm-selected",
-        () => actions.composeDM(entry.message.sender)));
-    }
-    controls.append(copyTextButton(entry.message.text, "copy-selected"));
-    nodes.push(controls);
-    replaceKeepingFocus(root, nodes);
   }
 
   function isFromHumanMessage(message) {
