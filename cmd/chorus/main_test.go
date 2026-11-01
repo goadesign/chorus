@@ -400,7 +400,6 @@ func TestRunWatch(t *testing.T) {
 	for _, agent := range []string{"api", "db", "qa"} {
 		if _, err := svc.Join(ctx, &genchorus.JoinPayload{
 			Agent:    agent,
-			Model:    "test-model",
 			Swarm:    "default",
 			Channels: []string{"#auth"},
 			Model:    "test-model",
@@ -568,7 +567,6 @@ func TestRedisHandover(t *testing.T) {
 	for _, agent := range []string{"lead", "watcher", "reviewer"} {
 		if _, err := svcA.Join(context.Background(), &genchorus.JoinPayload{
 			Agent:    agent,
-			Model:    "test-model",
 			Swarm:    "default",
 			Channels: []string{"#foundry"},
 			Model:    "test-model",
@@ -669,7 +667,6 @@ func TestRedisHandover(t *testing.T) {
 	// 5. Server B tool calls succeed and access pre-existing swarm state.
 	whoRes, err := svcB.Who(context.Background(), &genchorus.WhoPayload{
 		Agent: "lead",
-		Model: "test-model",
 		Swarm: "default",
 		Model: "test-model",
 	})
