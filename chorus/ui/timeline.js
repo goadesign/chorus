@@ -553,9 +553,17 @@
         width: String(AVATAR), height: String(AVATAR),
       }));
     } else {
-      const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y + 4), "text-anchor": "middle" });
-      initial.textContent = lane.handle.slice(0, 1).toUpperCase();
-      initial.setAttribute("fill", colors.get(lane.handle));
+      // No logo (a person, or an agent without a recognized model): draw the
+      // same two-letter badge the participant cards use, a soft disc in the
+      // lane's color with the letters centered on the lane line.
+      const color = colors.get(lane.handle);
+      svg.appendChild(el("circle", {
+        class: "tl-avatar-disc", cx: String(cx), cy: String(y), r: String(AVATAR / 2),
+        fill: color, "fill-opacity": "0.14",
+      }));
+      const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y), "text-anchor": "middle" });
+      initial.textContent = lane.handle.slice(0, 2).toLowerCase();
+      initial.setAttribute("fill", color);
       svg.appendChild(initial);
     }
     const label = el("text", {
