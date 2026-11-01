@@ -212,7 +212,9 @@
       drawLane(svg, lane, y, width, colors);
     });
     if (lanes.length === 0) {
-      const empty = el("text", { class: "tl-label tl-empty-range", x: (PLOT_X0 + plotW / 2).toFixed(1), y: String(laneTop + LANE_H / 2 + 4), "text-anchor": "middle" });
+      // Centered on the whole chart: with no lanes the label gutter is empty,
+      // and the plot alone is narrower than this text on a 320px chart.
+      const empty = el("text", { class: "tl-label tl-empty-range", x: (width / 2).toFixed(1), y: String(laneTop + LANE_H / 2 + 4), "text-anchor": "middle" });
       empty.textContent = "No activity in this window";
       svg.appendChild(empty);
     }
