@@ -163,7 +163,7 @@ func viewUsage() {
 	fmt.Fprintln(os.Stderr, `Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] view COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    swarms: List the swarms that agents joined or called who in, sorted by name. A listed swarm may have no live agents left until its agents' records expire.`)
+	fmt.Fprintln(os.Stderr, `    swarms: List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.`)
 	fmt.Fprintln(os.Stderr, `    view: Return one swarm's agents, channels, inboxes, and retained messages. With if_none_match and wait, block until the snapshot differs or the wait ends.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
@@ -176,7 +176,7 @@ func viewSwarmsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `List the swarms that agents joined or called who in, sorted by name. A listed swarm may have no live agents left until its agents' records expire.`)
+	fmt.Fprintln(os.Stderr, `List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.`)
 
 	// Flags list
 

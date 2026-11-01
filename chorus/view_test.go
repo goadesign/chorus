@@ -249,6 +249,40 @@ func TestSwarmListAndUnknownSwarm(t *testing.T) {
 	assert.Empty(t, doc.Inboxes)
 }
 
+// TestSwarmListOmitsSwarmsWithoutLiveAgents verifies that GET /swarms leaves
+// out a swarm whose only agent went idle past the online window, while a
+// dashboard that names that swarm directly still gets its history.
+func TestSwarmListOmitsSwarmsWithoutLiveAgents(t *testing.T) {
+	cluster := newTestCluster(t, 1, []chorus.Option{chorus.WithOnlineWindow(2 * time.Minute)})
+	idle := cluster.newAgent(0, "idle-swarm", "sleeper")
+	idle.call("join", map[string]any{"channels": []string{"#old"}})
+	idle.send("#old", "last words", 0)
+	active := cluster.newAgent(0, "busy-swarm", "worker")
+	active.call("join", map[string]any{"channels": []string{"#now"}})
+	base := cluster.replicas[0].httpServer.URL
+	assert.Equal(t, []string{"busy-swarm", "idle-swarm"}, listSwarms(t, base))
+
+	cluster.advanceClock(3 * time.Minute)
+	active.call("who", map[string]any{})
+
+	assert.Equal(t, []string{"busy-swarm"}, listSwarms(t, base))
+	doc, _ := getView(t, base, "idle-swarm", "", 0, http.StatusOK)
+	require.Len(t, doc.Channels, 1)
+}
+
+// listSwarms returns the swarm names that GET /swarms reports.
+func listSwarms(t *testing.T, base string) []string {
+	t.Helper()
+	resp := viewRequest(t, base+"/swarms", nil)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var list struct {
+		Swarms []string `json:"swarms"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	return list.Swarms
+}
+
 // TestUnboundSwarmViewHonorsWait verifies that a conditional request for a
 // swarm no agent is bound to waits for the requested time before answering
 // 304, so a polling page cannot spin, and that it stops waiting when the
