@@ -40,30 +40,23 @@ type (
 
 	// agentRecord is the presence record stored under "agent:<handle>" in a
 	// swarm's replicated map. Every Chorus call by the agent may rewrite it,
-	// so it holds nothing the agent declares; see profileRecord.
+	// so it holds nothing the agent declares; see prefixRole and prefixModel.
 	agentRecord struct {
 		// LastSeenUnix is the Unix timestamp in seconds when the agent last
 		// invoked a Chorus operation.
 		LastSeenUnix int64 `json:"ts"`
-	}
-
-	// profileRecord is what the agent declared on its most recent join or
-	// who, stored under "profile:<handle>". Only join and who write it, so a
-	// presence update racing a new declaration cannot bring back old values.
-	profileRecord struct {
-		// Role is the optional human-readable responsibility advertised by the agent.
-		Role string `json:"role,omitempty"`
-		// Model is the model the agent declared ("human" for a person using
-		// the dashboard).
-		Model string `json:"model"`
 	}
 )
 
 const (
 	// prefixAgent prefixes agent presence records in the swarm rmap.
 	prefixAgent = "agent:"
-	// prefixProfile prefixes the role and model each agent declared on join or who.
-	prefixProfile = "profile:"
+	// prefixRole prefixes the role each agent last declared on join or who.
+	// Only join and who write it, and only when they pass a role.
+	prefixRole = "role:"
+	// prefixModel prefixes the model each agent last declared on join or who
+	// ("human" for a person using the dashboard). Only join and who write it.
+	prefixModel = "model:"
 	// prefixChannel prefixes channel topic records in the swarm rmap.
 	prefixChannel = "chan:"
 	// prefixPin prefixes active pinned channel message records in the swarm rmap.
@@ -103,7 +96,7 @@ func formatDirectory(
 	var b strings.Builder
 
 	b.WriteString("me: ")
-	writeHandle(&b, caller, parseProfile(snap[profileMapKey(caller)]))
+	writeHandle(&b, caller, snap)
 	b.WriteByte('\n')
 
 	var agents []string
@@ -126,7 +119,7 @@ func formatDirectory(
 		b.WriteString("(none)\n")
 	} else {
 		for _, handle := range agents {
-			writeHandle(&b, handle, parseProfile(snap[profileMapKey(handle)]))
+			writeHandle(&b, handle, snap)
 			b.WriteByte('\n')
 		}
 	}
@@ -192,7 +185,7 @@ func formatChannelMembers(
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		writeHandle(&b, handle, parseProfile(snap[profileMapKey(handle)]))
+		writeHandle(&b, handle, snap)
 	}
 	return b.String()
 }
@@ -272,29 +265,20 @@ func encodeAgentRecord(rec agentRecord) (string, error) {
 	return string(b), nil
 }
 
-// parseProfile decodes the profileRecord stored for an agent. An absent or
-// unreadable value yields the zero record (no role, no model).
-func parseProfile(raw string) profileRecord {
-	var p profileRecord
-	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &p)
-	}
-	return p
-}
-
 // writeHandle writes one participant as agents see it in directory and member
-// lines: "@api (API Engineer)" for an agent, and "human @raphael (Reviewer)"
-// for a person. The kind comes only from the declared model and is written
-// outside the parentheses, so no role text can make an agent read as a person.
-func writeHandle(b *strings.Builder, handle string, p profileRecord) {
-	if p.Model == humanModel {
+// lines, from the declarations in snap: "@api (API Engineer)" for an agent,
+// and "human @raphael (Reviewer)" for a person. The kind comes only from the
+// declared model and is written outside the parentheses, so no role text can
+// make an agent read as a person.
+func writeHandle(b *strings.Builder, handle string, snap map[string]string) {
+	if snap[modelMapKey(handle)] == humanModel {
 		b.WriteString("human ")
 	}
 	b.WriteByte('@')
 	b.WriteString(handle)
-	if p.Role != "" {
+	if role := snap[roleMapKey(handle)]; role != "" {
 		b.WriteString(" (")
-		b.WriteString(p.Role)
+		b.WriteString(role)
 		b.WriteString(")")
 	}
 }
@@ -433,9 +417,14 @@ func agentMapKey(agent string) string {
 	return prefixAgent + agent
 }
 
-// profileMapKey returns the rmap key storing the role and model agent declared.
-func profileMapKey(agent string) string {
-	return prefixProfile + agent
+// roleMapKey returns the rmap key storing the role agent declared.
+func roleMapKey(agent string) string {
+	return prefixRole + agent
+}
+
+// modelMapKey returns the rmap key storing the model agent declared.
+func modelMapKey(agent string) string {
+	return prefixModel + agent
 }
 
 // channelMapKey returns the rmap key storing the topic for channel ("#name").

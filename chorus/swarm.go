@@ -260,28 +260,20 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent string, now time.Tim
 	return nil
 }
 
-// declareProfile saves the role and model agent declared on join or who under
-// its own key, which presence updates never write. model is always set (the
-// tool contract requires it); an empty role keeps the previously declared
-// role. It waits for the local replica only when the saved values change, so
-// the caller's own response and later messages see the new declaration.
+// declareProfile saves what agent declared on join or who. The model is
+// always saved; the role is saved only when one is given, so an omitted role
+// leaves the stored one alone. Each value has its own key, so no declaration
+// reads and rewrites another one. Writing the model with SetAndWait also makes
+// this server's copy catch up with every earlier write, including a role saved
+// through another server, before the caller's response is built.
 func (s *swarmHandle) declareProfile(ctx context.Context, agent, role, model string) error {
-	key := profileMapKey(agent)
-	raw, _ := s.state.Get(key)
-	current := parseProfile(raw)
-	next := profileRecord{Role: current.Role, Model: model}
 	if role != "" {
-		next.Role = role
+		if _, err := s.state.Set(ctx, roleMapKey(agent), role); err != nil {
+			return fmt.Errorf("save role for %q: %w", agent, err)
+		}
 	}
-	if raw != "" && next == current {
-		return nil
-	}
-	encoded, err := json.Marshal(next)
-	if err != nil {
-		return fmt.Errorf("encode profile for %q: %w", agent, err)
-	}
-	if _, err := s.state.SetAndWait(ctx, key, string(encoded)); err != nil {
-		return fmt.Errorf("save profile for %q: %w", agent, err)
+	if _, err := s.state.SetAndWait(ctx, modelMapKey(agent), model); err != nil {
+		return fmt.Errorf("save model for %q: %w", agent, err)
 	}
 	return nil
 }
@@ -457,8 +449,11 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 		if _, err := s.state.Delete(ctx, subMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired subscriptions for %q: %w", handle, err)
 		}
-		if _, err := s.state.Delete(ctx, profileMapKey(handle)); err != nil {
-			return false, fmt.Errorf("delete expired profile %q: %w", handle, err)
+		if _, err := s.state.Delete(ctx, roleMapKey(handle)); err != nil {
+			return false, fmt.Errorf("delete expired role %q: %w", handle, err)
+		}
+		if _, err := s.state.Delete(ctx, modelMapKey(handle)); err != nil {
+			return false, fmt.Errorf("delete expired model %q: %w", handle, err)
 		}
 		if _, err := s.state.Delete(ctx, agentMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
@@ -523,8 +518,11 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 		if _, err := s.state.Delete(ctx, subMapKey(agent)); err != nil {
 			return "", fmt.Errorf("delete empty subscription key for %q: %w", agent, err)
 		}
-		if _, err := s.state.Delete(ctx, profileMapKey(agent)); err != nil {
-			return "", fmt.Errorf("delete profile of departed agent %q: %w", agent, err)
+		if _, err := s.state.Delete(ctx, roleMapKey(agent)); err != nil {
+			return "", fmt.Errorf("delete role of departed agent %q: %w", agent, err)
+		}
+		if _, err := s.state.Delete(ctx, modelMapKey(agent)); err != nil {
+			return "", fmt.Errorf("delete model of departed agent %q: %w", agent, err)
 		}
 		if err := s.deleteAndWait(ctx, agentMapKey(agent)); err != nil {
 			return "", fmt.Errorf("unregister departed agent %q: %w", agent, err)
@@ -720,12 +718,11 @@ func (s *swarmHandle) appendUnderSemaphore(
 	// The sender's declared model at publication time decides, once and for
 	// good, whether this message came from a person; the role is free text and
 	// never decides it.
-	rawProfile, _ := s.state.Get(profileMapKey(sender))
-	senderProfile := parseProfile(rawProfile)
+	senderModel, _ := s.state.Get(modelMapKey(sender))
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
-		Human:   senderProfile.Model == humanModel,
+		Human:   senderModel == humanModel,
 		Text:    text,
 		ReplyTo: replyTo,
 	})

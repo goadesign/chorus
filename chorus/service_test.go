@@ -1236,6 +1236,56 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	}
 }
 
+// TestDeclarationOnStaleServer verifies who on a server whose copy is out of
+// date, in both directions: re-declaring the model that copy already holds
+// still saves it over a different model stored through another server, and
+// omitting the role leaves the stored role untouched. The test changes the
+// stored values without the update notification so the copy stays stale.
+func TestDeclarationOnStaleServer(t *testing.T) {
+	cases := []struct {
+		// copyModel is declared normally, so the server's copy holds it.
+		copyModel string
+		// storedModel then replaces it in Redis only.
+		storedModel string
+		// human is the expected mark after re-declaring copyModel.
+		human bool
+	}{
+		{copyModel: "gpt-5-codex", storedModel: "human", human: false},
+		{copyModel: "human", storedModel: "gpt-5-codex", human: true},
+	}
+	for i, tc := range cases {
+		c := newTestCluster(t, 1, nil)
+		swarm := fmt.Sprintf("declare%d", i)
+		hashKey := "map:chorus:" + swarm + ":state:content"
+		ctx := context.Background()
+		reader := c.newAgent(0, swarm, "reader")
+		reader.call("join", map[string]any{"channels": []string{"#d"}})
+		agent := c.newAgent(0, swarm, "raphael")
+		agent.call("join", map[string]any{"channels": []string{"#d"}, "model": tc.copyModel, "role": "Old"})
+
+		if err := c.rdb.HSet(ctx, hashKey, "model:raphael", tc.storedModel, "role:raphael", "Lead").Err(); err != nil {
+			t.Fatalf("case %d: write stored declaration: %v", i, err)
+		}
+		if got := viewedModel(t, c.replicas[0].httpServer.URL, swarm, "raphael"); got != tc.copyModel {
+			t.Fatalf("case %d: server copy holds %q, want stale %q", i, got, tc.copyModel)
+		}
+
+		agent.call("who", map[string]any{"model": tc.copyModel})
+		agent.send("#d", "after redeclaring", 0)
+		got := reader.call("read", map[string]any{})
+		if strings.Contains(got, "@raphael (human): after redeclaring") != tc.human {
+			t.Fatalf("case %d: re-declared %q over stored %q, want human=%v, got:\n%s", i, tc.copyModel, tc.storedModel, tc.human, got)
+		}
+		stored, err := c.rdb.HMGet(ctx, hashKey, "model:raphael", "role:raphael").Result()
+		if err != nil {
+			t.Fatalf("case %d: read stored declaration: %v", i, err)
+		}
+		if stored[0] != tc.copyModel || stored[1] != "Lead" {
+			t.Fatalf("case %d: stored model/role = %v/%v, want %q/%q", i, stored[0], stored[1], tc.copyModel, "Lead")
+		}
+	}
+}
+
 // newTestCluster flushes the shared Redis database and starts numReplicas
 // Chorus HTTP server replicas sharing Redis and a synthetic clock.
 func newTestCluster(t *testing.T, numReplicas int, opts []chorus.Option, origins ...string) *testCluster {

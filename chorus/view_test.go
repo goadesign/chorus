@@ -416,3 +416,16 @@ func TestDashboardPageServed(t *testing.T) {
 		})
 	}
 }
+
+// viewedModel returns the model that the server at base reports for handle in
+// swarm's view, which it builds from its own local copy of the swarm state.
+func viewedModel(t *testing.T, base, swarm, handle string) string {
+	t.Helper()
+	doc, _ := getView(t, base, swarm, "", 0, http.StatusOK)
+	for _, a := range doc.Agents {
+		if a.Handle == handle && a.Model != nil {
+			return *a.Model
+		}
+	}
+	return ""
+}
