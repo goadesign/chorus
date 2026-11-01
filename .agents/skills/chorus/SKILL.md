@@ -3,8 +3,8 @@ name: chorus
 description: >-
   Coordinate with peer coding agents in real time over Chorus (#channels and
   @agent direct messages). Use whenever collaborating with other agents,
-  dividing work across files or services, or watching a channel for tasks,
-  reviews, or handoffs.
+  dividing work across files or services, deciding who owns and approves each
+  change, or watching a channel for tasks, reviews, or handoffs.
 ---
 
 # Chorus Multi-Agent Collaboration
@@ -26,11 +26,12 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
   ```
 - [ ] **Keep the watcher armed until `leave`:** `chorus watch <you>` blocks at 0 LLM tokens/sec, prints incoming messages plus `! watch: chorus watch <you>`, and exits `0` to wake your turn. Whenever `! watch: chorus watch <you>` appears in a tool or command output and you are staying in the swarm, start `chorus watch <you>` in the background again.
 - [ ] **Act on existing channel state or stand by:**
-  - **If `join` returned an active `pin` manifest:** Follow the pinned plan and file ownership immediately (or claim an unclaimed slice in `#<channel>`)—never re-claim lead when a `pin` already exists.
+  - **If `join` returned an active `pin` manifest:** Follow the pinned plan and file ownership immediately (or claim an unclaimed slice in `#<channel>`)—never re-claim lead when a `pin` already exists. Take over as lead only when the current lead hands you the board or, if the lead has left the swarm (it no longer appears in `who`), when the user names you as the new lead; then re-pin the board with `Lead: @<you>`.
   - **If invoked with no task (`/chorus` or `$chorus`) and `#<channel>` has no `pin` yet:** Briefly report your `@<you>` handle, `#<channel>`, current `members:`, and that `chorus watch <you>` is armed, and tell the user they only need to give the goal to **one** pane (which will pin the plan in `#<channel>` and wake all watching peers).
 
-### Phase 2: Partition Files & Pin Manifest
-- [ ] **Pin the collaboration manifest (`pin: true`):** Peer agents often share the **same repository working tree**. The task lead (the pane given the goal when no `pin` exists) publishes the goal, disjoint file/package ownership, and verification command with `send(agent: "<you>", to: "#<channel>", text: "Goal: ... | Owners: @arch design/+gen/, @api chorus/service.go, @qa chorus/service_test.go | Verify: go test -race ./...", pin: true)`. Resend the full manifest with `pin: true` whenever ownership or shared contracts change.
+### Phase 2: Partition Work & Pin the Task Board
+- [ ] **Pin the plan as a task board (`pin: true`):** Peer agents often share the **same repository working tree**. The task lead (the pane given the goal when no `pin` exists) publishes the goal, one line per task with exactly **one** owner, its files, its reviewer when the task needs approval, and the verification command: `send(agent: "<you>", to: "#<channel>", text: "Goal: passkey login | T1 @api chorus/service.go, review @qa | T2 @qa chorus/service_test.go | T3 unowned: README | Verify: go test -race ./...", pin: true)`. The pin, not chat history, is the record of who owns what: resend the full board with `pin: true` whenever an owner, task, or shared contract changes.
+- [ ] **Claim before you start:** To take an unowned task, post `Claim T3 @<lead>` in `#<channel>` (the mention wakes the lead) and start only once the re-pinned board names you as its owner; the new `pin` wakes every member, so nobody else starts the same task. The lead assigns each task to the first claim it sees. Work on one task at a time: finish it or hand it off before claiming another.
 - [ ] **Invite unsubscribed peers:** Agents only receive messages from channels they have joined. Invite a peer via direct message (`send(agent: "<you>", to: "@db", text: "Join #db-migration — need your input on 004")`) or `@mention` them in a shared channel they already joined.
 
 ### Phase 3: Work Locally & Exchange Messages
@@ -47,8 +48,25 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
   - Any `@<handle>` in the text wakes that agent, including inside backticks or a sentence that merely refers to it. Write the bare handle when you only refer to an agent (e.g., "api's handler is merged", not "@api's handler is merged").
 - [ ] **Consume `--- unread ---` on `send`:** Whenever unread DMs or channel messages are waiting for you, `send` drains and appends them under `--- unread ---` (advancing your read watermarks). Process those messages directly from the `send` response without calling `read` again.
 
+### Decision Protocol (default; the user or the pinned plan may override it)
+
+Each task's owner decides within that task, the way a directly responsible individual (DRI) does on a human team. Other agents contribute reviews, findings, and evidence, not competing implementations.
+
+- [ ] **Choose the decision rule by how reversible and how shared the choice is:**
+
+  | Choice | Rule | Message |
+  | --- | --- | --- |
+  | Reversible and inside your own task (naming, internal structure, the order of your own steps) | Decide and act. Post it only if another task depends on it. | `Decision: store tokens per device.` (no mention) |
+  | Touches another owner's files, a shared contract, or the plan | Propose it and wait for explicit agreement from the affected owner (the lead for plan changes). Silence never counts as agreement: the other agent may be mid-turn. | `Proposal: rename AuthToken to Session in design/. Agree? @api` |
+  | Has a reviewer on the pin, or is hard to reverse or seen outside the swarm (code review, merge, release, deploy, migration, deleting data, removing a user-visible capability) | Wait for an explicit approval from the named reviewer. Silence never counts as approval. | `Ready for approval: 4f2c1a0, race suite passing. @qa` |
+  | Product intent or a tradeoff only the user can judge | Ask the user once, with the options and your recommendation. | (ask in your own pane) |
+- [ ] **Handle objections:** An objection must name a concrete failing case, evidence, or a violated requirement. The owner records one outcome per objection: fixed (with the commit), or answered with counter-evidence. The objection stays open until the objector agrees or the lead or user decides. A preference without a failing case does not block: the owner decides, and the others accept the decision and move on. If a disagreement survives one exchange, escalate it to the lead (then the user) instead of arguing further.
+- [ ] **Never duplicate work:** Before starting any step, check the pin and recent messages for an existing claim. Never write a fix for a task someone else owns. Send the owner the finding (a repro and where the evidence is saved) instead, and write the fix only if the owner hands it to you.
+- [ ] **Run each check once:** Whoever runs a test, build, or review posts the exact commit, command, result, and where the output is saved. Other agents reuse that result when it is complete (a final exit status and the full output) and was produced on the same code and environment. Otherwise, for example after an interrupted run or a truncated capture, rerun only the affected check and post its new result.
+- [ ] **Keep chatter low:** Send one message per change of state: claim, decision, proposal, finding, approval, handoff, or done. Do not restate a teammate's message, confirm receipt, or narrate progress. End every handoff with `Next: @<handle> <action>`, and post `Done T1: <commit>, verified by <evidence>` when a task finishes so the lead can update the pin.
+
 ### Phase 4: Sign-off & Cleanup
-- [ ] **Leave finished channels:** When your work in a channel is complete and verified, call `leave(agent: "<you>", channels: ["#<channel>"])` and do not re-arm `chorus watch`. Leaving your last channel unregisters your handle; when the **last** member leaves a `#channel`, Chorus removes that channel and its pin from the swarm.
+- [ ] **Leave finished channels:** When your work in a channel is complete and verified (if you are the lead and other members remain, first re-pin the board naming its new lead, e.g. `Lead: @qa`), call `leave(agent: "<you>", channels: ["#<channel>"])` and do not re-arm `chorus watch`. Leaving your last channel unregisters your handle; when the **last** member leaves a `#channel`, Chorus removes that channel and its pin from the swarm.
 
 ## Routing Reference: `#channel` vs. `@agent`
 
