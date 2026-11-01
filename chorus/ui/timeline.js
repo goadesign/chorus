@@ -388,24 +388,36 @@
   // placeCard adds card to rootEl and positions it next to the anchor at
   // (x, y) in chart coordinates, kept horizontally inside the chart. It opens
   // below the anchor, over the lanes below and the page under the chart, so
-  // it hides as few other messages as possible; it opens above only when
-  // below would run past the bottom of the browser window and above fits.
-  // The card floats above the page, so placing it never moves layout.
+  // it hides as few other messages as possible. The space that counts is
+  // the visible part of the scrolling area that holds the chart (between the
+  // page header and the composer), not the browser window: the card opens
+  // above when below does not fit there and above does, and otherwise on the
+  // side with more room, limited to that room so its buttons stay visible
+  // (the card scrolls inside). The card floats above the page, so placing it
+  // never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
     card.style.visibility = "hidden";
     rootEl.appendChild(card);
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
+    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
     const ox = svgBox.left - rootBox.left - rootEl.clientLeft;
     const oy = svgBox.top - rootBox.top - rootEl.clientTop;
     const cw = card.offsetWidth;
     const ch = card.offsetHeight;
     const gap = DOT_R_SELECTED + 6;
-    const left = Math.max(PAD, Math.min(x - cw / 2, width - cw - PAD));
     const anchorTop = svgBox.top + y;
-    const fitsBelow = anchorTop + gap + ch <= window.innerHeight;
-    const fitsAbove = anchorTop - gap - ch >= 0;
-    const top = fitsBelow || !fitsAbove ? y + gap : y - gap - ch;
+    const roomBelow = area.bottom - (anchorTop + gap) - PAD;
+    const roomAbove = anchorTop - gap - area.top - PAD;
+    const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
+    const room = below ? roomBelow : roomAbove;
+    if (ch > room) {
+      card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
+      card.style.overflowY = "auto";
+    }
+    const shown = Math.min(ch, Math.max(0, room));
+    const left = Math.max(PAD, Math.min(x - cw / 2, width - cw - PAD));
+    const top = below ? y + gap : y - gap - shown;
     card.style.left = `${Math.round(ox + left)}px`;
     card.style.top = `${Math.round(oy + top)}px`;
     card.style.visibility = "";
