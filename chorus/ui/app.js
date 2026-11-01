@@ -563,12 +563,17 @@
       const nextChartEl = timelineRoot.querySelector(".tl") || timelineRoot;
       const unscrolledChartTop = nextChartEl.getBoundingClientRect().top + stageEl.scrollTop;
       const targetScrollTop = Math.max(0, Math.round(unscrolledChartTop - prevChartTop));
-      if (streamEl && targetScrollTop > 0) {
-        const streamTopInStage = streamEl.getBoundingClientRect().top - stageEl.getBoundingClientRect().top + stageEl.scrollTop;
-        const neededStreamHeight = Math.ceil(stageEl.clientHeight + targetScrollTop - streamTopInStage);
-        if (streamEl.offsetHeight < neededStreamHeight) {
-          streamEl.style.minHeight = `${neededStreamHeight}px`;
-        }
+      const neededScrollHeight = stageEl.clientHeight + targetScrollTop;
+      // scrollHeight is never smaller than clientHeight, so it hides how much
+      // room is missing when the actual content fits inside the viewport.
+      // Measure that content and the stage's own padding instead.
+      const stageContent = stageEl.querySelector(".stage-inner");
+      const stageStyle = getComputedStyle(stageEl);
+      const contentHeight = stageContent.getBoundingClientRect().height
+        + parseFloat(stageStyle.paddingTop) + parseFloat(stageStyle.paddingBottom);
+      if (streamEl && contentHeight < neededScrollHeight) {
+        const streamHeight = streamEl.getBoundingClientRect().height;
+        streamEl.style.minHeight = `${Math.ceil(streamHeight + neededScrollHeight - contentHeight)}px`;
       }
       stageEl.scrollTop = targetScrollTop;
     }
