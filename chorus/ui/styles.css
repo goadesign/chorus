@@ -75,6 +75,11 @@
   --scrollbar-track-light: transparent;
   --scrollbar-track-dark: transparent;
 
+  --shadow-sm-light: 0 2px 6px rgba(15, 23, 42, 0.08);
+  --shadow-sm-dark: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md-light: 0 10px 24px rgba(15, 23, 42, 0.14);
+  --shadow-md-dark: 0 10px 24px rgba(0, 0, 0, 0.45);
+
   --bg-canvas: var(--bg-canvas-light);
   --bg-surface: var(--bg-surface-light);
   --bg-elevated: var(--bg-elevated-light);
@@ -103,6 +108,8 @@
   --agent-human: var(--agent-human-light);
   --scrollbar-thumb: var(--scrollbar-thumb-light);
   --scrollbar-track: var(--scrollbar-track-light);
+  --shadow-sm: var(--shadow-sm-light);
+  --shadow-md: var(--shadow-md-light);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
@@ -142,6 +149,8 @@
     --agent-human: var(--agent-human-dark);
     --scrollbar-thumb: var(--scrollbar-thumb-dark);
     --scrollbar-track: var(--scrollbar-track-dark);
+    --shadow-sm: var(--shadow-sm-dark);
+    --shadow-md: var(--shadow-md-dark);
   }
 }
 
@@ -176,6 +185,8 @@ body[data-theme="dark"] {
   --agent-human: var(--agent-human-dark);
   --scrollbar-thumb: var(--scrollbar-thumb-dark);
   --scrollbar-track: var(--scrollbar-track-dark);
+  --shadow-sm: var(--shadow-sm-dark);
+  --shadow-md: var(--shadow-md-dark);
 }
 
 html[data-theme="light"],
@@ -209,6 +220,8 @@ body[data-theme="light"] {
   --agent-human: var(--agent-human-light);
   --scrollbar-thumb: var(--scrollbar-thumb-light);
   --scrollbar-track: var(--scrollbar-track-light);
+  --shadow-sm: var(--shadow-sm-light);
+  --shadow-md: var(--shadow-md-light);
 }
 
 @supports not (scrollbar-color: auto) {
@@ -1204,6 +1217,30 @@ body[data-theme="light"] .provider-openai {
   font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 20px;
+}
+
+.tl-empty-range {
+  fill: var(--text-muted);
+  font-weight: 500;
+}
+
+.tl-hover {
+  position: absolute;
+  z-index: 9;
+  pointer-events: none;
+  max-width: min(420px, calc(100% - 16px));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tl-card-header {
