@@ -1082,20 +1082,16 @@
   // formattedText renders a full message body with CommonMark/GFM blocks,
   // clickable http/https links, and @handle mention badges.
   function formattedText(text) {
-    return renderMessageText(text, { allowLinks: true, maxBlocks: 0 });
+    return renderMessageText(text, { allowLinks: true });
   }
 
   // renderMessageText renders CommonMark/GFM Markdown into a DocumentFragment
   // using direct DOM construction (createElement / createTextNode) without
-  // innerHTML. Raw HTML in messages stays inert text. When opts.maxBlocks > 0
-  // (used by compact preview cards such as .tl-card-body), at most maxBlocks
-  // top-level blocks are rendered so the floating preview card stays compact
-  // while "Show in conversation" reveals the full message.
+  // innerHTML. Raw HTML in messages stays inert text.
   function renderMessageText(text, opts = {}) {
     const allowLinks = opts.allowLinks !== false;
-    const maxBlocks = Number(opts.maxBlocks) > 0 ? Number(opts.maxBlocks) : 0;
     const fragment = document.createDocumentFragment();
-    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks, maxBlocks);
+    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks);
     return fragment;
   }
 
@@ -1126,13 +1122,10 @@
   }
 
   // renderBlockTokens walks CommonMark/GFM block tokens and appends DOM nodes
-  // to target, stopping after maxBlocks visible blocks when maxBlocks > 0.
-  function renderBlockTokens(target, tokens, allowLinks, maxBlocks = 0) {
-    let rendered = 0;
+  // to target.
+  function renderBlockTokens(target, tokens, allowLinks) {
     for (const tok of tokens || []) {
       if (tok.type === "space" || tok.type === "def") continue;
-      if (maxBlocks > 0 && rendered >= maxBlocks) break;
-      rendered++;
       switch (tok.type) {
         case "hr":
           target.append(element("hr", "md-hr"));
@@ -1152,7 +1145,7 @@
         }
         case "blockquote": {
           const bq = element("blockquote", "md-quote");
-          renderBlockTokens(bq, tok.tokens || [], allowLinks, 0);
+          renderBlockTokens(bq, tok.tokens || [], allowLinks);
           target.append(bq);
           break;
         }
@@ -1242,7 +1235,7 @@
         }
       } else {
         inlineSpan = null;
-        renderBlockTokens(li, [child], allowLinks, 0);
+        renderBlockTokens(li, [child], allowLinks);
       }
     }
     return li;
