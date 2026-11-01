@@ -419,7 +419,7 @@ var _ = Service("view", func() {
 	})
 
 	Method("swarms", func() {
-		Description("List the swarms that agents joined or called who in, sorted by name. A listed swarm may have no live agents left until its agents' records expire.")
+		Description("List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.")
 		Result(func() {
 			Attribute("swarms", ArrayOf(String), "Swarm names, sorted.", func() {
 				Example([]string{"chorus"})

@@ -41,12 +41,14 @@ type (
 // do not record it as an error.
 var errNotModified = errors.New("swarm view not modified")
 
-// Swarms lists the swarms named in the agent-to-swarm bindings that join and
-// who record in Redis, sorted and without duplicates. A listed swarm may have
-// no live agents left when its bindings have not yet been cleaned up.
+// Swarms lists, sorted, the swarms in which at least one agent bound by join or
+// who is still live: active within the online window or watching. A swarm
+// whose agents all went idle or expired is left out even before the existing
+// leave, resolve, and reap paths delete its bindings, so the dashboard never
+// offers a swarm with nobody in it.
 func (v *viewService) Swarms(ctx context.Context) (*genview.SwarmsResult, error) {
 	ctx, span := v.svc.tracer.Start(ctx, "chorus.view.swarms")
-	names, err := v.swarmNames(ctx)
+	names, err := v.liveSwarmNames(ctx)
 	span.SetAttributes(attribute.Int("chorus.swarm_count", len(names)))
 	finishSpan(span, err)
 	if err != nil {
@@ -265,6 +267,34 @@ func (v *viewService) swarmNames(ctx context.Context) ([]string, error) {
 	}
 	slices.Sort(vals)
 	return slices.Compact(vals), nil
+}
+
+// liveSwarmNames returns the sorted names of the bound swarms that have at
+// least one live bound agent, using the same liveness rule as agent
+// resolution. It opens each bound swarm to read its state but writes nothing.
+func (v *viewService) liveSwarmNames(ctx context.Context) ([]string, error) {
+	bindings, err := v.svc.rdb.HGetAll(ctx, agentSwarmHashKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list swarm bindings: %w", err)
+	}
+	var names []string
+	for agent, name := range bindings {
+		if slices.Contains(names, name) {
+			continue
+		}
+		sw, err := v.svc.swarm(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if sw.isLiveAgent(agent) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	if names == nil {
+		names = []string{}
+	}
+	return names, nil
 }
 
 // openBoundSwarm returns the handle for name when at least one agent is bound
