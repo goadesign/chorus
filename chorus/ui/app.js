@@ -436,31 +436,47 @@
     for (const ch of channels) {
       const isActive = state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
       const msgs = ch.messages || [];
+      const count = formatMessageCount(msgs.length, [ch]);
       tabNodes.push(
         el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }) },
           el("span", {}, ch.name),
-          el("span", { className: "count-pill" }, String(msgs.length)))
+          el("span", { className: "count-pill", title: count.title }, count.text))
       );
     }
     for (const pair of pairedDMs) {
       const isActive = state.selectedTarget?.kind === "dm" && state.selectedTarget.pairKey === pair.pairKey;
+      const count = formatMessageCount(pair.messages.length, [pair.inboxA, pair.inboxB]);
       tabNodes.push(
         el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }) },
           el("span", {}, handleBadge(pair.a), " ↔ ", handleBadge(pair.b)),
-          el("span", { className: "count-pill" }, String(pair.messages.length)))
+          el("span", { className: "count-pill", title: count.title }, count.text))
       );
     }
     let totalMsgs = 0;
     for (const ch of channels) totalMsgs += (ch.messages || []).length;
     for (const p of pairedDMs) totalMsgs += p.messages.length;
+    const allCount = formatMessageCount(totalMsgs, [...channels, ...(state.view?.inboxes || [])]);
     tabNodes.push(
       el("button", { type: "button", className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "all" }) },
         el("span", {}, "All Activity"),
-        el("span", { className: "count-pill" }, String(totalMsgs)))
+        el("span", { className: "count-pill", title: allCount.title }, allCount.text))
     );
     tabsEl.replaceChildren(...tabNodes);
 
     renderActiveFiltersBar();
+  }
+
+  // formatMessageCount labels a count using its channel or inbox sources.
+  // Either inbox of a DM pair may be absent until it receives a message.
+  // A stream starting after position 1 may omit earlier messages, so "+"
+  // means at least this many. Failed sends can also leave
+  // unused positions; the explanation never claims that messages were deleted.
+  function formatMessageCount(count, sources) {
+    const mayHaveOlder = sources.some((source) => source?.messages[0]?.seq > 1);
+    return {
+      text: `${count}${mayHaveOlder ? "+" : ""}`,
+      title: mayHaveOlder ? `Showing ${count} messages. Older messages may not be available.` : "",
+    };
   }
 
   function renderActiveFiltersBar() {
@@ -904,6 +920,7 @@
     resolveIdentity,
     handleBadge,
     svgIcon,
+    formatMessageCount,
   };
 
   async function boot() {

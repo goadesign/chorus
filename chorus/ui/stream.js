@@ -67,7 +67,14 @@
     } else {
       els.titleEl.textContent = "All messages";
     }
-    els.subtitleEl.textContent = `${visible.length} of ${targetEntries.length} messages · newest first`;
+    const sources = target?.kind === "channel"
+      ? state.view.channels.filter((channel) => channel.name === target.name)
+      : target?.kind === "dm"
+        ? state.view.inboxes.filter((inbox) => inbox.recipient === target.a || inbox.recipient === target.b)
+        : [...state.view.channels, ...state.view.inboxes];
+    const count = window.ChorusUI.formatMessageCount(targetEntries.length, sources);
+    els.subtitleEl.textContent = `${visible.length} of ${count.text} messages · newest first`;
+    els.subtitleEl.title = count.title;
   }
 
   // retainedMessages attaches each message's real channel or recipient inbox.
