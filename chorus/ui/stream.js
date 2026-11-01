@@ -222,10 +222,12 @@
         if (els.detailsEl.dataset.agent === agent.handle) {
           delete els.detailsEl.dataset.agent;
           els.detailsEl.replaceChildren();
+          window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
           return;
         }
         els.detailsEl.dataset.agent = agent.handle;
         showAgent(els.detailsEl, agent, state, actions, entry);
+        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       });
       return button;
     });
@@ -252,6 +254,7 @@
     const close = iconButton("close", "Close", "close-agent", () => {
       delete root.dataset.agent;
       root.replaceChildren();
+      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
     });
 
     const posSummaries = [];

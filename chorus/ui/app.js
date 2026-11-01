@@ -686,6 +686,7 @@
       stageEl.scrollTop = targetScrollTop;
     }
     renderActiveFiltersBar();
+    window.ChorusTimeline?.placePreview?.(timelineRoot);
   }
 
   async function fetchSwarms() {
