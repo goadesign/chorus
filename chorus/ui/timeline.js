@@ -305,7 +305,7 @@
       const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
       if (y != null) {
         const lane = lanes.find((l) => l.handle === found.e.sender);
-        card = buildCard(found, lane, channel, actions, svg);
+        card = buildCard(found, lane, channel, axis, actions, svg);
         cardPlacers.set(card, () => placeCard(rootEl, svg, card, mx(found.e.t), y, width));
         // The card is added now, so focus can return to it, but stays
         // transparent until the page has finished updating and it is placed.
@@ -399,11 +399,12 @@
   }
 
   // buildCard returns the preview card for found (see cardAnchor): who sent
-  // the message, where and when, why it is picked (pin, reply, or a reader's
-  // position), the start of its text, and the Show in conversation, Reply,
+  // the message, where and when, why it is picked (pin, reply, a reader's
+  // position, or the quiet break it ends), the first blocks of its text
+  // formatted as in the reading pane, and the Show in conversation, Reply,
   // and close controls. Each control carries a data-tl-card name so focus can
   // return to it after the next render.
-  function buildCard(found, lane, channel, actions, svg) {
+  function buildCard(found, lane, channel, axis, actions, svg) {
     const e = found.e;
     const close = () => {
       actions.selectMessage(null, 0, { reveal: false });
@@ -449,9 +450,18 @@
     }
     if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
     if (e.replyTo) notes.push(`↩ #${e.replyTo}`);
+    // A message that ends a quiet break says how long the swarm was quiet,
+    // so the break's length is reachable from the keyboard and on touch
+    // screens even when the axis has no room to label it.
+    const quiet = axis.gaps.find((g) => g.to === e.t);
+    if (quiet) notes.push(`After ${duration(quiet.to - quiet.from)} quiet`);
     if (notes.length) card.appendChild(html("span", "tl-card-note", notes.join(" · ")));
 
-    card.appendChild(html("p", "tl-card-body", preview(e.text)));
+    // The same renderer as the reading pane, limited to the first blocks;
+    // Show in conversation opens the whole message.
+    const body = html("div", "tl-card-body");
+    body.appendChild(window.ChorusStream.renderMessageText(e.text, { allowLinks: true, maxBlocks: 3 }));
+    card.appendChild(body);
 
     const row = html("div", "tl-card-actions");
     row.appendChild(button("", "Show in conversation", "show", () => actions.selectMessage(e.target, e.seq)));
@@ -616,6 +626,13 @@
       showHover(rootEl, node);
     });
     node.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    // A quiet break opens no card, so on a touch screen a tap shows its
+    // label instead; the next tap anywhere else hides it.
+    if (!item) {
+      node.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType === "touch") showHover(rootEl, node);
+      });
+    }
   }
 
   // itemKey names an inspected item: its target, message number, and the
@@ -647,6 +664,11 @@
     rootEl.addEventListener("pointerleave", () => {
       pointers.delete(rootEl);
       hideHover(rootEl);
+    });
+    rootEl.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "touch") return;
+      const key = ev.target && ev.target.dataset ? ev.target.dataset.tlHoverKey || "" : "";
+      if (!key.startsWith("quiet ")) hideHover(rootEl);
     });
     document.addEventListener("keydown", (ev) => {
       if (ev.key !== "Escape") return;
@@ -1261,12 +1283,6 @@
   function firstLine(text, max) {
     const line = String(text || "").split("\n")[0];
     return line.length > max ? line.slice(0, max - 1) + "…" : line;
-  }
-
-  // preview returns the first two lines of text, at most 280 characters.
-  function preview(text) {
-    const lines = String(text || "").split("\n").slice(0, 2).join("\n");
-    return lines.length > 280 ? lines.slice(0, 279) + "…" : lines;
   }
 
   // html creates an HTML element with an optional class and text.
