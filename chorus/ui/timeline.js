@@ -73,6 +73,10 @@
   // and its edge clocks, then quiet-break labels, then the pin label just
   // above the lanes.
   const AXIS_ROW = 16;
+  // Width of one character of the 12px monospace axis labels (0.6em), and
+  // the space kept between two quiet labels on their row.
+  const MONO_CHAR_W = 7.2;
+  const LABEL_GAP = 6;
   const AXIS_H = AXIS_ROW * 3;
   const LANE_H = 38;
   const LABEL_W = 160;
@@ -212,7 +216,7 @@
     drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
     svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
-    drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height);
+    drawAxis(svg, rootEl, axis, win, w0, w1, mx, top, plotW, height);
     const laneTop = top + AXIS_H;
     const laneY = new Map();
     lanes.forEach((lane, i) => {
@@ -828,17 +832,32 @@
   // drawAxis draws the quiet breaks and the clock labels at both window edges
   // (the view's own start and end times) on the upper line of the axis row;
   // the pin badge uses the lower line.
-  function drawAxis(svg, axis, win, w0, w1, mx, top, plotW, height) {
+  // Quiet labels are placed left to right on their own row: each gets its
+  // full text ("11m quiet") when that fits beside the previous label, else
+  // its length alone ("11m"), else no text. Every quiet break keeps the full
+  // text as its hover label, so nothing is lost when the row is crowded.
+  function drawAxis(svg, rootEl, axis, win, w0, w1, mx, top, plotW, height) {
     const y = top + AXIS_ROW - 4;
     const quietY = top + 2 * AXIS_ROW - 4;
+    let freeFrom = PLOT_X0;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
       const xb = mx(g.to);
-      svg.appendChild(el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) }));
-      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(quietY), "text-anchor": "middle" });
-      lbl.textContent = `${duration(g.to - g.from)} quiet`;
+      const full = `${duration(g.to - g.from)} quiet`;
+      const band = el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) });
+      hoverable(rootEl, band, `${full} · ${clock(g.from)}–${clock(g.to)}`);
+      svg.appendChild(band);
+      const cx = (xa + xb) / 2;
+      const text = [full, duration(g.to - g.from)].find((t) => {
+        const half = (t.length * MONO_CHAR_W) / 2;
+        return cx - half >= freeFrom && cx + half <= PLOT_X0 + plotW;
+      });
+      if (!text) continue;
+      const lbl = el("text", { class: "tl-quiet-label", x: cx.toFixed(1), y: String(quietY), "text-anchor": "middle" });
+      lbl.textContent = text;
       svg.appendChild(lbl);
+      freeFrom = cx + (text.length * MONO_CHAR_W) / 2 + LABEL_GAP;
     }
     // Clock labels at both window edges.
     const left = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(y) });
@@ -1126,8 +1145,21 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  // placePreview places the open preview card and hover label again. app.js
+  // calls it once every surface above and around the chart has been drawn
+  // and scroll positions are restored, and after any change that moves the
+  // chart without a redraw, because render runs before those surfaces and
+  // cannot know where the chart ends up.
+  function placePreview(rootEl) {
+    const card = rootEl.querySelector(".tl-card");
+    const place = card && cardPlacers.get(card);
+    if (place) place();
+    rehover(rootEl);
+  }
+
   window.ChorusTimeline = {
     render,
+    placePreview,
     isDragging: (rootEl) => drags.has(rootEl),
   };
 })();
