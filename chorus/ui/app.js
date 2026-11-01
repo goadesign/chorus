@@ -26,9 +26,8 @@
     filterAgent: "",
     filterArtifact: "",
     searchQuery: "",
-    replyToSeq: 0,
-    replyToTarget: "",
-    replyToSender: "",
+    // A pending reply retains only its destination and original author facts.
+    replyTo: null, // null | { target, seq, sender, human }
     pollAbort: null,
   };
 
@@ -261,7 +260,7 @@
       state.selectedTarget = targetObj;
       if (sameAsCurrent) return;
       state.selectedMessage = null;
-      state.replyToSeq = 0;
+      state.replyTo = null;
       renderReplyChip();
       const sendTarget = document.getElementById("send-target");
       const pinCheck = document.getElementById("send-pin");
@@ -311,10 +310,10 @@
       renderAll();
     },
 
-    setReplyTo(channelName, seq, sender) {
-      state.replyToSeq = Number(seq) || 0;
-      state.replyToTarget = channelName || "";
-      state.replyToSender = sender || "";
+    // setReplyTo preserves the clicked message's saved author facts even after
+    // that message leaves the retained snapshot or its handle changes models.
+    setReplyTo(channelName, seq, sender, human) {
+      state.replyTo = { target: channelName, seq, sender, human };
       if (channelName) {
         const sendTarget = document.getElementById("send-target");
         if (sendTarget) sendTarget.value = channelName;
@@ -326,9 +325,7 @@
     composeDM(handle) {
       const clean = String(handle || "").replace(/^@/, "");
       if (!clean) return;
-      state.replyToSeq = 0;
-      state.replyToTarget = "";
-      state.replyToSender = "";
+      state.replyTo = null;
       renderReplyChip();
       const sendTarget = document.getElementById("send-target");
       const sendPin = document.getElementById("send-pin");
@@ -350,20 +347,19 @@
   function renderReplyChip() {
     const container = document.getElementById("reply-chip-container");
     if (!container) return;
-    if (!state.replyToSeq || state.replyToSeq <= 0) {
+    const reply = state.replyTo;
+    if (!reply) {
       container.replaceChildren();
       return;
     }
     container.replaceChildren(
       el("span", { className: "context-pill" },
-        svgIcon("reply", "icon icon-sm"), `#${state.replyToSeq}`,
-        ...(state.replyToSender ? [" (", handleBadge(state.replyToSender), ")"] : []),
+        svgIcon("reply", "icon icon-sm"), `#${reply.seq}`,
+        " (", handleBadge(reply.sender, "", "", reply.human), ")",
         el("button", {
           type: "button", className: "icon-btn icon-btn-sm", "aria-label": "Cancel reply", title: "Cancel reply",
           onClick: () => {
-            state.replyToSeq = 0;
-            state.replyToTarget = "";
-            state.replyToSender = "";
+            state.replyTo = null;
             renderReplyChip();
           },
         }, svgIcon("close")))
@@ -523,6 +519,8 @@
     state.retryCountdownSec = 0;
     writeHashState();
     if (switchedSwarm) {
+      state.replyTo = null;
+      renderReplyChip();
       state.view = null;
       const stageEl = document.getElementById("stage-container");
       if (stageEl) stageEl.scrollTop = 0;
@@ -707,14 +705,12 @@
     setComposerFeedback("");
     try {
       const sendArgs = { agent, to, text, pin, wait_sec: 0 };
-      if (state.replyToSeq > 0 && to.startsWith("#")) sendArgs.reply_to = state.replyToSeq;
+      if (state.replyTo && to === state.replyTo.target) sendArgs.reply_to = state.replyTo.seq;
       await publishHumanMessage(swarm, sendArgs);
 
       textInput.value = "";
       pinCheck.checked = false;
-      state.replyToSeq = 0;
-      state.replyToTarget = "";
-      state.replyToSender = "";
+      state.replyTo = null;
       renderReplyChip();
       if (to.startsWith("@")) setComposerFeedback(["Sent to ", handleBadge(to.slice(1))], "ok");
       else setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
@@ -813,6 +809,10 @@
     document.getElementById("send-target").addEventListener("input", (e) => {
       e.currentTarget.dataset.userEdited = "true";
       const val = e.currentTarget.value.trim();
+      if (state.replyTo && val !== state.replyTo.target) {
+        state.replyTo = null;
+        renderReplyChip();
+      }
       const pinLabel = document.getElementById("pin-toggle-label");
       if (pinLabel) {
         pinLabel.classList.toggle("disabled", !val.startsWith("#"));
