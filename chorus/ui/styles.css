@@ -1240,8 +1240,6 @@ body[data-theme="light"] .provider-openai {
 
 .tl-card-body {
   margin: 0;
-  max-height: 160px;
-  overflow-y: auto;
   font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 20px;
