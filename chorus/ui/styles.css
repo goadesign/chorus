@@ -944,9 +944,8 @@ body[data-theme="light"] .provider-openai {
 }
 
 .tl-lane.is-human {
-  stroke: var(--brand-coral);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
+  stroke: color-mix(in srgb, var(--brand-coral) 38%, var(--border));
+  stroke-width: 1;
 }
 
 .tl-lane.is-left {

@@ -83,35 +83,38 @@
   }
 
   // resolveIdentity maps a participant's declared model (or saved send-time
-  // human provenance) to the official brand mark under /ui/brands/. It never
-  // guesses from handle prefixes or free-text role words.
+  // human provenance) to the official brand mark under /ui/brands/. It matches
+  // supported model identifier forms only and never guesses from handle
+  // prefixes, free-text roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
     const reg = (state.view?.agents || []).find((a) => a.handle === raw);
-    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "");
+    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "").trim();
     const m = mod.toLowerCase();
     if (isHuman || m === "human") {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
+      return { handle: raw, label: `@${raw}`, model: mod || (isHuman ? "human" : ""), provider: "human", iconUrl: null, avatarUrl: null };
     }
-    if (m.includes("claude") || m.includes("anthropic") || m.includes("opus") || m.includes("sonnet") || m.includes("haiku")) {
+    if (/^(?:(?:us|eu|ap|global)\.)?(?:anthropic[/.:])?claude(?:$|[-._:@/][a-z0-9._:-]+)$/.test(m)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
     }
-    if (m.includes("gpt") || m.includes("codex") || m.includes("openai") || m.includes("chatgpt") || /(^|[^a-z0-9])o[134]([^a-z0-9]|$)/.test(m)) {
+    if (/^(?:openai[/.:])?(?:gpt-[a-z0-9._:-]+|chatgpt-[a-z0-9._:-]+|codex(?:$|-[a-z0-9._:-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:-]*)))$/.test(m)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
     }
-    if (m.includes("gemini") || m.includes("google")) {
+    if (/^(?:(?:google|models|vertex_ai)[/.:])?gemini(?:$|-[a-z0-9._:-]+)$/.test(m)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
     }
     return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null };
   }
 
   // handleBadge renders @<handle> with an inline brand mark (no circular border
-  // container) when resolveIdentity recognizes the declared model.
+  // container) when resolveIdentity recognizes the declared model, and sets the
+  // tooltip to include the exact declared model when known.
   function handleBadge(handle, model = "", extraClass = "", isHuman = false) {
     const raw = String(handle || "");
     const identity = resolveIdentity(raw, model, isHuman);
     const span = document.createElement("span");
     span.className = `handle-with-logo ${extraClass}`.trim();
+    span.title = identity.model ? `@${raw} · ${identity.model}` : `@${raw}`;
     if (identity.iconUrl) {
       const img = document.createElement("img");
       img.className = `inline-brand-logo provider-${identity.provider}`.trim();

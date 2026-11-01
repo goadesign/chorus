@@ -146,27 +146,27 @@
         ...(agent.model && agent.model !== "human" ? [element("span", "agent-model-inline", agent.model)] : []),
         statusNode);
 
-      if (pos && pos.behind > 0) {
+      if (!human && pos && pos.behind > 0) {
         const gapLabel = `Position gap ${pos.behind} · Read through #${pos.read_seq}${pos.mentioned ? " · @mentioned" : ""}`;
-        const pill = element("span", "agent-behind-pill", String(pos.behind));
+        const pill = element("span", "agent-behind-pill", `${pos.behind} behind`);
         pill.title = gapLabel;
         pill.setAttribute("aria-label", gapLabel);
         headerRow.append(pill);
         if (pos.mentioned) {
-          const atDot = element("span", "agent-mention-dot", "@");
+          const atDot = element("span", "agent-mention-dot", "@ mention");
           atDot.title = `@mentioned after #${pos.read_seq}`;
           atDot.setAttribute("aria-label", `@mentioned after #${pos.read_seq}`);
           headerRow.append(atDot);
         }
-      } else if (inbox && inbox.behind > 0) {
+      } else if (!human && inbox && inbox.behind > 0) {
         const dmGapLabel = `DM position gap ${inbox.behind} · Read through #${inbox.read_seq}`;
-        const pill = element("span", "agent-behind-pill", `DM ${inbox.behind}`);
+        const pill = element("span", "agent-behind-pill", `DM ${inbox.behind} behind`);
         pill.title = dmGapLabel;
         pill.setAttribute("aria-label", dmGapLabel);
         headerRow.append(pill);
-      } else if (pos && pos.read_seq > 0) {
+      } else if (!human && pos && pos.read_seq > 0) {
         const readLabel = `Read through #${pos.read_seq}`;
-        const pill = element("span", "agent-caught-up-pill", `#${pos.read_seq}`);
+        const pill = element("span", "agent-caught-up-pill", `read #${pos.read_seq}`);
         pill.title = readLabel;
         pill.setAttribute("aria-label", readLabel);
         headerRow.append(pill);
