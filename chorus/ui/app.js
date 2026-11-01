@@ -88,11 +88,14 @@
   // paths) and never guesses from handle prefixes, roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
+    if (isHuman) {
+      return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null };
+    }
     const reg = (state.view?.agents || []).find((a) => a.handle === raw);
     const mod = String(model !== undefined && model !== "" ? model : reg?.model || "").trim();
     const m = mod.toLowerCase();
-    if (isHuman || m === "human") {
-      return { handle: raw, label: `@${raw}`, model: mod || (isHuman ? "human" : ""), provider: "human", iconUrl: null, avatarUrl: null };
+    if (m === "human") {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
     const leaf = m.replace(cloudPrefix, "");
