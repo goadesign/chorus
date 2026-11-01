@@ -3,6 +3,7 @@ package chorus_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -268,6 +269,44 @@ func TestSwarmListOmitsSwarmsWithoutLiveAgents(t *testing.T) {
 	assert.Equal(t, []string{"busy-swarm"}, listSwarms(t, base))
 	doc, _ := getView(t, base, "idle-swarm", "", 0, http.StatusOK)
 	require.Len(t, doc.Channels, 1)
+}
+
+// TestSwarmListReadsLatestPresenceWithoutKeepingSwarmsOpen verifies that
+// listing a swarm this server never opened leaves no subscription to it
+// behind, and that GET /swarms decides from the presence stored in Redis even
+// when this server's open copy missed the change. The test saves each change
+// the way another server's write does (new value and next revision) but never
+// publishes it, so the open copy stays behind, in both directions.
+func TestSwarmListReadsLatestPresenceWithoutKeepingSwarmsOpen(t *testing.T) {
+	cluster := newTestCluster(t, 2, []chorus.Option{chorus.WithOnlineWindow(2 * time.Minute)})
+	cluster.replicas[0].httpServer.Client().Timeout = 5 * time.Second
+	ctx := context.Background()
+	hashKey := "map:chorus:cold-swarm:state:content"
+	updates := "map:chorus:cold-swarm:state:updates"
+	cluster.newAgent(1, "cold-swarm", "remote").call("join", map[string]any{"channels": []string{"#c"}})
+	listing := cluster.replicas[0].httpServer.URL
+	subscribers := func() int64 {
+		counts, err := cluster.rdb.PubSubNumSub(ctx, updates).Result()
+		require.NoError(t, err)
+		return counts[updates]
+	}
+	before := subscribers()
+	assert.Equal(t, []string{"cold-swarm"}, listSwarms(t, listing))
+	assert.Equal(t, before, subscribers(), "listing must not keep the swarm open")
+
+	// Open the swarm on the listing server, then let its registration go
+	// stale there while Redis holds a fresh one.
+	getView(t, listing, "cold-swarm", "", 0, http.StatusOK)
+	cluster.advanceClock(3 * time.Minute)
+	fresh := fmt.Sprintf(`{"ts":%d}`, cluster.currentTime().Unix())
+	require.NoError(t, cluster.rdb.HSet(ctx, hashKey, "agent:remote", fresh).Err())
+	require.NoError(t, cluster.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err())
+	assert.Equal(t, []string{"cold-swarm"}, listSwarms(t, listing), "a fresh registration in Redis is live")
+
+	// Remove the registration in Redis only; the open copy still holds it.
+	require.NoError(t, cluster.rdb.HDel(ctx, hashKey, "agent:remote").Err())
+	require.NoError(t, cluster.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err())
+	assert.Equal(t, []string{}, listSwarms(t, listing), "a registration gone from Redis is not live")
 }
 
 // listSwarms returns the swarm names that GET /swarms reports.

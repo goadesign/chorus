@@ -269,31 +269,29 @@ func (v *viewService) swarmNames(ctx context.Context) ([]string, error) {
 	return slices.Compact(vals), nil
 }
 
-// liveSwarmNames returns the sorted names of the bound swarms that have at
-// least one live bound agent, using the same liveness rule as agent
-// resolution. It opens each bound swarm to read its state but writes nothing.
+// liveSwarmNames returns the sorted names of the bound swarms in which at
+// least one bound agent is live in the swarm's latest committed state. It
+// writes nothing and leaves no swarm open that was not open before.
 func (v *viewService) liveSwarmNames(ctx context.Context) ([]string, error) {
 	bindings, err := v.svc.rdb.HGetAll(ctx, agentSwarmHashKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("list swarm bindings: %w", err)
 	}
-	var names []string
+	agentsBySwarm := make(map[string][]string)
 	for agent, name := range bindings {
-		if slices.Contains(names, name) {
-			continue
-		}
-		sw, err := v.svc.swarm(ctx, name)
+		agentsBySwarm[name] = append(agentsBySwarm[name], agent)
+	}
+	names := []string{}
+	for name, agents := range agentsBySwarm {
+		live, err := v.svc.swarmHasLiveAgent(ctx, name, agents)
 		if err != nil {
 			return nil, err
 		}
-		if sw.isLiveAgent(agent) {
+		if live {
 			names = append(names, name)
 		}
 	}
 	slices.Sort(names)
-	if names == nil {
-		names = []string{}
-	}
 	return names, nil
 }
 
