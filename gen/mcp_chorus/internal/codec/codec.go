@@ -108,8 +108,8 @@ func ValidateJoinPayloadTransport(value *JoinPayloadTransport) (err error) {
 		if utf8.RuneCountInString(*value.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*value.Model) > 256 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 256, false))
+		if utf8.RuneCountInString(*value.Model) > 2048 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 2048, false))
 		}
 	}
 	if value.Tail != nil {
@@ -679,8 +679,8 @@ func ValidateWhoPayloadTransport(value *WhoPayloadTransport) (err error) {
 		if utf8.RuneCountInString(*value.Model) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 1, true))
 		}
-		if utf8.RuneCountInString(*value.Model) > 256 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 256, false))
+		if utf8.RuneCountInString(*value.Model) > 2048 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.model", *value.Model, utf8.RuneCountInString(*value.Model), 2048, false))
 		}
 	}
 	return err
