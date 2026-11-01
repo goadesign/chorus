@@ -119,6 +119,8 @@
   // dismissed with Escape, which stays hidden until the pointer enters
   // another mark.
   const hoverState = new WeakMap();
+  // Per-mark builders of rich hover label content (see hoverable).
+  const hoverBuilders = new WeakMap();
   // Per-root work that must wait until the whole page has finished updating
   // after a render (placing the preview card and restoring the hover label).
   // It runs once, in the next animation frame, which comes after app.js has
@@ -158,11 +160,11 @@
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
-    // How far the open card's own contents were scrolled, and which item it
-    // described, so a redraw of the same card keeps showing the same part of
-    // it while a newly picked item starts at its top.
+    // How far the open card's message body was scrolled, and which item the
+    // card described, so a redraw of the same card keeps showing the same
+    // part of the message while a newly picked item starts at its top.
     const oldCard = rootEl.querySelector(".tl-card");
-    const cardScroll = oldCard ? oldCard.scrollTop : 0;
+    const cardScroll = oldCard ? oldCard.querySelector(".tl-card-body").scrollTop : 0;
     const oldCardKey = oldCard ? oldCard.dataset.tlItem : "";
     clear(rootEl);
     if (!view) {
@@ -271,7 +273,16 @@
         r: String(isSel ? DOT_R_SELECTED : DOT_R),
         fill: colors.get(e.sender),
       });
-      hoverable(rootEl, dot, `@${e.sender} · ${e.target} #${e.seq} · ${clock(e.t)} — ${firstLine(e.text, 80)}`, `dot ${itemKey(e.target, e.seq, "")}`, itemKey(e.target, e.seq, ""));
+      hoverable(rootEl, dot, `@${e.sender} in ${place(e)} at ${clock(e.t)}: ${firstLine(e.text, 120)}`,
+        `dot ${itemKey(e.target, e.seq, "")}`, itemKey(e.target, e.seq, ""), () => {
+          const meta = html("div", "tl-hover-meta");
+          meta.appendChild(senderMark(e, lanes.find((l) => l.handle === e.sender)));
+          if (!sel || sel.kind === "all" || !sameTarget(sel, e)) meta.appendChild(html("span", "", place(e)));
+          meta.appendChild(html("span", "", clock(e.t)));
+          const notes = messageNotes(e, channel, order, axis);
+          if (notes.length) meta.appendChild(html("span", "", notes.join(" · ")));
+          return hoverContent(meta, e.text);
+        });
       dot.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(e.target, e.seq, "");
@@ -305,7 +316,7 @@
       const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
       if (y != null) {
         const lane = lanes.find((l) => l.handle === found.e.sender);
-        card = buildCard(found, lane, channel, axis, actions, svg);
+        card = buildCard(found, lane, channel, axis, sel, order, actions, svg);
         cardPlacers.set(card, () => placeCard(rootEl, svg, card, mx(found.e.t), y, width));
         // The card is added now, so focus can return to it, but stays
         // transparent until the page has finished updating and it is placed.
@@ -318,7 +329,7 @@
     scheduleFinish(rootEl, () => {
       if (shownCard && shownCard.isConnected) {
         cardPlacers.get(shownCard)();
-        if (sameItem) shownCard.scrollTop = cardScroll;
+        if (sameItem) shownCard.querySelector(".tl-card-body").scrollTop = cardScroll;
         if (shownCard.contains(document.activeElement)) revealInCard(shownCard, document.activeElement);
         shownCard.style.opacity = "";
       }
@@ -398,13 +409,15 @@
     return reader ? { e, reader } : { e };
   }
 
-  // buildCard returns the preview card for found (see cardAnchor): who sent
-  // the message, where and when, why it is picked (pin, reply, a reader's
-  // position, or the quiet break it ends), the first blocks of its text
-  // formatted as in the reading pane, and the Show in conversation, Reply,
-  // and close controls. Each control carries a data-tl-card name so focus can
-  // return to it after the next render.
-  function buildCard(found, lane, channel, axis, actions, svg) {
+  // buildCard returns the preview card for found (see cardAnchor). Its
+  // header shows who sent the message (the provider logo, or the handle when
+  // there is no logo), where it lives when that is not the open tab, and
+  // when. A note says why it matters: whose read position this is, that it
+  // is pinned, whom it replies to, or the quiet break it ends. The body is
+  // the whole message, formatted by the reading pane's renderer and
+  // scrolling inside the card when long. Jump opens it in the conversation
+  // and Respond starts a reply; Escape or the close button closes the card.
+  function buildCard(found, lane, channel, axis, sel, order, actions, svg) {
     const e = found.e;
     const close = () => {
       actions.selectMessage(null, 0, { reveal: false });
@@ -415,7 +428,7 @@
     // a newly picked one.
     card.dataset.tlItem = itemKey(e.target, e.seq, found.reader ? found.reader.handle : "");
     card.setAttribute("role", "group");
-    card.setAttribute("aria-label", `Preview of ${e.target} #${e.seq} from @${e.sender}`);
+    card.setAttribute("aria-label", `Message from @${e.sender} in ${place(e)} at ${clock(e.t)}`);
     card.style.touchAction = "pan-y";
     card.addEventListener("keydown", (ev) => {
       if (ev.key !== "Escape") return;
@@ -425,17 +438,8 @@
 
     const header = html("div", "tl-card-header");
     const meta = html("div", "tl-card-meta");
-    // The badge follows the message's own human flag. The sender's current
-    // model only picks the provider logo for a message not sent as a person,
-    // and never marks such a message as a person's when the sender has since
-    // declared "human".
-    const current = lane ? lane.model : "";
-    const nowHuman = current.trim().toLowerCase() === "human";
-    const ui = window.ChorusUI;
-    meta.appendChild(ui && ui.handleBadge && (e.human || !nowHuman)
-      ? ui.handleBadge(e.sender, e.human ? "" : current, "", e.human)
-      : html("span", "", "@" + e.sender));
-    meta.appendChild(html("span", "", e.pair ? `${e.pair.a} ↔ ${e.pair.b} #${e.seq}` : `${e.target} #${e.seq}`));
+    meta.appendChild(senderMark(e, lane));
+    if (!sel || sel.kind === "all" || !sameTarget(sel, e)) meta.appendChild(html("span", "", place(e)));
     meta.appendChild(html("span", "", clock(e.t)));
     header.appendChild(meta);
     const closeBtn = button("tl-card-close", "×", "close", close);
@@ -443,34 +447,96 @@
     header.appendChild(closeBtn);
     card.appendChild(header);
 
-    const notes = [];
+    const notes = messageNotes(e, channel, order, axis);
     if (found.reader) {
       const p = found.reader;
-      notes.push(p.behind > 0 ? `@${p.handle} read through #${p.read_seq} · ${p.behind} behind` : `@${p.handle} is caught up`);
+      notes.unshift(`@${p.handle} · ${p.behind > 0 ? `${p.behind} behind${p.mentioned ? " · @-mentioned" : ""}` : "caught up"}`);
     }
-    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
-    if (e.replyTo) notes.push(`↩ #${e.replyTo}`);
-    // A message that ends a quiet break says how long the swarm was quiet,
-    // so the break's length is reachable from the keyboard and on touch
-    // screens even when the axis has no room to label it.
-    const quiet = axis.gaps.find((g) => g.to === e.t);
-    if (quiet) notes.push(`After ${duration(quiet.to - quiet.from)} quiet`);
     if (notes.length) card.appendChild(html("span", "tl-card-note", notes.join(" · ")));
 
-    // The same renderer as the reading pane, limited to the first blocks;
-    // Show in conversation opens the whole message.
     const body = html("div", "tl-card-body");
-    body.appendChild(window.ChorusStream.renderMessageText(e.text, { allowLinks: true, maxBlocks: 3 }));
+    body.appendChild(window.ChorusStream.renderMessageText(e.text, { allowLinks: true }));
     card.appendChild(body);
 
     const row = html("div", "tl-card-actions");
-    row.appendChild(button("", "Show in conversation", "show", () => actions.selectMessage(e.target, e.seq)));
-    row.appendChild(button("", "Reply", "reply", () => {
+    const jump = button("", "Jump", "show", () => actions.selectMessage(e.target, e.seq));
+    jump.setAttribute("aria-label", "Jump to message in conversation");
+    jump.prepend(window.ChorusUI.svgIcon("jump", "icon"));
+    row.appendChild(jump);
+    const respond = button("", "Respond", "reply", () => {
       if (e.pair) actions.composeDM(e.sender);
       else actions.setReplyTo(e.target, e.seq, e.sender, e.human);
-    }));
+    });
+    respond.setAttribute("aria-label", "Respond to message");
+    respond.prepend(window.ChorusUI.svgIcon("reply", "icon"));
+    row.appendChild(respond);
     card.appendChild(row);
     return card;
+  }
+
+  // senderMark returns who sent message e: the provider logo, titled with
+  // the handle, when the sender's model has one, else the handle badge. It
+  // follows the message's own human flag: the sender's current model only
+  // picks the logo for a message not sent as a person, and never marks such
+  // a message as a person's when the sender has since declared "human".
+  function senderMark(e, lane) {
+    const ui = window.ChorusUI;
+    const current = lane ? lane.model : "";
+    const nowHuman = current.trim().toLowerCase() === "human";
+    if (!e.human && nowHuman) return html("span", "", "@" + e.sender);
+    return agentMark(e.sender, e.human ? "" : current, e.human);
+  }
+
+  // agentMark returns an agent's provider logo, titled with its handle and
+  // model, when its model has one, else its handle badge. An empty model
+  // means the agent's current registration.
+  function agentMark(handle, model, human) {
+    const ui = window.ChorusUI;
+    const id = ui.resolveIdentity(handle, model, human);
+    if (!id.iconUrl) return ui.handleBadge(handle, model, "", human);
+    const img = document.createElement("img");
+    img.className = `inline-brand-logo provider-${id.provider}`;
+    img.src = id.iconUrl;
+    img.alt = `@${handle}`;
+    img.title = `@${handle}${id.model ? " · " + id.model : ""}`;
+    return img;
+  }
+
+  // hoverContent returns a hover label's content: its meta row, then the
+  // start of text formatted by the reading pane's renderer, without links
+  // (the label is not a place to click; the card is). The stylesheet limits
+  // the text to three lines.
+  function hoverContent(meta, text) {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(meta);
+    const body = html("div", "tl-hover-body");
+    body.appendChild(window.ChorusStream.renderMessageText(text, { allowLinks: false }));
+    frag.appendChild(body);
+    return frag;
+  }
+
+  // place names where message e lives: its channel, or the two sides of a
+  // direct-message conversation.
+  function place(e) {
+    return e.pair ? `@${e.pair.a} ↔ @${e.pair.b}` : e.target;
+  }
+
+  // messageNotes returns the short facts that make message e matter: pinned
+  // in the selected channel, whom it replies to (when that message is still
+  // in the view; direct-message reply numbers are ambiguous, so those say
+  // only that it is a reply), and the quiet break it ends, which keyboard
+  // and touch users can reach here even when the axis has no room to label
+  // the break.
+  function messageNotes(e, channel, order, axis) {
+    const notes = [];
+    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
+    if (e.replyTo) {
+      const parent = e.pair ? null : order.find((x) => x.target === e.target && x.seq === e.replyTo);
+      notes.push(parent ? `↩ Reply to @${parent.sender}` : "↩ Reply");
+    }
+    const quiet = axis.gaps.find((g) => g.to === e.t);
+    if (quiet) notes.push(`After ${duration(quiet.to - quiet.from)} quiet`);
+    return notes;
   }
 
   // placeCard adds card to rootEl and positions it next to the anchor at
@@ -480,16 +546,17 @@
   // the visible part of the scrolling area that holds the chart (between the
   // page header and the composer), not the browser window: the card opens
   // above when below does not fit there and above does, and otherwise on the
-  // side with more room, limited to that room so its buttons stay visible
-  // (the card scrolls inside). The card always stays inside that visible
-  // area. The card floats above the page, so placing it never moves layout.
+  // side with more room, limited to that room: the card's header and buttons
+  // keep their size and its message body (the card's only scrolling area)
+  // shrinks. The card always stays inside that visible area. The card floats
+  // above the page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
     // Placing again (after the message area scrolled) measures the card at
-    // its natural height, then restores how far its contents were scrolled.
-    const inner = card.scrollTop;
+    // its natural height, then restores how far its body was scrolled.
+    const body = card.querySelector(".tl-card-body");
+    const inner = body.scrollTop;
     card.style.visibility = "hidden";
     card.style.maxHeight = "";
-    card.style.overflowY = "";
     if (!card.isConnected) rootEl.appendChild(card);
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
@@ -508,10 +575,7 @@
     const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
     const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
     const room = below ? roomBelow : roomAbove;
-    if (ch > room) {
-      card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
-      card.style.overflowY = "auto";
-    }
+    if (ch > room) card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
     const shown = Math.min(ch, Math.max(0, room));
     const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
     // When the point itself has scrolled out of the visible area, the card
@@ -522,7 +586,7 @@
     card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
     card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
     card.style.visibility = "";
-    card.scrollTop = inner;
+    body.scrollTop = inner;
   }
 
   // fitQuietLabels sizes the quiet labels by their rendered width, left to
@@ -592,13 +656,16 @@
     }, { passive: true });
   }
 
-  // revealInCard scrolls only the card's own contents so that control is
-  // fully visible; the page and the message area do not move.
+  // revealInCard scrolls only the card's message body so that a focused
+  // control inside it (a link) is fully visible; the header and buttons
+  // never scroll, and the page and the message area do not move.
   function revealInCard(card, control) {
-    const top = control.offsetTop;
-    const bottom = top + control.offsetHeight;
-    if (top < card.scrollTop) card.scrollTop = top;
-    else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
+    const body = card.querySelector(".tl-card-body");
+    if (!body.contains(control)) return;
+    const view = body.getBoundingClientRect();
+    const box = control.getBoundingClientRect();
+    if (box.top < view.top) body.scrollTop -= view.top - box.top;
+    else if (box.bottom > view.bottom) body.scrollTop += box.bottom - view.bottom;
   }
 
   // hoverable gives node an instant hover label with text, and the same text
@@ -609,9 +676,12 @@
   // becoming "4 behind"), so a label is restored or kept dismissed by mark,
   // not by wording. item names what the mark opens (see itemKey), so no
   // label covers a mark whose preview card is already open; quiet breaks
-  // open nothing and pass "".
-  function hoverable(rootEl, node, text, key, item = "") {
+  // open nothing and pass "". build, when given, returns the label's visible
+  // content (logo, place, time, and formatted text); text is then only the
+  // mark's accessible name.
+  function hoverable(rootEl, node, text, key, item = "", build = null) {
     node.setAttribute("aria-label", text);
+    if (build) hoverBuilders.set(node, build);
     node.dataset.tlHover = text;
     node.dataset.tlHoverKey = key;
     node.dataset.tlItem = item;
@@ -718,7 +788,9 @@
     const open = rootEl.querySelector(".tl-card");
     if (open && node.dataset.tlItem && open.dataset.tlItem === node.dataset.tlItem) return;
     hoverOf(rootEl).shown = node.dataset.tlHoverKey;
-    const label = html("div", "tl-hover", node.dataset.tlHover);
+    const build = hoverBuilders.get(node);
+    const label = html("div", "tl-hover", build ? null : node.dataset.tlHover);
+    if (build) label.appendChild(build());
     label.setAttribute("aria-hidden", "true");
     label.style.visibility = "hidden";
     label.addEventListener("pointerenter", () => {
@@ -1122,15 +1194,16 @@
       ev.stopPropagation();
       inspect(channel.name, channel.pin.seq, "");
     };
-    const pinText = `Pin #${channel.pin.seq} — ${firstLine(msg.text, 80)}`;
+    const pinText = `Pinned at ${clock(msg.sent_at_ms)}: ${firstLine(msg.text, 120)}`;
+    const pinLabel = () => hoverContent(html("div", "tl-hover-meta", `Pinned · ${clock(msg.sent_at_ms)}`), msg.text);
     const line = el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) });
     line.addEventListener("click", pick);
-    hoverable(rootEl, line, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
+    hoverable(rootEl, line, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""), pinLabel);
     svg.appendChild(line);
     const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
-    lbl.textContent = `Pin #${channel.pin.seq}`;
+    lbl.textContent = "Pin";
     lbl.addEventListener("click", pick);
-    hoverable(rootEl, lbl, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
+    hoverable(rootEl, lbl, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""), pinLabel);
     svg.appendChild(lbl);
   }
 
@@ -1179,9 +1252,14 @@
         height: String(LANE_H - 12),
         rx: "1.5",
       });
-      hoverable(rootEl, mark, p.behind > 0
-        ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
-        : `@${p.handle} is caught up to #${p.read_seq}`, `read ${itemKey(channel.name, p.read_seq, p.handle)}`, itemKey(channel.name, p.read_seq, p.handle));
+      const status = p.behind > 0 ? `${p.behind} behind${p.mentioned ? " · @-mentioned" : ""}` : "caught up";
+      hoverable(rootEl, mark, `@${p.handle} ${status}`, `read ${itemKey(channel.name, p.read_seq, p.handle)}`,
+        itemKey(channel.name, p.read_seq, p.handle), () => {
+          const meta = html("div", "tl-hover-meta");
+          meta.appendChild(agentMark(p.handle, "", false));
+          meta.appendChild(html("span", "", `@${p.handle} · ${status}`));
+          return meta;
+        });
       mark.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(channel.name, p.read_seq, p.handle);
