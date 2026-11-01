@@ -257,10 +257,7 @@
   function resolveTarget(hashTarget, channels, pairedDMs) {
     if (hashTarget === "all") return { kind: "all" };
     if (hashTarget?.startsWith("dm:")) {
-      const rawPair = hashTarget.slice(3);
-      const [x, y] = rawPair.split("↔");
-      const pairKey = x && y ? (x <= y ? `${x}↔${y}` : `${y}↔${x}`) : rawPair;
-      const found = pairedDMs.find((p) => p.pairKey === pairKey);
+      const found = pairedDMs.find((p) => p.pairKey === hashTarget.slice(3));
       if (found) return { kind: "dm", pairKey: found.pairKey, a: found.a, b: found.b };
     }
     if (hashTarget?.startsWith("#") && channels.some((c) => c.name === hashTarget)) {
