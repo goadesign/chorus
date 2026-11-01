@@ -30,8 +30,8 @@
 //
 // Keyboard: the timeline is one focusable control. Left/Right move the
 // selection to the previous/next retained message (the view follows it),
-// Home/End jump to the first/last, PageUp/PageDown move the view by one
-// window width, and Enter opens the selected message. Clicking the overview
+// Home/End jump to the first/last, PageUp/PageDown move the view by its own
+// duration, and Enter opens the selected message. Clicking the overview
 // strip moves the view there.
 (function () {
   "use strict";
@@ -123,7 +123,7 @@
     const axis = buildAxis(events);
     const win = state.timeWindow || liveWindow(axis);
     const inWindow = (t) => t >= win.startMs && t <= win.endMs;
-    const lanes = laneList(view, events, inWindow, picked);
+    const lanes = laneList(view, events);
     const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
     const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3;
@@ -260,19 +260,16 @@
     actions.selectMessage(e.target, e.seq);
   }
 
-  // laneList returns the lanes to draw: every registered agent, every sender
-  // with a message inside the visible window, and the sender of the selected
-  // message (so keyboard selection never lands on a missing lane). Humans
-  // come first, then handles in order. A sender with no current registration
+  // laneList returns the lanes to draw: every registered agent and every
+  // sender of a retained message, so the chart keeps the same lanes (and
+  // height) while the window is dragged across history. Humans come first,
+  // then handles in order. A sender with no current registration
   // keeps its messages but is drawn muted; the data cannot tell whether it
   // left, expired, or disconnected, so the lane makes no claim about why.
   // The human mark reflects the agent's current declared model only.
-  function laneList(view, events, inWindow, picked) {
+  function laneList(view, events) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
-    const handles = new Set(live.keys());
-    for (const e of events) {
-      if (inWindow(e.t) || (picked && picked.target === e.target && picked.seq === e.seq)) handles.add(e.sender);
-    }
+    const handles = new Set([...live.keys(), ...events.map((e) => e.sender)]);
     const lanes = [...handles].map((h) => {
       const a = live.get(h);
       return {
@@ -336,19 +333,29 @@
     dropDrag(rootEl);
   }
 
-  // shiftWindow moves win by delta compressed-axis units, keeping its length.
-  function shiftWindow(axis, win, delta) {
-    const w0 = axis.pos(win.startMs);
-    const w1 = axis.pos(win.endMs);
-    const len = w1 - w0;
-    const start = Math.min(Math.max(0, w0 + delta), Math.max(0, axis.total - len));
-    return { startMs: timeAt(axis, start), endMs: timeAt(axis, start + len) };
+  // A view is a span of real time (state.timeWindow filters the message list
+  // by those timestamps), so moving it never changes its duration. The
+  // compressed axis only decides where things are drawn: a drag of the
+  // overview moves the view's start by the dragged distance on that axis.
+
+  // placeWindow returns a view of win's real duration starting at startMs,
+  // clamped so it stays within the retained history.
+  function placeWindow(axis, win, startMs) {
+    const dur = win.endMs - win.startMs;
+    const lastEnd = axis.last + 60 * 1000;
+    const start = Math.max(axis.first, Math.min(startMs, lastEnd - dur));
+    return { startMs: start, endMs: Math.min(lastEnd, start + dur) };
   }
 
-  // centerWindow returns a window of win's length centered on time t.
+  // shiftWindow moves win by delta compressed-axis units, measured at its
+  // start, keeping its real duration.
+  function shiftWindow(axis, win, delta) {
+    return placeWindow(axis, win, timeAt(axis, axis.pos(win.startMs) + delta));
+  }
+
+  // centerWindow returns a view of win's real duration centered on time t.
   function centerWindow(axis, win, t) {
-    const len = axis.pos(win.endMs) - axis.pos(win.startMs);
-    return shiftWindow(axis, win, axis.pos(t) - len / 2 - axis.pos(win.startMs));
+    return placeWindow(axis, win, t - (win.endMs - win.startMs) / 2);
   }
 
   // matcher returns a predicate for the active search and agent filters, or
@@ -664,10 +671,10 @@
   // reachable; when the new selection is outside the view, the view is
   // centered on it.
   function onKey(ev, order, isSelected, actions, axis, win, pan) {
-    const len = axis.pos(win.endMs) - axis.pos(win.startMs);
     if (ev.key === "PageUp" || ev.key === "PageDown") {
       ev.preventDefault();
-      pan(shiftWindow(axis, win, ev.key === "PageUp" ? -len : len));
+      const dur = win.endMs - win.startMs;
+      pan(placeWindow(axis, win, win.startMs + (ev.key === "PageUp" ? -dur : dur)));
       return;
     }
     if (order.length === 0) return;
