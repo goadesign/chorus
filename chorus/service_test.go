@@ -1305,6 +1305,9 @@ func TestHumanMarkUsesLatestDeclaration(t *testing.T) {
 	}
 	for i, tc := range cases {
 		c := newTestCluster(t, 1, nil)
+		// Bound every call in this test: if Sync ever waited for a broadcast
+		// that never comes, the send fails here instead of hanging the suite.
+		c.replicas[0].httpServer.Client().Timeout = 5 * time.Second
 		swarm := fmt.Sprintf("syncmark%d", i)
 		hashKey := "map:chorus:" + swarm + ":state:content"
 		ctx := context.Background()
