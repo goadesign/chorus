@@ -84,8 +84,8 @@
 
   // resolveIdentity maps a participant's declared model (or saved send-time
   // human provenance) to the official brand mark under /ui/brands/. It matches
-  // supported model identifier forms only and never guesses from handle
-  // prefixes, free-text roles, or arbitrary substrings.
+  // supported model identifier forms (including Bedrock ARNs and Vertex/provider
+  // paths) and never guesses from handle prefixes, roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
     const reg = (state.view?.agents || []).find((a) => a.handle === raw);
@@ -94,13 +94,15 @@
     if (isHuman || m === "human") {
       return { handle: raw, label: `@${raw}`, model: mod || (isHuman ? "human" : ""), provider: "human", iconUrl: null, avatarUrl: null };
     }
-    if (/^(?:(?:us|eu|ap|global)\.)?(?:anthropic[/.:])?claude(?:$|[-._:@/][a-z0-9._:-]+)$/.test(m)) {
+    const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
+    const leaf = m.replace(cloudPrefix, "");
+    if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
     }
-    if (/^(?:openai[/.:])?(?:gpt-[a-z0-9._:-]+|chatgpt-[a-z0-9._:-]+|codex(?:$|-[a-z0-9._:-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:-]*)))$/.test(m)) {
+    if (/^(?:gpt-[a-z0-9._:@-]+|chatgpt-[a-z0-9._:@-]+|codex(?:$|-[a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
     }
-    if (/^(?:(?:google|models|vertex_ai)[/.:])?gemini(?:$|-[a-z0-9._:-]+)$/.test(m)) {
+    if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
     }
     return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null };
