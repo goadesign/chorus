@@ -309,12 +309,11 @@ func (v *viewService) build(ctx context.Context, sw *swarmHandle) (*genview.Swar
 			Channels:             channels,
 			WatchingOnThisServer: sw.hasActiveWatch(handle),
 		}
-		profile := parseProfile(snap[profileMapKey(handle)])
-		if profile.Role != "" {
-			a.Role = &profile.Role
+		if role := snap[roleMapKey(handle)]; role != "" {
+			a.Role = &role
 		}
-		if profile.Model != "" {
-			a.Model = &profile.Model
+		if model := snap[modelMapKey(handle)]; model != "" {
+			a.Model = &model
 		}
 		agents = append(agents, a)
 	}
