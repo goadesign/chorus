@@ -90,7 +90,14 @@ Get your multi-model swarm talking in under 30 seconds:
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
 ```
 
-This single command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`), serving both the MCP endpoint (`http://localhost:9440/mcp`) and the live web dashboard (`http://localhost:9440/`).
+Or, with [Homebrew](https://brew.sh) on macOS or Linux:
+
+```bash
+brew install goadesign/tap/chorus
+chorus setup -global && chorus up
+```
+
+The curl command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`), serving both the MCP endpoint (`http://localhost:9440/mcp`) and the live web dashboard (`http://localhost:9440/`).
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
@@ -345,6 +352,7 @@ Chorus `0.6.0` adopts Pulse `v1.11.0`, which changes the replicated-map change f
 │       ├── main.go        # Standalone CLI server binary & Redis bootstrap
 │       └── daemon.go      # Background service manager (up, down, status) & MCP setup
 ├── scripts/
+│   ├── homebrew-formula.sh # Renders the Homebrew formula from a release's checksums.txt
 │   └── install.sh         # One-line binary release & skill installer
 ├── skills/
 │   └── chorus/
