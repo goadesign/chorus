@@ -165,11 +165,11 @@
     // the same links in the same order.
     const oldBody = rootEl.querySelector(".tl-card .tl-card-body");
     const linkFocus = oldBody && oldBody.contains(focused) ? [...oldBody.querySelectorAll("a[href]")].indexOf(focused) : -1;
-    // How far the open card's message body was scrolled, and which item the
-    // card described, so a redraw of the same card keeps showing the same
-    // part of the message while a newly picked item starts at its top.
+    // How far the open card was scrolled, and which item it described, so a
+    // redraw of the same card keeps showing the same part while a newly
+    // picked item starts at its top.
     const oldCard = rootEl.querySelector(".tl-card");
-    const cardScroll = oldCard ? oldCard.querySelector(".tl-card-body").scrollTop : 0;
+    const cardScroll = oldCard ? oldCard.scrollTop : 0;
     const oldCardKey = oldCard ? oldCard.dataset.tlItem : "";
     clear(rootEl);
     if (!view) {
@@ -334,7 +334,7 @@
     scheduleFinish(rootEl, () => {
       if (shownCard && shownCard.isConnected) {
         cardPlacers.get(shownCard)();
-        if (sameItem) shownCard.querySelector(".tl-card-body").scrollTop = cardScroll;
+        if (sameItem) shownCard.scrollTop = cardScroll;
         if (shownCard.contains(document.activeElement)) revealInCard(shownCard, document.activeElement);
         shownCard.style.opacity = "";
       }
@@ -558,15 +558,14 @@
   // the visible part of the scrolling area that holds the chart (between the
   // page header and the composer), not the browser window: the card opens
   // above when below does not fit there and above does, and otherwise on the
-  // side with more room, limited to that room: the card's header and buttons
-  // keep their size and its message body (the card's only scrolling area)
-  // shrinks. The card always stays inside that visible area. The card floats
+  // side with more room, limited to that room; the card is its own (and only)
+  // scrolling area, so a long message or a tight space scrolls inside the
+  // card. The card always stays inside that visible area. The card floats
   // above the page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
     // Placing again (after the message area scrolled) measures the card at
-    // its natural height, then restores how far its body was scrolled.
-    const body = card.querySelector(".tl-card-body");
-    const inner = body.scrollTop;
+    // its natural height, then restores how far it was scrolled.
+    const inner = card.scrollTop;
     card.style.visibility = "hidden";
     card.style.maxHeight = "";
     if (!card.isConnected) rootEl.appendChild(card);
@@ -587,27 +586,18 @@
     const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
     const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
     const room = below ? roomBelow : roomAbove;
-    // The card's fixed parts (header, notes, buttons) never shrink; only the
-    // message body does. When the room is smaller than those parts, the card
-    // keeps their height and is aligned to the bottom of the visible area
-    // below, so Jump and Respond stay reachable (Escape still closes it).
-    const chrome = ch - body.offsetHeight;
-    const fitted = Math.max(chrome, Math.floor(room));
-    if (ch > fitted) card.style.maxHeight = `${fitted}px`;
-    const shown = Math.min(ch, fitted);
+    if (ch > room) card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
+    const shown = Math.min(ch, Math.max(0, room));
     const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
     // When the point itself has scrolled out of the visible area, the card
     // still stays wholly inside it, so its controls remain reachable.
     const wanted = below ? ay + gap : ay - gap - shown;
-    // A card taller than the whole visible area is aligned to its bottom, so
-    // the buttons rather than the header stay visible.
-    const lowest = area.bottom - PAD - shown;
-    const top = shown > area.bottom - area.top - 2 * PAD ? lowest : Math.max(area.top + PAD, Math.min(wanted, lowest));
+    const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
     // Absolute positions are measured from the section's padding edge.
     card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
     card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
     card.style.visibility = "";
-    body.scrollTop = inner;
+    card.scrollTop = inner;
   }
 
   // fitQuietLabels sizes the quiet labels by their rendered width, left to
@@ -677,16 +667,13 @@
     }, { passive: true });
   }
 
-  // revealInCard scrolls only the card's message body so that a focused
-  // control inside it (a link) is fully visible; the header and buttons
-  // never scroll, and the page and the message area do not move.
+  // revealInCard scrolls only the card so that a focused control inside it
+  // is fully visible; the page and the message area do not move.
   function revealInCard(card, control) {
-    const body = card.querySelector(".tl-card-body");
-    if (!body.contains(control)) return;
-    const view = body.getBoundingClientRect();
+    const view = card.getBoundingClientRect();
     const box = control.getBoundingClientRect();
-    if (box.top < view.top) body.scrollTop -= view.top - box.top;
-    else if (box.bottom > view.bottom) body.scrollTop += box.bottom - view.bottom;
+    if (box.top < view.top) card.scrollTop -= view.top - box.top;
+    else if (box.bottom > view.bottom) card.scrollTop += box.bottom - view.bottom;
   }
 
   // hoverable gives node an instant hover label with text, and the same text
@@ -756,9 +743,15 @@
     rootEl.addEventListener("pointermove", (ev) => {
       if (ev.pointerType !== "touch") pointers.set(rootEl, { x: ev.clientX, y: ev.clientY });
     });
-    rootEl.addEventListener("pointerleave", () => {
+    rootEl.addEventListener("pointerleave", (ev) => {
+      // A finger lifting off counts as leaving too; a tapped label stays
+      // until the next tap elsewhere.
+      if (ev.pointerType === "touch") return;
       pointers.delete(rootEl);
       hideHover(rootEl);
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "touch" && !rootEl.contains(ev.target)) hideHover(rootEl);
     });
     rootEl.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType !== "touch") return;
