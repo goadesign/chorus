@@ -507,8 +507,9 @@
       document.getElementById("send-text")?.focus();
     },
 
-    // inspectAgent opens or closes the #agent-details inspection popover for handle.
-    inspectAgent(handle, anchorEl = null) {
+    // inspectAgent opens, switches, or closes the #agent-details popover for
+    // handle, anchored to anchorEl, the control the reader activated.
+    inspectAgent(handle, anchorEl) {
       const clean = String(handle || "").replace(/^@/, "");
       if (!clean) return;
       window.ChorusStream?.inspectAgent?.(document.getElementById("agent-details"), clean, state, actions, anchorEl);
