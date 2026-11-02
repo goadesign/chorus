@@ -46,6 +46,8 @@ class Chorus < Formula
   homepage "https://github.com/goadesign/chorus"
   license "MIT"
 
+  depends_on "redis"
+
   on_macos do
     on_arm do
       url "${base}/chorus_${version}_darwin_arm64.tar.gz"
@@ -67,8 +69,6 @@ class Chorus < Formula
       sha256 "${linux_amd64}"
     end
   end
-
-  depends_on "redis"
 
   def install
     bin.install "chorus"
