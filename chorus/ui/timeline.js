@@ -563,11 +563,11 @@
   // it hides as few other messages as possible. The space that counts is
   // the visible part of the scrolling area that holds the chart (between the
   // page header and the composer), not the browser window: the card opens
-  // above when below does not fit there and above does, and otherwise on the
-  // side with more room, limited to that room; the card is its own (and only)
-  // scrolling area, so a long message or a tight space scrolls inside the
-  // card. The card always stays inside that visible area. The card floats
-  // above the page, so placing it never moves layout.
+  // above when below does not fit there and above does, and otherwise uses
+  // the whole visible area (see below); the card is its own (and only) scrolling
+  // area, so a long message or a tight space scrolls inside the card. The
+  // card always stays inside that visible area. The card floats above the
+  // page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
     // Placing again (after the message area scrolled) measures the card at
     // its natural height, then restores how far it was scrolled.
@@ -590,14 +590,26 @@
     // point, so a point scrolled out of view never claims space nobody sees.
     const roomBelow = area.bottom - PAD - Math.max(ay + gap, area.top + PAD);
     const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
-    const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
-    const room = below ? roomBelow : roomAbove;
-    if (ch > room) card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
-    const shown = Math.min(ch, Math.max(0, room));
+    // The card opens beside its point when it fits below, else above.
+    // Otherwise it uses the whole visible area, covering its point if it
+    // must, centred on the point as far as the area allows, and scrolls
+    // inside; it is never squeezed into the thin strip beside the point.
+    const whole = area.bottom - area.top - 2 * PAD;
+    const side = ch <= roomBelow ? "below" : ch <= roomAbove ? "above" : "";
+    const shown = side ? ch : Math.max(0, Math.min(ch, whole));
+    if (shown < ch) {
+      // max-height excludes padding and border unless the card sizes its
+      // border box, so subtract them to make the drawn card exactly fit.
+      const cs = getComputedStyle(card);
+      const frame = cs.boxSizing === "border-box" ? 0
+        : parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) +
+          parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+      card.style.maxHeight = `${Math.max(0, Math.floor(shown - frame))}px`;
+    }
     const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
-    // When the point itself has scrolled out of the visible area, the card
-    // still stays wholly inside it, so its controls remain reachable.
-    const wanted = below ? ay + gap : ay - gap - shown;
+    // The card always stays wholly inside the visible area, including when
+    // the point itself has scrolled out of view.
+    const wanted = side === "below" ? ay + gap : side === "above" ? ay - gap - shown : ay - shown / 2;
     const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
     // Absolute positions are measured from the section's padding edge.
     card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
