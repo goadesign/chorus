@@ -1310,10 +1310,12 @@
     svg.appendChild(label);
 
     // The lane's handle and mark open that agent's details. The handle is
-    // also a keyboard stop (Enter or Space), named for what it does.
+    // also a keyboard stop (Enter or Space), named for what it does. The
+    // label is passed as the opener, so the details anchor to this lane and
+    // return focus here even when a tap on the mark leaves focus elsewhere.
     const inspect = (ev) => {
       ev.stopPropagation();
-      actions.inspectAgent(lane.handle);
+      actions.inspectAgent(lane.handle, label);
     };
     for (const node of [label, ...marks]) {
       node.classList.add("tl-lane-inspect");
