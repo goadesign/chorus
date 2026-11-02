@@ -80,8 +80,12 @@ update-tap:
 	gh repo clone goadesign/homebrew-tap "$$tap" -- --quiet --depth 1 && \
 	scripts/homebrew-formula.sh "$(VERSION)" "$(DIST_DIR)/checksums.txt" > "$$tap/Formula/chorus.rb" && \
 	git -C "$$tap" add Formula/chorus.rb && \
-	git -C "$$tap" commit --quiet -m "Chorus $(RELEASE_TAG)" && \
-	git -C "$$tap" push --quiet origin HEAD; \
+	if git -C "$$tap" diff --cached --quiet; then \
+		echo "Homebrew formula is already at $(RELEASE_TAG)"; \
+	else \
+		git -C "$$tap" commit --quiet -m "Chorus $(RELEASE_TAG)" && \
+		git -C "$$tap" push --quiet origin HEAD; \
+	fi; \
 	result=$$?; \
 	rm -rf "$$tap"; \
 	exit $$result
