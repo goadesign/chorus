@@ -118,6 +118,15 @@
     return latestModel;
   }
 
+  // isKnownParticipant reports whether handle is a live agent, inbox recipient,
+  // or sender of a retained message in state.view (matching findParticipant).
+  function isKnownParticipant(handle) {
+    if (!handle || !state.view) return false;
+    if ((state.view.agents || []).some((a) => a.handle === handle)) return true;
+    if ((state.view.inboxes || []).some((ib) => ib.recipient === handle || (ib.messages || []).some((m) => m.sender === handle))) return true;
+    return (state.view.channels || []).some((ch) => (ch.messages || []).some((m) => m.sender === handle));
+  }
+
   // resolveIdentity maps a participant's declared model (or saved send-time
   // human provenance) to the official brand mark under /ui/brands/. It matches
   // supported model identifier forms (including Bedrock ARNs, Vertex/provider
@@ -125,26 +134,27 @@
   // guesses from handle prefixes, roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
+    const known = isKnownParticipant(raw);
     if (isHuman) {
-      return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null };
+      return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null, known };
     }
     const mod = declaredModel(raw, model);
     const m = mod.trim().toLowerCase();
     if (m === "human") {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null, known };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
     const leaf = m.replace(cloudPrefix, "").replace(/\s+/g, "-");
     if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg", known };
     }
     if (/^(?:gpt(?:$|[-._:@][a-z0-9._:@-]+)|chatgpt-[a-z0-9._:@-]+|codex(?:$|[-._:@][a-z0-9._:@-]+)|sol(?:$|[-._:@][a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg", known };
     }
     if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png", known };
     }
-    return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null };
+    return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null, known };
   }
 
   // handleBadge renders @<handle> with an inline brand mark (no circular border
@@ -497,11 +507,11 @@
       document.getElementById("send-text")?.focus();
     },
 
-    // inspectAgent opens or closes the #agent-details inspection drawer for handle.
-    inspectAgent(handle) {
+    // inspectAgent opens or closes the #agent-details inspection popover for handle.
+    inspectAgent(handle, anchorEl = null) {
       const clean = String(handle || "").replace(/^@/, "");
       if (!clean) return;
-      window.ChorusStream?.inspectAgent?.(document.getElementById("agent-details"), clean, state, actions);
+      window.ChorusStream?.inspectAgent?.(document.getElementById("agent-details"), clean, state, actions, anchorEl);
     },
 
     // updatePin sends the editor's exact text to its original channel. It
@@ -556,6 +566,13 @@
     }
   }
 
+  function isScrolledPastTimeline(stageEl) {
+    if (!stageEl || stageEl.scrollTop <= 4) return false;
+    const timelineRoot = document.getElementById("timeline-root");
+    const threshold = timelineRoot && timelineRoot.offsetHeight > 0 ? timelineRoot.offsetHeight : 120;
+    return stageEl.scrollTop > threshold;
+  }
+
   function renderHeaderAndTabs() {
     const select = document.getElementById("swarm-select");
     const sendBtn = document.getElementById("btn-send");
@@ -563,7 +580,16 @@
     const allSwarms = new Set(state.swarms);
     if (state.activeSwarm) allSwarms.add(state.activeSwarm);
     if (allSwarms.size === 0) allSwarms.add("default");
-    select.replaceChildren(...Array.from(allSwarms).sort().map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+    const sortedSwarms = Array.from(allSwarms).sort();
+    const swarmListKey = sortedSwarms.join(",");
+    if (select) {
+      if (select.dataset.swarmListKey !== swarmListKey) {
+        select.dataset.swarmListKey = swarmListKey;
+        select.replaceChildren(...sortedSwarms.map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+      } else if (state.activeSwarm && select.value !== state.activeSwarm) {
+        select.value = state.activeSwarm;
+      }
+    }
     renderLiveStatus();
 
     const channels = state.view?.channels || [];
@@ -579,13 +605,24 @@
 
     const tabsEl = document.getElementById("target-tabs");
     if (!tabsEl) return;
+    const prevScrollLeft = tabsEl.scrollLeft;
+    const focusedTabKey = tabsEl.contains(document.activeElement)
+      ? (document.activeElement?.closest?.("[data-tab-key]")?.dataset?.tabKey
+        || document.activeElement?.dataset?.tabKey
+        || "")
+      : "";
     const tabNodes = [];
     for (const ch of channels) {
       const isActive = state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
       const msgs = ch.messages || [];
       const count = formatMessageCount(msgs.length, [ch]);
       tabNodes.push(
-        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }) },
+        el("button", {
+          type: "button",
+          className: `target-tab${isActive ? " active" : ""}`,
+          dataset: { tabKey: `channel:${ch.name}` },
+          onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }),
+        },
           el("span", {}, ch.name),
           el("span", { className: "count-pill", title: count.title }, count.text))
       );
@@ -594,7 +631,12 @@
       const isActive = state.selectedTarget?.kind === "dm" && state.selectedTarget.pairKey === pair.pairKey;
       const count = formatMessageCount(pair.messages.length, [pair.inboxA, pair.inboxB]);
       tabNodes.push(
-        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }) },
+        el("button", {
+          type: "button",
+          className: `target-tab${isActive ? " active" : ""}`,
+          dataset: { tabKey: `dm:${pair.pairKey}` },
+          onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }),
+        },
           el("span", {}, handleBadge(pair.a), " ↔ ", handleBadge(pair.b)),
           el("span", { className: "count-pill", title: count.title }, count.text))
       );
@@ -604,11 +646,21 @@
     for (const p of pairedDMs) totalMsgs += p.messages.length;
     const allCount = formatMessageCount(totalMsgs, [...channels, ...(state.view?.inboxes || [])]);
     tabNodes.push(
-      el("button", { type: "button", className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "all" }) },
+      el("button", {
+        type: "button",
+        className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`,
+        dataset: { tabKey: "all" },
+        onClick: () => actions.selectTarget({ kind: "all" }),
+      },
         el("span", {}, "All Activity"),
         el("span", { className: "count-pill", title: allCount.title }, allCount.text))
     );
     tabsEl.replaceChildren(...tabNodes);
+    tabsEl.scrollLeft = prevScrollLeft;
+    if (focusedTabKey) {
+      const nextTab = [...tabsEl.querySelectorAll("[data-tab-key]")].find((n) => n.dataset.tabKey === focusedTabKey);
+      nextTab?.focus?.({ preventScroll: true });
+    }
 
     renderActiveFiltersBar();
   }
@@ -630,7 +682,7 @@
     const filtersBar = document.getElementById("active-filters-bar");
     if (!filtersBar) return;
     const stageEl = document.getElementById("stage-container");
-    const scrolledDown = Boolean(stageEl && stageEl.scrollTop > 4);
+    const scrolledDown = isScrolledPastTimeline(stageEl);
     const chips = [];
     if (state.filterAgent) {
       chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear agent filter @${state.filterAgent}`, onClick: () => actions.setFilterAgent("") },
@@ -1078,7 +1130,7 @@
         "scroll",
         () => {
           const hasJumpBtn = Boolean(document.getElementById("btn-jump-latest"));
-          const needsJumpBtn = Boolean(state.timeWindow) || stageEl.scrollTop > 4;
+          const needsJumpBtn = Boolean(state.timeWindow) || isScrolledPastTimeline(stageEl);
           if (hasJumpBtn !== needsJumpBtn) {
             renderActiveFiltersBar();
           }

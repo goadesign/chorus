@@ -385,6 +385,28 @@ button, input, select, textarea {
   overflow-wrap: anywhere;
 }
 
+.handle-mention-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 3px;
+  margin: 0 -1px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.handle-mention-btn:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--accent);
+}
+
 .inline-brand-logo {
   width: 16px;
   height: 16px;
@@ -416,12 +438,6 @@ body[data-theme="dark"] .provider-openai {
 html[data-theme="light"] .provider-openai,
 body[data-theme="light"] .provider-openai {
   filter: invert(1) brightness(0.12);
-}
-
-.details-agent-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 
 /* 1. Single Clean Header Bar */
@@ -705,6 +721,7 @@ body[data-theme="light"] .provider-openai {
 
 /* Main Stage Container */
 .stage-container {
+  position: relative;
   flex: 1;
   width: 100%;
   min-height: 0;
@@ -722,7 +739,7 @@ body[data-theme="light"] .provider-openai {
   gap: 12px;
 }
 
-/* 2. Agent Inspection Drawer */
+/* 2. Agent Inspection Popover */
 .agent-last-message {
   font-size: 13.5px;
   line-height: 19px;
@@ -732,16 +749,42 @@ body[data-theme="light"] .provider-openai {
   white-space: nowrap;
   min-width: 0;
   width: 100%;
+  margin: 0;
+}
+
+#agent-details:empty {
+  display: none;
 }
 
 #agent-details:not(:empty) {
+  position: absolute;
+  z-index: 20;
+  width: min(400px, calc(100% - 24px));
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  padding: 14px 18px;
+  box-shadow: var(--shadow-md);
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+@media (max-width: 599px) {
+  #agent-details:not(:empty) {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    top: auto;
+    width: auto;
+    max-height: min(420px, 70dvh);
+    z-index: 30;
+  }
 }
 
 .details-heading {
@@ -749,6 +792,14 @@ body[data-theme="light"] .provider-openai {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.details-agent-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .details-heading h3 {
@@ -1368,6 +1419,12 @@ body[data-theme="light"] .provider-openai {
 }
 
 .stream-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  background: color-mix(in srgb, var(--bg-canvas) 92%, transparent);
+  backdrop-filter: blur(8px);
+  padding: 6px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1658,9 +1715,8 @@ body[data-theme="light"] .provider-openai {
   white-space: nowrap;
 }
 
-/* Expanded messages retain their author and coordinates above the full text;
-   their collapsed excerpts would repeat that same text. */
-.message-disclosure[open] > .message-summary .message-headline,
+/* Expanded messages keep their primary headline row for a stable click target
+   and hide only the secondary supporting preview line. */
 .message-disclosure[open] > .message-summary .message-supporting {
   display: none;
 }
@@ -2248,6 +2304,10 @@ body[data-theme="light"] .provider-openai {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.composer-feedback:not(.ok):not(.error) {
+  display: none;
 }
 
 .composer-feedback.error {

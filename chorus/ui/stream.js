@@ -53,6 +53,15 @@
   // The observer is replaced after each render so removed rows are not retained.
   let previewObserver = null;
   document.addEventListener("visibilitychange", observeUnshownPreviews);
+  document.addEventListener("pointerdown", (ev) => {
+    const detailsEl = document.getElementById("agent-details");
+    if (!detailsEl || !detailsEl.dataset?.agent || detailsEl.hidden) return;
+    const t = ev.target;
+    if (!t || typeof t.closest !== "function") return;
+    if (detailsEl.contains(t)) return;
+    if (t.closest('.tl-lane-inspect, [data-tl-lane], [data-inspect-handle], [data-focus-key^="inspect:"]')) return;
+    closeAgentDrawer(detailsEl, false);
+  });
 
   // render updates the message surfaces without keeping another copy of swarm
   // data. Disclosure choices and reading position belong to the existing DOM.
@@ -83,10 +92,10 @@
       ? null
       : (els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl));
 
-    renderInspectedAgent(els.detailsEl, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderMessages(els.streamEl, visible, targetEntries, state, actions);
+    renderInspectedAgent(els.detailsEl, state, actions, entries);
 
     if (!els.preserveScroll) {
       restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
@@ -203,22 +212,63 @@
     };
   }
 
-  // closeAgentDrawer clears #agent-details, repositions any open timeline
-  // preview card, and restores keyboard focus to the control that opened the
-  // drawer when focus was inside or on the invoking control.
-  function closeAgentDrawer(detailsEl, restoreFocus = true) {
+  // isAnchorVisible reports whether node is connected and not hidden inside a
+  // collapsed <details> disclosure body.
+  function isAnchorVisible(node) {
+    if (!node || !node.isConnected) return false;
+    let cur = node;
+    while (cur) {
+      const details = cur.parentElement?.closest?.("details");
+      if (!details) break;
+      const summary = [...(details.children || [])].find((c) => c.tagName === "SUMMARY");
+      if (!details.open && (!summary || !summary.contains(cur))) {
+        return false;
+      }
+      cur = details;
+    }
+    return true;
+  }
+
+  // resolveAgentAnchor locates the live invoking button or timeline lane for
+  // the open #agent-details popover.
+  function resolveAgentAnchor(detailsEl) {
+    if (!detailsEl) return null;
     const returnKey = detailsEl.dataset.returnFocusKey || "";
-    const returnLane = detailsEl.dataset.returnLane || detailsEl.dataset.agent || "";
+    if (returnKey) {
+      const target = [...document.querySelectorAll("[data-focus-key]")]
+        .find((node) => node.dataset.focusKey === returnKey);
+      return isAnchorVisible(target) ? target : null;
+    }
+    const laneHandle = detailsEl.dataset.returnLane || "";
+    if (laneHandle) {
+      const laneNode = [...document.querySelectorAll("[data-tl-lane]")]
+        .find((node) => node.dataset.tlLane === laneHandle);
+      return isAnchorVisible(laneNode) ? laneNode : null;
+    }
+    return null;
+  }
+
+  // closeAgentDrawer clears and hides the #agent-details popover and restores
+  // keyboard focus to the control that opened it when restoreFocus is true.
+  function closeAgentDrawer(detailsEl, restoreFocus = true) {
+    if (!detailsEl) return;
+    const returnKey = detailsEl.dataset.returnFocusKey || "";
+    const returnLane = detailsEl.dataset.returnLane || "";
     delete detailsEl.dataset.agent;
     delete detailsEl.dataset.returnFocusKey;
     delete detailsEl.dataset.returnLane;
+    detailsEl.removeAttribute("role");
+    detailsEl.removeAttribute("aria-label");
+    detailsEl.hidden = true;
+    detailsEl.style.left = "";
+    detailsEl.style.top = "";
+    detailsEl.style.maxHeight = "";
     detailsEl.replaceChildren();
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
     if (!restoreFocus) return;
     if (returnKey) {
       const target = [...document.querySelectorAll("[data-focus-key]")]
         .find((node) => node.dataset.focusKey === returnKey);
-      if (target) {
+      if (isAnchorVisible(target)) {
         target.focus?.({ preventScroll: true });
         return;
       }
@@ -226,7 +276,7 @@
     if (returnLane) {
       const laneNode = [...document.querySelectorAll("[data-tl-lane]")]
         .find((node) => node.dataset.tlLane === returnLane);
-      if (laneNode) {
+      if (isAnchorVisible(laneNode)) {
         laneNode.focus?.({ preventScroll: true });
         return;
       }
@@ -234,41 +284,73 @@
     document.querySelector("svg.tl")?.focus?.({ preventScroll: true });
   }
 
-  // inspectAgent toggles the #agent-details drawer for handle when the reader
-  // clicks an agent lane in the timeline or an Inspect action in the stream.
-  function inspectAgent(detailsEl, handle, state, actions) {
+  // inspectAgent toggles or switches the anchored #agent-details popover for
+  // handle when the reader clicks a timeline lane, an Inspect action, or an
+  // inline @handle mention badge.
+  function inspectAgent(detailsEl, handle, state, actions, anchorEl = null) {
     if (!detailsEl || !state?.view) return;
     const clean = String(handle || "").replace(/^@/, "");
     if (!clean) return;
+    const fromInsidePopover = Boolean(anchorEl && detailsEl.contains(anchorEl));
+    const active = document.activeElement;
+    const invoker = fromInsidePopover
+      ? null
+      : (anchorEl || (active && !detailsEl.contains(active) && (active.dataset?.focusKey || active.dataset?.tlLane) ? active : null));
+    const invokerKey = invoker?.dataset?.focusKey || "";
     if (detailsEl.dataset.agent === clean) {
-      closeAgentDrawer(detailsEl, true);
-      return;
+      if (fromInsidePopover) return;
+      const sameFocusKey = invokerKey && detailsEl.dataset.returnFocusKey === invokerKey;
+      const sameLane = !invokerKey && !detailsEl.dataset.returnFocusKey;
+      if (sameFocusKey || sameLane) {
+        closeAgentDrawer(detailsEl, true);
+        return;
+      }
     }
     const found = findParticipant(clean, state, retainedMessages(state.view));
     if (!found) return;
-    const active = document.activeElement;
-    if (active && !detailsEl.contains(active) && active.dataset?.focusKey) {
-      detailsEl.dataset.returnFocusKey = active.dataset.focusKey;
+    if (invokerKey) {
+      detailsEl.dataset.returnFocusKey = invokerKey;
       delete detailsEl.dataset.returnLane;
-    } else {
+    } else if (!fromInsidePopover) {
       detailsEl.dataset.returnLane = clean;
       delete detailsEl.dataset.returnFocusKey;
+    } else if (!detailsEl.dataset.returnFocusKey) {
+      detailsEl.dataset.returnLane = clean;
     }
     detailsEl.dataset.agent = clean;
+    detailsEl.hidden = false;
+    detailsEl.setAttribute("role", "dialog");
+    detailsEl.setAttribute("aria-label", `Details for @${clean}`);
     showAgent(detailsEl, found.agent, state, actions, found.latest);
-    detailsEl.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    const anchor = (invoker && invokerKey && isAnchorVisible(invoker))
+      ? invoker
+      : resolveAgentAnchor(detailsEl);
+    if (anchor) {
+      window.ChorusTimeline?.placeAnchored?.(detailsEl, anchor);
+    }
     detailsEl.querySelector?.('[data-focus-key="close-agent"]')?.focus?.({ preventScroll: true });
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
   }
 
   // renderInspectedAgent refreshes #agent-details on live polls while an agent
-  // is being inspected, or closes it if the handle is no longer present.
+  // is being inspected, or closes it if the handle or its anchor is no longer
+  // present in the active view.
   function renderInspectedAgent(detailsEl, state, actions, entries) {
     const inspected = detailsEl?.dataset.agent;
-    if (!inspected) return;
+    if (!inspected) {
+      if (detailsEl) detailsEl.hidden = true;
+      return;
+    }
     const found = findParticipant(inspected, state, entries);
-    if (found) showAgent(detailsEl, found.agent, state, actions, found.latest);
-    else closeAgentDrawer(detailsEl, detailsEl.contains(document.activeElement));
+    const anchor = found ? resolveAgentAnchor(detailsEl) : null;
+    if (found && anchor) {
+      detailsEl.hidden = false;
+      detailsEl.setAttribute("role", "dialog");
+      detailsEl.setAttribute("aria-label", `Details for @${inspected}`);
+      showAgent(detailsEl, found.agent, state, actions, found.latest);
+      window.ChorusTimeline?.placeAnchored?.(detailsEl, anchor);
+    } else {
+      closeAgentDrawer(detailsEl, Boolean(detailsEl && detailsEl.contains(document.activeElement)));
+    }
   }
 
   // showAgent describes current registration or historical message facts,
@@ -343,13 +425,20 @@
     ];
     if (agent.role) {
       const roleP = element("p", "agent-role");
-      appendTextWithMentions(roleP, agent.role);
+      appendTextWithMentions(roleP, agent.role, {
+        prefix: `agent-role:${agent.handle}`,
+        count: 0,
+        onInspect: (h, el) => actions?.inspectAgent?.(h, el),
+      });
       nodes.push(roleP);
     }
     nodes.push(facts);
     if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): `, formattedPreview(latest.message.text)));
     nodes.push(element("div", "detail-actions",
-      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
+      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `dm:${agent.handle}`, () => {
+        closeAgentDrawer(root, false);
+        actions.composeDM(agent.handle);
+      }),
       actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
       copyWatchBtn));
     replaceKeepingFocus(root, nodes);
@@ -401,7 +490,7 @@
 
     const clauses = pinClauses(pin.text);
     const raw = element("pre", "pin-raw-text", pin.text);
-    const structured = renderPinStructured(clauses, key);
+    const structured = renderPinStructured(clauses, key, actions);
     const rawMode = sameChannel && root.dataset.pinMode === "raw";
     raw.hidden = clauses.length > 0 && !rawMode;
     structured.hidden = clauses.length === 0 || rawMode;
@@ -425,6 +514,12 @@
       if (disclosure.open && root.contains(disclosure)) {
         root.dataset.updated = "false";
         disclosure.querySelector(".pin-updated")?.remove();
+      } else if (!disclosure.open) {
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...disclosure.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
       }
     });
     root.dataset.pinKey = key;
@@ -443,18 +538,18 @@
   // renderPinStructured separates the documented fields for reading. Owners
   // remain authored text: known handles receive badges without inferred work
   // assignments, removed punctuation, or a new ownership grammar.
-  function renderPinStructured(clauses, pinKey = "pin") {
+  function renderPinStructured(clauses, pinKey = "pin", actions = null) {
     const container = element("div", "pin-structured");
     clauses.forEach((clause, idx) => {
       const kind = clause.key.toLowerCase();
       if (kind === "goal") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Goal"),
-          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal:${idx}`))));
+          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal:${idx}`, actions))));
       } else if (kind === "owners") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Owners"),
-          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners:${idx}`))));
+          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners:${idx}`, actions))));
       } else if (kind === "verify") {
         const copyBtn = actionButton("Copy command", `copy-verify:${idx}:${clause.value}`, async (ev) => {
           const btn = ev.currentTarget;
@@ -750,8 +845,9 @@
   }
 
   // revealSelectedMessage opens the selected message's disclosure (and parent
-  // thread disclosure) and scrolls it into view when shouldScroll is true
-  // (on explicit navigation such as "Show in conversation" or Enter).
+  // thread disclosure) and scrolls it into the center of the stage when
+  // shouldScroll is true (on explicit navigation such as "Jump", parent-quote
+  // click, or Enter).
   function revealSelectedMessage(root, state, shouldScroll) {
     if (!shouldScroll) return;
     const selected = state.selectedMessage;
@@ -764,7 +860,8 @@
         thread.open = true;
         thread.classList.remove("is-selected");
       }
-      node.scrollIntoView({ block: "nearest" });
+      const reducedMotion = Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+      node.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
     }
   }
 
@@ -904,6 +1001,11 @@
       if (!details.open) {
         for (const child of details.querySelectorAll("details[open]")) child.open = false;
         if (entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
       }
     });
 
@@ -999,13 +1101,20 @@
     preparePreviewCue(summary, entry);
     details.append(summary);
     details.addEventListener("toggle", () => {
-      if (!details.open && selected(entry, state)) actions.selectMessage(null, 0);
+      if (!details.open) {
+        if (selected(entry, state)) actions.selectMessage(null, 0);
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
+      }
     });
 
     const detailPane = element("div", "message-detail-pane");
     const parentQuote = renderParentContext(entry, state, actions, byTarget, key);
     if (parentQuote) detailPane.append(parentQuote);
-    detailPane.append(element("div", "message-body", formattedText(message.text, `msg:${key}`)));
+    detailPane.append(element("div", "message-body", formattedText(message.text, `msg:${key}`, actions)));
 
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
@@ -1017,8 +1126,8 @@
         actions.composeDM(message.sender);
       }));
     }
-    controls.append(actionButton(["Inspect ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `inspect:${key}`, () => {
-      actions.inspectAgent(message.sender);
+    controls.append(actionButton(["Inspect ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `inspect:${key}`, (ev) => {
+      actions.inspectAgent(message.sender, ev.currentTarget);
     }));
     controls.append(copyTextButton(message.text, `copy:${key}`));
     detailPane.append(controls);
@@ -1109,9 +1218,14 @@
   }
 
   // formattedText renders a full message body with CommonMark/GFM blocks,
-  // clickable http/https links with stable focus keys, and @handle mention badges.
-  function formattedText(text, focusPrefix = "md") {
-    return renderMessageText(text, { allowLinks: true, focusPrefix });
+  // clickable http/https links with stable focus keys, and clickable @handle
+  // mention badges.
+  function formattedText(text, focusPrefix = "md", actions = null) {
+    return renderMessageText(text, {
+      allowLinks: true,
+      focusPrefix,
+      onInspect: (h, el) => (actions || window.ChorusUI?.actions)?.inspectAgent?.(h, el),
+    });
   }
 
   // renderMessageText renders CommonMark/GFM Markdown into a DocumentFragment
@@ -1119,7 +1233,11 @@
   // innerHTML. Raw HTML in messages stays inert text.
   function renderMessageText(text, opts = {}) {
     const allowLinks = opts.allowLinks !== false;
-    const linkCtx = { prefix: opts.focusPrefix || "md", count: 0 };
+    const linkCtx = {
+      prefix: opts.focusPrefix || "md",
+      count: 0,
+      onInspect: opts.onInspect || ((h, el) => window.ChorusUI?.actions?.inspectAgent?.(h, el)),
+    };
     const fragment = document.createDocumentFragment();
     renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks, linkCtx);
     return fragment;
@@ -1228,7 +1346,7 @@
           if (Array.isArray(tok.tokens)) {
             renderInlineTokens(p, tok.tokens, allowLinks, linkCtx);
           } else {
-            appendTextWithMentions(p, decodeEntities(tok.raw ?? tok.text ?? ""));
+            appendTextWithMentions(p, decodeEntities(tok.raw ?? tok.text ?? ""), allowLinks ? linkCtx : null);
           }
           target.append(p);
           break;
@@ -1261,7 +1379,7 @@
         if (Array.isArray(child.tokens)) {
           renderInlineTokens(inlineSpan, child.tokens, allowLinks, linkCtx);
         } else {
-          appendTextWithMentions(inlineSpan, decodeEntities(child.raw ?? child.text ?? ""));
+          appendTextWithMentions(inlineSpan, decodeEntities(child.raw ?? child.text ?? ""), allowLinks ? linkCtx : null);
         }
       } else {
         inlineSpan = null;
@@ -1340,19 +1458,19 @@
           } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
             renderInlineTokens(target, tok.tokens, false, linkCtx);
           } else {
-            appendTextWithMentions(target, decodeEntities(tok.text ?? ""));
+            appendTextWithMentions(target, decodeEntities(tok.text ?? ""), allowLinks ? linkCtx : null);
           }
           break;
         }
         case "image":
-          appendTextWithMentions(target, decodeEntities(tok.text || tok.raw || ""));
+          appendTextWithMentions(target, decodeEntities(tok.text || tok.raw || ""), allowLinks ? linkCtx : null);
           break;
         case "text":
         default:
           if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
             renderInlineTokens(target, tok.tokens, allowLinks, linkCtx);
           } else {
-            appendTextWithMentions(target, decodeEntities(tok.raw ?? tok.text ?? ""));
+            appendTextWithMentions(target, decodeEntities(tok.raw ?? tok.text ?? ""), allowLinks ? linkCtx : null);
           }
           break;
       }
@@ -1490,7 +1608,7 @@
     return out;
   }
 
-  function appendTextWithMentions(target, text) {
+  function appendTextWithMentions(target, text, linkCtx = null) {
     const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g;
     let lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
@@ -1499,8 +1617,29 @@
       const matchStart = match.index + prefix.length;
       if (matchStart > lastIndex) target.append(document.createTextNode(text.slice(lastIndex, matchStart)));
       const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle) : null;
-      target.append(identity?.iconUrl && window.ChorusUI?.handleBadge
-        ? window.ChorusUI.handleBadge(handle) : document.createTextNode(`@${handle}`));
+      const isKnown = Boolean(identity?.iconUrl || identity?.known);
+      const badge = isKnown && window.ChorusUI?.handleBadge
+        ? window.ChorusUI.handleBadge(handle)
+        : document.createTextNode(`@${handle}`);
+      if (linkCtx && isKnown && handle.toLowerCase() !== "all") {
+        const idx = linkCtx.count++;
+        const btn = element("button", "handle-mention-btn", badge);
+        btn.type = "button";
+        btn.dataset.inspectHandle = handle;
+        btn.dataset.focusKey = `${linkCtx.prefix || "md"}:mention:${idx}`;
+        btn.setAttribute("aria-label", `Inspect @${handle}`);
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (typeof linkCtx.onInspect === "function") {
+            linkCtx.onInspect(handle, ev.currentTarget);
+          } else {
+            window.ChorusUI?.actions?.inspectAgent?.(handle, ev.currentTarget);
+          }
+        });
+        target.append(btn);
+      } else {
+        target.append(badge);
+      }
       lastIndex = matchStart + 1 + handle.length;
     }
     if (lastIndex < text.length) target.append(document.createTextNode(text.slice(lastIndex)));
