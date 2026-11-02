@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T21:04:49Z",
+  "title": "Design System: Chorus website",
+  "extensions": {
+    "colorMeta": {
+      "blue": { "role": "primary", "displayName": "Action blue" },
+      "soft": { "role": "neutral", "displayName": "Pale blue background" },
+      "ink": { "role": "neutral", "displayName": "Navy text" },
+      "secondary": { "role": "neutral", "displayName": "Secondary text" },
+      "brand-amber": { "role": "secondary", "displayName": "Logo amber" },
+      "brand-teal": { "role": "secondary", "displayName": "Logo teal" },
+      "brand-blue": { "role": "secondary", "displayName": "Logo blue" },
+      "brand-coral": { "role": "secondary", "displayName": "Logo coral" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Main heading", "purpose": "Large headline above the product screenshot." },
+      "headline": { "displayName": "Section heading", "purpose": "Introduces workflow, details, and installation." },
+      "code": { "displayName": "Installation code", "purpose": "Readable, selectable commands that wrap on narrow screens." }
+    },
+    "shadows": [
+      { "name": "dashboard-image", "value": "0 14px 40px rgb(15 23 42 / 12%)", "purpose": "Separates the screenshot from its pale blue background." }
+    ],
+    "motion": [
+      { "name": "in-page-scroll", "value": "scroll-behavior: smooth", "purpose": "Moves to in-page sections; prefers-reduced-motion: reduce restores scroll-behavior: auto." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1000px" },
+      { "name": "single-column", "value": "700px" },
+      { "name": "mobile-screenshot", "value": "600px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary installation link",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Blue action linking to the installation section.",
+      "html": "<a class=\"ds-primary\" href=\"#install\">Get started</a>",
+      "css": ".ds-primary { display:inline-flex; padding:16px 24px; border-radius:10px; background:var(--blue,#1d4ed8); color:#fff; text-decoration:none; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-weight:650; } .ds-primary:hover { background:var(--blue-dark,#173da8); color:#fff; } .ds-primary:focus-visible { outline:3px solid var(--blue,#1d4ed8); outline-offset:5px; } @media(max-width:700px) { .ds-primary { padding:14px 22px; } }"
+    },
+    {
+      "name": "Copy command button",
+      "kind": "button",
+      "refersTo": "button-copy",
+      "description": "Compact outlined control beside each installation command; behavior and status are owned by site.js.",
+      "html": "<button class=\"ds-copy\" type=\"button\">Copy Homebrew commands</button>",
+      "css": ".ds-copy { padding:7px 10px; background:var(--surface,#f8fafc); border:1px solid var(--line,#cbd5e1); border-radius:6px; color:var(--secondary,#334155); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:12px; cursor:pointer; } .ds-copy:hover { color:var(--blue,#1d4ed8); border-color:var(--blue,#1d4ed8); } .ds-copy:focus-visible { outline:3px solid var(--blue,#1d4ed8); outline-offset:5px; }"
+    },
+    {
+      "name": "Header navigation",
+      "kind": "nav",
+      "description": "Quiet text links and an outlined GitHub link; the workflow link is hidden on mobile.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a href=\"#how-it-works\">How it works</a><a href=\"https://github.com/goadesign/chorus#readme\">Docs</a><a class=\"ds-github\" href=\"https://github.com/goadesign/chorus\">GitHub</a></nav>",
+      "css": ".ds-nav { display:flex; align-items:center; gap:30px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:var(--ink,#0f172a); } .ds-nav a { padding-block:10px; font-size:14px; font-weight:550; text-decoration:none; color:inherit; } .ds-nav a:hover { color:var(--blue,#1d4ed8); } .ds-nav a:focus-visible { outline:3px solid var(--blue,#1d4ed8); outline-offset:5px; } .ds-nav .ds-github { border:1px solid var(--line,#cbd5e1); border-radius:9px; padding:10px 18px; } @media(max-width:700px) { .ds-nav { gap:18px; } .ds-nav a:first-child { display:none; } .ds-nav a { font-size:13px; } .ds-nav .ds-github { padding:8px 10px; } }"
+    },
+    {
+      "name": "Installation command card",
+      "kind": "card",
+      "refersTo": "command-card",
+      "description": "White surface holding a labeled, wrapping installation command.",
+      "html": "<div class=\"ds-command\"><h3>With Homebrew</h3><pre><code>brew install goadesign/tap/chorus\nchorus setup -global &amp;&amp; chorus up</code></pre></div>",
+      "css": ".ds-command { background:#fff; padding:22px 24px; border-radius:12px; color:var(--ink,#0f172a); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; } .ds-command h3 { margin:0; font-size:16px; line-height:1.35; letter-spacing:-.015em; } .ds-command pre { margin:18px 0 0; font-family:ui-monospace,'SFMono-Regular',Consolas,monospace; font-size:13px; line-height:1.8; white-space:pre-wrap; overflow-wrap:anywhere; } .ds-command code { font-family:inherit; } @media(max-width:700px) { .ds-command { padding:20px; } }"
+    },
+    {
+      "name": "Message example",
+      "kind": "card",
+      "refersTo": "message-example",
+      "description": "Light gray container with blue monospace example message and a short explanation.",
+      "html": "<div class=\"ds-message\"><p>A small message can move the work forward.</p><pre>#app#12↩#8 @reviewer:\nTests pass. Ready for your review @builder.</pre><p class=\"ds-caption\">Channels, direct messages, replies, and pinned plans—through five Model Context Protocol (MCP) tools.</p></div>",
+      "css": ".ds-message { padding:30px; background:var(--surface,#f8fafc); border-radius:14px; color:var(--ink,#0f172a); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; } .ds-message p { margin:0; font-size:14px; font-weight:600; line-height:1.65; } .ds-message pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:ui-monospace,'SFMono-Regular',Consolas,monospace; font-size:14px; line-height:1.8; color:var(--blue,#1d4ed8); margin-block:24px; } .ds-message .ds-caption { color:var(--secondary,#334155); font-size:13px; font-weight:400; } @media(max-width:700px) { .ds-message { padding:24px; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Inherited Chorus dashboard",
+    "overview": "The website carries the existing Chorus identity into a spacious, light public page. It uses the original four-color mark, cool white surfaces, navy text, and blue actions. The real dashboard supplies the product imagery; its example-data caption stays with it.\n\nThis records the implemented static page, rather than a new identity or a complete application component library. The visual source is [site/styles.css](site/styles.css), with markup in [site/index.html](site/index.html) and copy feedback in [site/site.js](site/site.js).",
+    "keyCharacteristics": [
+      "Clear system sans-serif text and strongly sized headings.",
+      "Pale blue regions, softly rounded controls, and restrained borders.",
+      "A real dashboard screenshot and selectable installation commands."
+    ],
+    "rules": [],
+    "dos": [
+      "Do preserve the original four-color Chorus mark.",
+      "Do use blue for actions and keep keyboard focus clearly visible.",
+      "Do keep commands readable, wrapping, and selectable on mobile.",
+      "Do retain the example-data caption with the dashboard image."
+    ],
+    "donts": [
+      "Don't substitute a new visual identity for the inherited dashboard identity.",
+      "Don't use the logo's brighter blue in place of the established darker action blue."
+    ]
+  }
+}
