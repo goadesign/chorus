@@ -141,7 +141,7 @@ var joinPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
 		JSONType:    "string",
-		Description: "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
+		Description: "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("channels")},
@@ -271,7 +271,7 @@ var whoPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("swarm")},
 		JSONType:    "string",
-		Description: "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
+		Description: "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("role")},
@@ -1053,7 +1053,7 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 		case "swarm":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
+				typed[key], "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.",
 			); err != nil {
 				return err
 			}
@@ -1136,7 +1136,7 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 		case "swarm":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.",
+				typed[key], "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.",
 			); err != nil {
 				return err
 			}

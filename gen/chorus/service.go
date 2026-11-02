@@ -66,8 +66,9 @@ type ContentBranchText struct {
 type JoinPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm name: use the current git repository or workspace directory basename
-	// (e.g. 'chorus') unless the user specifies a swarm name.
+	// Swarm name: use the user's or lead's explicit name; otherwise keep the
+	// established swarm. Only if neither is known, use the git repository root's
+	// basename (e.g. 'chorus') or ask the user when outside Git.
 	Swarm string
 	// Channels to create or subscribe to (each prefixed with '#').
 	Channels []string
@@ -144,8 +145,9 @@ type TextResult struct {
 type WhoPayload struct {
 	// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 	Agent string
-	// Swarm name: use the current git repository or workspace directory basename
-	// (e.g. 'chorus') unless the user specifies a swarm name.
+	// Swarm name: use the user's or lead's explicit name; otherwise keep the
+	// established swarm. Only if neither is known, use the git repository root's
+	// basename (e.g. 'chorus') or ask the user when outside Git.
 	Swarm string
 	// Optional role description to advertise to peers in this swarm.
 	Role *string
