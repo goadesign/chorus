@@ -31,24 +31,19 @@ type (
 		name string
 		// rdb is the shared Redis client used for streams and semaphores.
 		rdb *redis.Client
-		// state is the in-memory replicated map ("chorus:<swarm>:state")
-		// synchronized across replicas via Redis Hashes and Pub/Sub.
+		// state is the in-memory replicated map ("chorus:<swarm>:state").
 		state *rmap.Map
-		// swarmTTL is the sliding expiration applied to the swarm's replicated
-		// map and message streams.
+		// swarmTTL is the sliding expiration applied to state and message streams.
 		swarmTTL time.Duration
-		// streamMaxLen is the maximum number of messages retained per channel
-		// or direct-message stream.
+		// streamMaxLen is the maximum messages retained per channel or DM stream.
 		streamMaxLen int
-		// onlineWindow is the duration since an agent's last activity within
-		// which the agent remains registered in the swarm.
+		// onlineWindow is the duration since last activity within which an agent remains registered.
 		onlineWindow time.Duration
 		// clock returns the current time for presence timestamps and heartbeats.
 		clock func() time.Time
 		// watchMu guards watching.
 		watchMu sync.Mutex
-		// watching tracks agent handles that currently have an active blocking
-		// watch (read with waitSec > 0) in flight on this swarm handle.
+		// watching tracks agent handles with an active blocking watch on this swarm handle.
 		watching map[string]struct{}
 	}
 
@@ -75,6 +70,11 @@ type (
 const (
 	// eventTypeMessage is the Pulse stream event name used for all Chorus messages.
 	eventTypeMessage = "msg"
+
+	// humanModel is the declared model a person uses on join or who (the
+	// dashboard sends it). Messages published while the sender's declared model
+	// is humanModel are saved as human; nothing else marks a message human.
+	humanModel = "human"
 
 	// touchInterval throttles background agent LastSeenUnix updates in rmap so
 	// high-frequency tool calls do not write to Redis on every invocation.
@@ -104,8 +104,7 @@ func openSwarm(
 	onlineWindow time.Duration,
 	clock func() time.Time,
 ) (*swarmHandle, error) {
-	mapName := fmt.Sprintf("chorus:%s:state", name)
-	state, err := rmap.Join(ctx, mapName, rdb, rmap.WithSlidingTTL(swarmTTL))
+	state, err := rmap.Join(ctx, swarmStateMapName(name), rdb, rmap.WithSlidingTTL(swarmTTL))
 	if err != nil {
 		return nil, fmt.Errorf("join swarm %q state map: %w", name, err)
 	}
@@ -119,6 +118,12 @@ func openSwarm(
 		clock:        clock,
 		watching:     make(map[string]struct{}),
 	}, nil
+}
+
+// swarmStateMapName returns the name of the Pulse replicated map that holds
+// the named swarm's agents, subscriptions, read positions, and pins.
+func swarmStateMapName(name string) string {
+	return fmt.Sprintf("chorus:%s:state", name)
 }
 
 // close stops the swarm's replicated map subscription.
@@ -229,20 +234,17 @@ func (s *swarmHandle) hasActiveWatch(agent string) bool {
 }
 
 // touchAgent ensures the calling agent is registered in the swarm's replicated
-// map and refreshes its role and LastSeenUnix timestamp when needed. When forceSync
-// is true or the agent record is newly created or changes role, touchAgent waits
+// map and refreshes its LastSeenUnix presence timestamp when needed. It never
+// writes the agent's declared role or model (see declareProfile). When
+// forceSync is true or the presence record is newly created, touchAgent waits
 // for the local rmap replica to observe the committed revision.
-func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now time.Time, forceSync bool) error {
+func (s *swarmHandle) touchAgent(ctx context.Context, agent string, now time.Time, forceSync bool) error {
 	key := agentMapKey(agent)
 	raw, ok := s.state.Get(key)
 	rec, valid := parseAgentRecord(raw)
 
-	roleChanged := role != "" && role != rec.Role
-	if role != "" {
-		rec.Role = role
-	}
 	stale := now.Unix()-rec.LastSeenUnix >= int64(touchInterval.Seconds())
-	if ok && valid && !roleChanged && !stale && !forceSync {
+	if ok && valid && !stale && !forceSync {
 		return nil
 	}
 
@@ -251,7 +253,7 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now ti
 	if err != nil {
 		return err
 	}
-	if !ok || !valid || roleChanged || forceSync {
+	if !ok || !valid || forceSync {
 		if _, err := s.state.SetAndWait(ctx, key, encoded); err != nil {
 			return fmt.Errorf("sync agent %q presence: %w", agent, err)
 		}
@@ -263,15 +265,37 @@ func (s *swarmHandle) touchAgent(ctx context.Context, agent, role string, now ti
 	return nil
 }
 
+// declareProfile saves what agent declared on join or who. The model is
+// always saved; the role is saved only when one is given, so an omitted role
+// leaves the stored one alone. Each value has its own key, so no declaration
+// reads and rewrites another one. Writing the model with SetAndWait also makes
+// this server's copy catch up with every earlier write, including a role saved
+// through another server, before the caller's response is built.
+func (s *swarmHandle) declareProfile(ctx context.Context, agent, role, model string) error {
+	if role != "" {
+		if _, err := s.state.Set(ctx, roleMapKey(agent), role); err != nil {
+			return fmt.Errorf("save role for %q: %w", agent, err)
+		}
+	}
+	if _, err := s.state.SetAndWait(ctx, modelMapKey(agent), model); err != nil {
+		return fmt.Errorf("save model for %q: %w", agent, err)
+	}
+	return nil
+}
+
 // directory returns the formatted swarm snapshot for caller after reaping any
-// expired agents and refreshing caller's presence and optional role.
-func (s *swarmHandle) directory(ctx context.Context, caller, role string) (string, error) {
+// expired agents, saving caller's declared role and model, and refreshing its
+// presence.
+func (s *swarmHandle) directory(ctx context.Context, caller, role, model string) (string, error) {
 	now := s.clock()
 	reaped, err := s.reapExpiredAgents(ctx, now)
 	if err != nil {
 		return "", err
 	}
-	if err := s.touchAgent(ctx, caller, role, now, reaped); err != nil {
+	if err := s.declareProfile(ctx, caller, role, model); err != nil {
+		return "", err
+	}
+	if err := s.touchAgent(ctx, caller, now, reaped); err != nil {
 		return "", err
 	}
 	snap := s.state.Map()
@@ -289,6 +313,7 @@ func (s *swarmHandle) joinChannels(
 	channels []string,
 	topic string,
 	role string,
+	model string,
 	tail int,
 ) (string, error) {
 	now := s.clock()
@@ -334,7 +359,10 @@ func (s *swarmHandle) joinChannels(
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, role, now, true); err != nil {
+	if err := s.declareProfile(ctx, agent, role, model); err != nil {
+		return "", err
+	}
+	if err := s.touchAgent(ctx, agent, now, true); err != nil {
 		return "", err
 	}
 
@@ -426,6 +454,12 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 		if _, err := s.state.Delete(ctx, subMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired subscriptions for %q: %w", handle, err)
 		}
+		if _, err := s.state.Delete(ctx, roleMapKey(handle)); err != nil {
+			return false, fmt.Errorf("delete expired role %q: %w", handle, err)
+		}
+		if _, err := s.state.Delete(ctx, modelMapKey(handle)); err != nil {
+			return false, fmt.Errorf("delete expired model %q: %w", handle, err)
+		}
 		if _, err := s.state.Delete(ctx, agentMapKey(handle)); err != nil {
 			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
 		}
@@ -489,6 +523,12 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 		if _, err := s.state.Delete(ctx, subMapKey(agent)); err != nil {
 			return "", fmt.Errorf("delete empty subscription key for %q: %w", agent, err)
 		}
+		if _, err := s.state.Delete(ctx, roleMapKey(agent)); err != nil {
+			return "", fmt.Errorf("delete role of departed agent %q: %w", agent, err)
+		}
+		if _, err := s.state.Delete(ctx, modelMapKey(agent)); err != nil {
+			return "", fmt.Errorf("delete model of departed agent %q: %w", agent, err)
+		}
 		if err := s.deleteAndWait(ctx, agentMapKey(agent)); err != nil {
 			return "", fmt.Errorf("unregister departed agent %q: %w", agent, err)
 		}
@@ -498,7 +538,7 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	if _, _, err := s.state.RemoveValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("unsubscribe %q from channels: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, "", now, true); err != nil {
+	if err := s.touchAgent(ctx, agent, now, true); err != nil {
 		return "", err
 	}
 	return "left " + strings.Join(unique, ", "), nil
@@ -585,7 +625,7 @@ func (s *swarmHandle) publish(
 		}
 		defer s.releaseWatch(sender)
 	}
-	if err := s.touchAgent(ctx, sender, "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, sender, s.clock(), false); err != nil {
 		return "", err
 	}
 
@@ -655,6 +695,17 @@ func (s *swarmHandle) appendUnderSemaphore(
 		_ = lease.Release(context.Background())
 	}()
 
+	// The sender's declared model at publication time decides, once and for
+	// good, whether this message came from a person; the role is free text and
+	// never decides it. Sync first brings this server's copy up to date with
+	// every write that completed before the send, so a who or join that just
+	// finished through another server is included. It runs before the sequence
+	// number is taken, so a failure leaves no gap in the numbering.
+	if err := s.state.Sync(ctx); err != nil {
+		return 0, fmt.Errorf("sync swarm state before publishing to %s: %w", target, err)
+	}
+	senderModel, _ := s.state.Get(modelMapKey(sender))
+
 	seq, err := s.state.Inc(ctx, seqMapKey(target), 1)
 	if err != nil {
 		return 0, fmt.Errorf("increment sequence for %s: %w", target, err)
@@ -683,6 +734,7 @@ func (s *swarmHandle) appendUnderSemaphore(
 	payload, err := json.Marshal(messageEvent{
 		Seq:     seq,
 		Sender:  sender,
+		Human:   senderModel == humanModel,
 		Text:    text,
 		ReplyTo: replyTo,
 	})
@@ -789,7 +841,7 @@ func (s *swarmHandle) readUnread(
 		}
 		defer s.releaseWatch(agent)
 	}
-	if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
+	if err := s.touchAgent(ctx, agent, s.clock(), false); err != nil {
 		return "", err
 	}
 	if limit <= 0 {
@@ -854,7 +906,7 @@ func (s *swarmHandle) waitForUnread(
 			if !s.isLiveAgent(agent) {
 				return nil, nil
 			}
-			if err := s.touchAgent(ctx, agent, "", s.clock(), false); err != nil {
+			if err := s.touchAgent(ctx, agent, s.clock(), false); err != nil {
 				return nil, err
 			}
 		case _, ok := <-notifyCh:

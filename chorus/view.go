@@ -41,12 +41,14 @@ type (
 // do not record it as an error.
 var errNotModified = errors.New("swarm view not modified")
 
-// Swarms lists the swarms named in the agent-to-swarm bindings that join and
-// who record in Redis, sorted and without duplicates. A listed swarm may have
-// no live agents left when its bindings have not yet been cleaned up.
+// Swarms lists, sorted, the swarms in which at least one agent bound by join or
+// who is still live: active within the online window or watching. A swarm
+// whose agents all went idle or expired is left out even before the existing
+// leave, resolve, and reap paths delete its bindings, so the dashboard never
+// offers a swarm with nobody in it.
 func (v *viewService) Swarms(ctx context.Context) (*genview.SwarmsResult, error) {
 	ctx, span := v.svc.tracer.Start(ctx, "chorus.view.swarms")
-	names, err := v.swarmNames(ctx)
+	names, err := v.liveSwarmNames(ctx)
 	span.SetAttributes(attribute.Int("chorus.swarm_count", len(names)))
 	finishSpan(span, err)
 	if err != nil {
@@ -267,6 +269,32 @@ func (v *viewService) swarmNames(ctx context.Context) ([]string, error) {
 	return slices.Compact(vals), nil
 }
 
+// liveSwarmNames returns the sorted names of the bound swarms in which at
+// least one bound agent is live in the swarm's latest committed state. It
+// writes nothing and leaves no swarm open that was not open before.
+func (v *viewService) liveSwarmNames(ctx context.Context) ([]string, error) {
+	bindings, err := v.svc.rdb.HGetAll(ctx, agentSwarmHashKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list swarm bindings: %w", err)
+	}
+	agentsBySwarm := make(map[string][]string)
+	for agent, name := range bindings {
+		agentsBySwarm[name] = append(agentsBySwarm[name], agent)
+	}
+	names := []string{}
+	for name, agents := range agentsBySwarm {
+		live, err := v.svc.swarmHasLiveAgent(ctx, name, agents)
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 // openBoundSwarm returns the handle for name when at least one agent is bound
 // to it, or nil when none is.
 func (v *viewService) openBoundSwarm(ctx context.Context, name string) (*swarmHandle, error) {
@@ -309,8 +337,11 @@ func (v *viewService) build(ctx context.Context, sw *swarmHandle) (*genview.Swar
 			Channels:             channels,
 			WatchingOnThisServer: sw.hasActiveWatch(handle),
 		}
-		if rec.Role != "" {
-			a.Role = &rec.Role
+		if role := snap[roleMapKey(handle)]; role != "" {
+			a.Role = &role
+		}
+		if model := snap[modelMapKey(handle)]; model != "" {
+			a.Model = &model
 		}
 		agents = append(agents, a)
 	}
@@ -401,6 +432,10 @@ func (v *viewService) channel(
 		var pin messageEvent
 		if err := json.Unmarshal([]byte(rawPin), &pin); err == nil && pin.Seq > 0 {
 			ch.Pin = &genview.Pin{Seq: pin.Seq, Sender: pin.Sender, Text: pin.Text}
+			if pin.Human {
+				human := true
+				ch.Pin.Human = &human
+			}
 		}
 	}
 	mentionAll := parseSeq(snap[mentionMapKey("all", name)])
@@ -455,6 +490,10 @@ func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target stri
 		if m.ReplyTo > 0 {
 			replyTo := m.ReplyTo
 			msg.ReplyTo = &replyTo
+		}
+		if m.Human {
+			human := true
+			msg.Human = &human
 		}
 		msgs = append(msgs, msg)
 	}

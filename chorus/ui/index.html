@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/ui/styles.css">
 </head>
 <body>
-  <!-- Single Calm Header Bar -->
+  <!-- Single Clean Header Bar -->
   <header class="top-bar">
     <div class="top-bar-left">
       <div class="brand">
@@ -32,7 +32,6 @@
       <div class="swarm-control">
         <label for="swarm-select">Swarm</label>
         <select id="swarm-select" aria-label="Select swarm"></select>
-        <button type="button" class="btn-icon" id="btn-custom-swarm" title="Inspect a swarm by name" aria-label="Inspect a swarm by name">+</button>
       </div>
 
       <nav class="target-tabs scroller" id="target-tabs" aria-label="Channels and Direct Messages"></nav>
@@ -44,39 +43,39 @@
           <circle cx="11" cy="11" r="7"/>
           <path d="m20 20-3.5-3.5"/>
         </svg>
-        <input type="search" id="search-input" placeholder="Search messages, @agent, PR #…" aria-label="Search messages">
+        <input type="search" id="search-input" placeholder="Filter messages or @agent…" aria-label="Filter messages">
       </div>
 
-      <button type="button" class="live-pill" id="btn-follow-live" title="Toggle Follow live vs Reviewing earlier messages">
+      <div class="live-pill" id="live-status" role="status" aria-live="polite" title="Live connection status">
         <span class="status-dot" id="live-dot"></span>
         <span id="live-text">Connecting…</span>
-      </button>
+      </div>
 
       <select id="theme-select" class="btn-tonal" aria-label="Color theme">
-        <option value="auto">Theme: Auto</option>
-        <option value="dark">Theme: Dark</option>
-        <option value="light">Theme: Light</option>
+        <option value="auto">Auto</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
       </select>
     </div>
   </header>
 
-  <!-- Main Single-Canvas Stage (Timeline + Progressive Disclosure Stream + Composer) -->
+  <!-- Main Single-Canvas Stage (Participants + Timeline + Newest-First Stream) -->
   <main class="stage-container scroller" id="stage-container">
     <div class="stage-inner">
-      <!-- 1. Live Agent Strip: Each agent's handle, live watch state, and latest words -->
-      <section class="agent-strip-section" id="agent-strip" aria-label="Swarm agents"></section>
+      <!-- 1. Participants Strip: Each agent's handle, watch status, read watermark, and latest words -->
+      <section class="agent-strip-section" id="agent-strip" aria-label="Swarm participants"></section>
       <div id="agent-details"></div>
 
-      <!-- 2. Interactive Sliding Swarm Timeline (Overview ribbon + expandable swimlanes) -->
+      <!-- 2. Interactive Sliding Swarm Timeline (Live-scrubbing overview + swimlanes) -->
       <section class="timeline-section" id="timeline-root" aria-label="Swarm timeline"></section>
 
-      <!-- 3. Collapsible 1-Line Pin Bar + Factual Mentions & Artifact Filter Shelf -->
+      <!-- 3. Collapsible Pinned Goal + Recent Mentions -->
       <section class="context-strips">
         <div id="pin-container"></div>
-        <div id="mentions-artifacts-container"></div>
+        <div id="mentions-container"></div>
       </section>
 
-      <!-- 4. Stream Controls & Progressive Disclosure Message List -->
+      <!-- 4. Stream Controls & Newest-First Progressive Disclosure Feed -->
       <section class="stream-section" aria-label="Messages">
         <div class="stream-toolbar">
           <div class="stream-toolbar-left">
@@ -87,13 +86,12 @@
             <div id="active-filters-bar" class="active-filters-bar"></div>
             <div class="segmented" id="mode-control" role="group" aria-label="Message grouping">
               <button type="button" id="mode-threaded" class="active">Threads</button>
-              <button type="button" id="mode-stream">Chronological</button>
+              <button type="button" id="mode-stream">All Messages</button>
             </div>
             <button type="button" class="btn-tonal" id="btn-toggle-disclosure">Expand All</button>
           </div>
         </div>
 
-        <div id="new-since-banner"></div>
         <div class="message-stream" id="message-stream" role="log" aria-live="polite"></div>
       </section>
     </div>
@@ -120,11 +118,11 @@
           id="send-text"
           class="composer-textarea"
           rows="1"
-          placeholder="Steer the swarm in #channel or @agent… (Enter to send, Shift+Enter for newline)"
+          placeholder="Message #channel or @agent… (Enter to send, Shift+Enter for newline)"
         ></textarea>
 
         <div class="composer-actions">
-          <label class="btn-text pin-check-label" id="pin-toggle-label" title="Pin this message in the channel and wake all watching agents">
+          <label class="btn-text pin-check-label" id="pin-toggle-label" title="Pin this message as the channel goal and wake all watching agents">
             <input type="checkbox" id="send-pin">
             <span>Pin</span>
           </label>

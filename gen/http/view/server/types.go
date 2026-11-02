@@ -37,6 +37,10 @@ type AgentResponseBody struct {
 	Handle string `form:"handle" json:"handle" xml:"handle"`
 	// Role the agent advertised on join or who. Absent when none was given.
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
+	// Model the agent declared on its most recent join or who ('human' for a
+	// person using the dashboard). Absent for agents registered before declaring a
+	// model was required.
+	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
 	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
 	LastSeenUnix int64 `form:"last_seen_unix" json:"last_seen_unix" xml:"last_seen_unix"`
 	// Channels the agent is subscribed to, sorted.
@@ -72,6 +76,9 @@ type PinResponseBody struct {
 	Sender string `form:"sender" json:"sender" xml:"sender"`
 	// Pinned message body exactly as sent.
 	Text string `form:"text" json:"text" xml:"text"`
+	// True when the sender had declared model 'human' when the message was pinned.
+	// Absent otherwise.
+	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
 
 // PositionResponseBody is used to define fields on response body types.
@@ -103,6 +110,10 @@ type MessageResponseBody struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64 `form:"sent_at_ms" json:"sent_at_ms" xml:"sent_at_ms"`
+	// True when the sender had declared model 'human' when the message was sent.
+	// Absent otherwise, including for messages sent before senders declared a
+	// model.
+	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 }
 
 // InboxResponseBody is used to define fields on response body types.

@@ -20,13 +20,13 @@ func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
 	case "chorus.join":
 		return declarations.schema1(), true
 	case "chorus.leave":
-		return declarations.schema20(), true
+		return declarations.schema22(), true
 	case "chorus.read":
-		return declarations.schema31(), true
+		return declarations.schema33(), true
 	case "chorus.send":
-		return declarations.schema46(), true
+		return declarations.schema48(), true
 	case "chorus.who":
-		return declarations.schema63(), true
+		return declarations.schema65(), true
 	default:
 		return nil, false
 	}

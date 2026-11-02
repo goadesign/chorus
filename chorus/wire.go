@@ -26,6 +26,11 @@ type (
 		Seq int `json:"seq"`
 		// Sender is the handle of the agent that sent the message (without '@').
 		Sender string `json:"sender"`
+		// Human is true when the sender had declared model "human" when the
+		// message was published. It is saved with the message and never
+		// recomputed, so a later registration under the same handle cannot
+		// change it.
+		Human bool `json:"human,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`
 		// ReplyTo is the optional sequence number in the same target stream
@@ -33,11 +38,10 @@ type (
 		ReplyTo int `json:"reply_to,omitempty"`
 	}
 
-	// agentRecord is the value stored under "agent:<handle>" in a swarm's
-	// replicated map.
+	// agentRecord is the presence record stored under "agent:<handle>" in a
+	// swarm's replicated map. Every Chorus call by the agent may rewrite it,
+	// so it holds nothing the agent declares; see prefixRole and prefixModel.
 	agentRecord struct {
-		// Role is the optional human-readable responsibility advertised by the agent.
-		Role string `json:"role,omitempty"`
 		// LastSeenUnix is the Unix timestamp in seconds when the agent last
 		// invoked a Chorus operation.
 		LastSeenUnix int64 `json:"ts"`
@@ -47,6 +51,12 @@ type (
 const (
 	// prefixAgent prefixes agent presence records in the swarm rmap.
 	prefixAgent = "agent:"
+	// prefixRole prefixes the role each agent last declared on join or who.
+	// Only join and who write it, and only when they pass a role.
+	prefixRole = "role:"
+	// prefixModel prefixes the model each agent last declared on join or who
+	// ("human" for a person using the dashboard). Only join and who write it.
+	prefixModel = "model:"
 	// prefixChannel prefixes channel topic records in the swarm rmap.
 	prefixChannel = "chan:"
 	// prefixPin prefixes active pinned channel message records in the swarm rmap.
@@ -85,14 +95,8 @@ func formatDirectory(
 ) string {
 	var b strings.Builder
 
-	callerRec, _ := parseAgentRecord(snap[agentMapKey(caller)])
-	b.WriteString("me: @")
-	b.WriteString(caller)
-	if callerRec.Role != "" {
-		b.WriteString(" (")
-		b.WriteString(callerRec.Role)
-		b.WriteString(")")
-	}
+	b.WriteString("me: ")
+	writeHandle(&b, caller, snap)
 	b.WriteByte('\n')
 
 	var agents []string
@@ -115,14 +119,7 @@ func formatDirectory(
 		b.WriteString("(none)\n")
 	} else {
 		for _, handle := range agents {
-			rec, _ := parseAgentRecord(snap[agentMapKey(handle)])
-			b.WriteByte('@')
-			b.WriteString(handle)
-			if rec.Role != "" {
-				b.WriteString(" (")
-				b.WriteString(rec.Role)
-				b.WriteString(")")
-			}
+			writeHandle(&b, handle, snap)
 			b.WriteByte('\n')
 		}
 	}
@@ -188,14 +185,7 @@ func formatChannelMembers(
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		rec, _ := parseAgentRecord(snap[agentMapKey(handle)])
-		b.WriteByte('@')
-		b.WriteString(handle)
-		if rec.Role != "" {
-			b.WriteString(" (")
-			b.WriteString(rec.Role)
-			b.WriteString(")")
-		}
+		writeHandle(&b, handle, snap)
 	}
 	return b.String()
 }
@@ -203,7 +193,8 @@ func formatChannelMembers(
 // formatMessageLine renders a single channel or direct message into its compact
 // wire representation:
 //   - Channel message: "#arch#14 @db: migration 004 applied"
-//   - Channel reply:   "#arch#15↩#14 @api: regenerating models"
+//   - Human message:   "#arch#15 @raphael (human): please review the UI"
+//   - Channel reply:   "#arch#16↩#15 @api: regenerating models"
 //   - Direct message:  "@lead->me#3: check the auth test"
 //   - Direct reply:    "@lead->me#3↩#2: sounds good"
 func formatMessageLine(target string, msg messageEvent) string {
@@ -218,12 +209,18 @@ func formatMessageLine(target string, msg messageEvent) string {
 		}
 		b.WriteString(" @")
 		b.WriteString(msg.Sender)
+		if msg.Human {
+			b.WriteString(" (human)")
+		}
 		b.WriteString(": ")
 		b.WriteString(msg.Text)
 		return b.String()
 	}
 	b.WriteByte('@')
 	b.WriteString(msg.Sender)
+	if msg.Human {
+		b.WriteString(" (human)")
+	}
 	b.WriteString("->me#")
 	b.WriteString(strconv.Itoa(msg.Seq))
 	if msg.ReplyTo > 0 {
@@ -266,6 +263,24 @@ func encodeAgentRecord(rec agentRecord) (string, error) {
 		return "", fmt.Errorf("encode agent record: %w", err)
 	}
 	return string(b), nil
+}
+
+// writeHandle writes one participant as agents see it in directory and member
+// lines, from the declarations in snap: "@api (API Engineer)" for an agent,
+// and "human @raphael (Reviewer)" for a person. The kind comes only from the
+// declared model and is written outside the parentheses, so no role text can
+// make an agent read as a person.
+func writeHandle(b *strings.Builder, handle string, snap map[string]string) {
+	if snap[modelMapKey(handle)] == humanModel {
+		b.WriteString("human ")
+	}
+	b.WriteByte('@')
+	b.WriteString(handle)
+	if role := snap[roleMapKey(handle)]; role != "" {
+		b.WriteString(" (")
+		b.WriteString(role)
+		b.WriteString(")")
+	}
 }
 
 // parseAgentRecord decodes an agentRecord from its rmap JSON string.
@@ -400,6 +415,16 @@ func hasChannelSubscribers(channel string, subsByAgent map[string][]string) bool
 // agentMapKey returns the rmap key storing presence metadata for agent.
 func agentMapKey(agent string) string {
 	return prefixAgent + agent
+}
+
+// roleMapKey returns the rmap key storing the role agent declared.
+func roleMapKey(agent string) string {
+	return prefixRole + agent
+}
+
+// modelMapKey returns the rmap key storing the model agent declared.
+func modelMapKey(agent string) string {
+	return prefixModel + agent
 }
 
 // channelMapKey returns the rmap key storing the topic for channel ("#name").

@@ -402,6 +402,7 @@ func TestRunWatch(t *testing.T) {
 			Agent:    agent,
 			Swarm:    "default",
 			Channels: []string{"#auth"},
+			Model:    "test-model",
 			Tail:     5,
 		}); err != nil {
 			t.Fatalf("Join(#auth) as %s: %v", agent, err)
@@ -568,6 +569,7 @@ func TestRedisHandover(t *testing.T) {
 			Agent:    agent,
 			Swarm:    "default",
 			Channels: []string{"#foundry"},
+			Model:    "test-model",
 			Tail:     5,
 		}); err != nil {
 			t.Fatalf("Server A Join(#foundry) as %s: %v", agent, err)
@@ -666,6 +668,7 @@ func TestRedisHandover(t *testing.T) {
 	whoRes, err := svcB.Who(context.Background(), &genchorus.WhoPayload{
 		Agent: "lead",
 		Swarm: "default",
+		Model: "test-model",
 	})
 	if err != nil {
 		t.Fatalf("Server B Who tool call failed: %v", err)
