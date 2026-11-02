@@ -1608,6 +1608,11 @@
     return out;
   }
 
+  // appendTextWithMentions appends text with @handle badges. With linkCtx, a
+  // known participant's badge becomes a button that opens its details. Each
+  // button's focus key names the handle and its occurrence among every
+  // @mention of that handle in this text, known or not, so a redraw after a
+  // handle joins never shifts the keys of links or other mentions.
   function appendTextWithMentions(target, text, linkCtx = null) {
     const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g;
     let lastIndex = 0;
@@ -1621,12 +1626,18 @@
       const badge = isKnown && window.ChorusUI?.handleBadge
         ? window.ChorusUI.handleBadge(handle)
         : document.createTextNode(`@${handle}`);
+      let occurrence = 0;
+      if (linkCtx) {
+        linkCtx.mentions ??= new Map();
+        const lower = handle.toLowerCase();
+        occurrence = linkCtx.mentions.get(lower) || 0;
+        linkCtx.mentions.set(lower, occurrence + 1);
+      }
       if (linkCtx && isKnown && handle.toLowerCase() !== "all") {
-        const idx = linkCtx.count++;
         const btn = element("button", "handle-mention-btn", badge);
         btn.type = "button";
         btn.dataset.inspectHandle = handle;
-        btn.dataset.focusKey = `${linkCtx.prefix || "md"}:mention:${idx}`;
+        btn.dataset.focusKey = `${linkCtx.prefix || "md"}:mention:${handle.toLowerCase()}:${occurrence}`;
         btn.setAttribute("aria-label", `Inspect @${handle}`);
         btn.addEventListener("click", (ev) => {
           ev.stopPropagation();
