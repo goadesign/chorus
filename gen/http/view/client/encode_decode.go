@@ -328,6 +328,7 @@ func unmarshalAgentResponseBodyToViewAgent(v *AgentResponseBody) *view.Agent {
 	res := &view.Agent{
 		Handle:               *v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		LastSeenUnix:         *v.LastSeenUnix,
 		WatchingOnThisServer: *v.WatchingOnThisServer,
 	}
@@ -377,6 +378,7 @@ func unmarshalPinResponseBodyToViewPin(v *PinResponseBody) *view.Pin {
 		Seq:    *v.Seq,
 		Sender: *v.Sender,
 		Text:   *v.Text,
+		Human:  v.Human,
 	}
 
 	return res
@@ -404,6 +406,7 @@ func unmarshalMessageResponseBodyToViewMessage(v *MessageResponseBody) *view.Mes
 		Text:     *v.Text,
 		ReplyTo:  v.ReplyTo,
 		SentAtMs: *v.SentAtMs,
+		Human:    v.Human,
 	}
 
 	return res

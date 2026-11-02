@@ -3,11 +3,14 @@ package chorus_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ type (
 		Agents []struct {
 			Handle   string   `json:"handle"`
 			Role     *string  `json:"role"`
+			Model    *string  `json:"model"`
 			Channels []string `json:"channels"`
 		} `json:"agents"`
 		// Channels lists channels sorted by name.
@@ -33,8 +37,9 @@ type (
 			Name    string `json:"name"`
 			HeadSeq int    `json:"head_seq"`
 			Pin     *struct {
-				Seq  int    `json:"seq"`
-				Text string `json:"text"`
+				Seq   int    `json:"seq"`
+				Text  string `json:"text"`
+				Human *bool  `json:"human"`
 			} `json:"pin"`
 			Positions []struct {
 				Handle    string `json:"handle"`
@@ -66,6 +71,8 @@ type (
 		ReplyTo *int `json:"reply_to"`
 		// SentAtMs is the Redis storage time in Unix milliseconds.
 		SentAtMs int64 `json:"sent_at_ms"`
+		// Human is true when the sender had declared model "human" when the message was sent.
+		Human *bool `json:"human"`
 	}
 )
 
@@ -81,15 +88,19 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	lead.call("send", map[string]any{"to": "#auth", "text": "Goal: passkeys | Verify: go test ./...", "pin": true})
 	lead.send("#auth", "@api please wire ConsumeChallenge", 1)
 	lead.send("@api", "use GETDEL", 0)
+	human := cluster.newAgent(0, "auth", "raphael")
+	human.call("join", map[string]any{"channels": []string{"#auth"}, "model": "human", "role": "Product owner"})
+	human.call("send", map[string]any{"to": "#auth", "text": "Please focus on contrast"})
 
 	base := cluster.replicas[0].httpServer.URL
 	before := time.Now().UnixMilli()
 	doc, etag := getView(t, base, "auth", "", 0, http.StatusOK)
 
 	assert.Equal(t, "auth", doc.Swarm)
-	require.Len(t, doc.Agents, 2)
+	require.Len(t, doc.Agents, 3)
 	assert.Equal(t, "api", doc.Agents[0].Handle)
 	assert.Equal(t, "lead", doc.Agents[1].Handle)
+	assert.Equal(t, "raphael", doc.Agents[2].Handle)
 	require.NotNil(t, doc.Agents[1].Role)
 	assert.Equal(t, "Tech Lead", *doc.Agents[1].Role)
 	assert.Equal(t, []string{"#auth"}, doc.Agents[0].Channels)
@@ -97,21 +108,28 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	require.Len(t, doc.Channels, 1)
 	ch := doc.Channels[0]
 	assert.Equal(t, "#auth", ch.Name)
-	assert.Equal(t, 2, ch.HeadSeq)
+	assert.Equal(t, 3, ch.HeadSeq)
 	require.NotNil(t, ch.Pin)
 	assert.Equal(t, 1, ch.Pin.Seq)
-	require.Len(t, ch.Messages, 2)
+	assert.Nil(t, ch.Pin.Human)
+	require.Len(t, ch.Messages, 3)
+	assert.Nil(t, ch.Messages[0].Human)
+	assert.Nil(t, ch.Messages[1].Human)
+	require.NotNil(t, ch.Messages[2].Human)
+	assert.True(t, *ch.Messages[2].Human)
 	require.NotNil(t, ch.Messages[1].ReplyTo)
 	assert.Equal(t, 1, *ch.Messages[1].ReplyTo)
 	assert.InDelta(t, before, ch.Messages[1].SentAtMs, float64(time.Minute.Milliseconds()))
-	require.Len(t, ch.Positions, 2)
+	require.Len(t, ch.Positions, 3)
 	assert.Equal(t, "api", ch.Positions[0].Handle)
 	assert.Equal(t, 0, ch.Positions[0].ReadSeq)
-	assert.Equal(t, 2, ch.Positions[0].Behind)
+	assert.Equal(t, 3, ch.Positions[0].Behind)
 	assert.True(t, ch.Positions[0].Mentioned)
 	assert.Equal(t, "lead", ch.Positions[1].Handle)
-	assert.Equal(t, 0, ch.Positions[1].Behind)
+	assert.Equal(t, 1, ch.Positions[1].Behind)
 	assert.False(t, ch.Positions[1].Mentioned)
+	assert.Equal(t, "raphael", ch.Positions[2].Handle)
+	assert.Equal(t, 0, ch.Positions[2].Behind)
 
 	require.Len(t, doc.Inboxes, 1)
 	assert.Equal(t, "api", doc.Inboxes[0].Recipient)
@@ -130,6 +148,53 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	assert.Equal(t, 0, doc2.Channels[0].Positions[0].Behind)
 	assert.False(t, doc2.Channels[0].Positions[0].Mentioned)
 	assert.Equal(t, 0, doc2.Inboxes[0].Behind)
+}
+
+// TestJoinRequiresDeclaredModel verifies that who and join reject a missing
+// or blank model, that the declared model is stored with the agent and
+// returned by the view, that ordinary calls keep it, and that a later join
+// with another model replaces it.
+func TestJoinRequiresDeclaredModel(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	api := cluster.newAgent(0, "models", "api")
+	base := cluster.replicas[0].httpServer.URL
+
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": nil})
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": "   "})
+	api.callExpectingError("who", map[string]any{"model": nil})
+
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": "claude-opus-5-5"})
+	api.send("#m", "hello", 0)
+	api.call("read", map[string]any{"wait_sec": 0})
+	doc, _ := getView(t, base, "models", "", 0, http.StatusOK)
+	require.Len(t, doc.Agents, 1)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, "claude-opus-5-5", *doc.Agents[0].Model)
+
+	// Real provider ids are kept exactly as given, including case, colons,
+	// and slashes.
+	const bedrock = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": bedrock})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, bedrock, *doc.Agents[0].Model)
+
+	// The cap counts characters, not bytes: 2048 characters are accepted and
+	// kept exactly, including multibyte ones, and 2049 are rejected.
+	atCap := strings.Repeat("é", 2047) + "x"
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": atCap})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, atCap, *doc.Agents[0].Model)
+	below := strings.Repeat("m", 2047)
+	api.call("join", map[string]any{"channels": []string{"#m"}, "model": below})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, below, *doc.Agents[0].Model)
+	api.callExpectingError("join", map[string]any{"channels": []string{"#m"}, "model": strings.Repeat("m", 2049)})
+	doc, _ = getView(t, base, "models", "", 0, http.StatusOK)
+	require.NotNil(t, doc.Agents[0].Model)
+	assert.Equal(t, below, *doc.Agents[0].Model)
 }
 
 // TestSwarmViewWaitsForChanges verifies the If-None-Match wait: it returns
@@ -184,6 +249,78 @@ func TestSwarmListAndUnknownSwarm(t *testing.T) {
 	assert.Empty(t, doc.Agents)
 	assert.Empty(t, doc.Channels)
 	assert.Empty(t, doc.Inboxes)
+}
+
+// TestSwarmListOmitsSwarmsWithoutLiveAgents verifies that GET /swarms leaves
+// out a swarm whose only agent went idle past the online window, while a
+// dashboard that names that swarm directly still gets its history.
+func TestSwarmListOmitsSwarmsWithoutLiveAgents(t *testing.T) {
+	cluster := newTestCluster(t, 1, []chorus.Option{chorus.WithOnlineWindow(2 * time.Minute)})
+	idle := cluster.newAgent(0, "idle-swarm", "sleeper")
+	idle.call("join", map[string]any{"channels": []string{"#old"}})
+	idle.send("#old", "last words", 0)
+	active := cluster.newAgent(0, "busy-swarm", "worker")
+	active.call("join", map[string]any{"channels": []string{"#now"}})
+	base := cluster.replicas[0].httpServer.URL
+	assert.Equal(t, []string{"busy-swarm", "idle-swarm"}, listSwarms(t, base))
+
+	cluster.advanceClock(3 * time.Minute)
+	active.call("who", map[string]any{})
+
+	assert.Equal(t, []string{"busy-swarm"}, listSwarms(t, base))
+	doc, _ := getView(t, base, "idle-swarm", "", 0, http.StatusOK)
+	require.Len(t, doc.Channels, 1)
+}
+
+// TestSwarmListReadsLatestPresenceWithoutKeepingSwarmsOpen verifies that
+// listing a swarm this server never opened leaves no subscription to it
+// behind, and that GET /swarms decides from the presence stored in Redis even
+// when this server's open copy missed the change. The test saves each change
+// the way another server's write does (new value and next revision) but never
+// publishes it, so the open copy stays behind, in both directions.
+func TestSwarmListReadsLatestPresenceWithoutKeepingSwarmsOpen(t *testing.T) {
+	cluster := newTestCluster(t, 2, []chorus.Option{chorus.WithOnlineWindow(2 * time.Minute)})
+	cluster.replicas[0].httpServer.Client().Timeout = 5 * time.Second
+	ctx := context.Background()
+	hashKey := "map:chorus:cold-swarm:state:content"
+	updates := "map:chorus:cold-swarm:state:updates"
+	cluster.newAgent(1, "cold-swarm", "remote").call("join", map[string]any{"channels": []string{"#c"}})
+	listing := cluster.replicas[0].httpServer.URL
+	subscribers := func() int64 {
+		counts, err := cluster.rdb.PubSubNumSub(ctx, updates).Result()
+		require.NoError(t, err)
+		return counts[updates]
+	}
+	before := subscribers()
+	assert.Equal(t, []string{"cold-swarm"}, listSwarms(t, listing))
+	assert.Equal(t, before, subscribers(), "listing must not keep the swarm open")
+
+	// Open the swarm on the listing server, then let its registration go
+	// stale there while Redis holds a fresh one.
+	getView(t, listing, "cold-swarm", "", 0, http.StatusOK)
+	cluster.advanceClock(3 * time.Minute)
+	fresh := fmt.Sprintf(`{"ts":%d}`, cluster.currentTime().Unix())
+	require.NoError(t, cluster.rdb.HSet(ctx, hashKey, "agent:remote", fresh).Err())
+	require.NoError(t, cluster.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err())
+	assert.Equal(t, []string{"cold-swarm"}, listSwarms(t, listing), "a fresh registration in Redis is live")
+
+	// Remove the registration in Redis only; the open copy still holds it.
+	require.NoError(t, cluster.rdb.HDel(ctx, hashKey, "agent:remote").Err())
+	require.NoError(t, cluster.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err())
+	assert.Equal(t, []string{}, listSwarms(t, listing), "a registration gone from Redis is not live")
+}
+
+// listSwarms returns the swarm names that GET /swarms reports.
+func listSwarms(t *testing.T, base string) []string {
+	t.Helper()
+	resp := viewRequest(t, base+"/swarms", nil)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var list struct {
+		Swarms []string `json:"swarms"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	return list.Swarms
 }
 
 // TestUnboundSwarmViewHonorsWait verifies that a conditional request for a
@@ -310,6 +447,38 @@ func viewRequest(t *testing.T, target string, edit func(*http.Request)) *http.Re
 	return resp
 }
 
+// TestDashboardCarriesUIBuild verifies that the dashboard page records the
+// identity of the dashboard files it was built from, and that every
+// dashboard data response, including 304 Not Modified, names the files this
+// server embeds, so an open page can compare the two and offer a reload
+// after the server starts serving a different dashboard.
+func TestDashboardCarriesUIBuild(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	cluster.newAgent(0, "build-swarm", "probe").call("join", map[string]any{"channels": []string{"#b"}})
+	base := cluster.replicas[0].httpServer.URL
+
+	page := viewRequest(t, base+"/", nil)
+	body, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	require.NoError(t, err)
+	match := regexp.MustCompile(`<meta name="chorus-ui-build" content="([0-9a-f]{64})">`).FindSubmatch(body)
+	require.NotNil(t, match, "page must carry its dashboard identity")
+	loaded := string(match[1])
+	assert.Equal(t, "no-store", page.Header.Get("Cache-Control"))
+
+	list := viewRequest(t, base+"/swarms", nil)
+	list.Body.Close()
+	assert.Equal(t, loaded, list.Header.Get("X-Chorus-UI-Build"))
+
+	_, etag := getView(t, base, "build-swarm", "", 0, http.StatusOK)
+	unchanged := viewRequest(t, base+"/swarms/build-swarm/view?wait=1", func(r *http.Request) {
+		r.Header.Set("If-None-Match", etag)
+	})
+	unchanged.Body.Close()
+	require.Equal(t, http.StatusNotModified, unchanged.StatusCode)
+	assert.Equal(t, loaded, unchanged.Header.Get("X-Chorus-UI-Build"))
+}
+
 // TestDashboardPageServed verifies that GET / serves the dashboard page and
 // GET /ui/<file> its scripts, each with a Content-Security-Policy that allows
 // only same-origin code, forbids other sites from framing the page, and
@@ -352,4 +521,17 @@ func TestDashboardPageServed(t *testing.T) {
 			assert.Contains(t, string(body), tt.wantContent)
 		})
 	}
+}
+
+// viewedModel returns the model that the server at base reports for handle in
+// swarm's view, which it builds from its own local copy of the swarm state.
+func viewedModel(t *testing.T, base, swarm, handle string) string {
+	t.Helper()
+	doc, _ := getView(t, base, swarm, "", 0, http.StatusOK)
+	for _, a := range doc.Agents {
+		if a.Handle == handle && a.Model != nil {
+			return *a.Model
+		}
+	}
+	return ""
 }

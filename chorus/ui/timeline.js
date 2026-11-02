@@ -6,31 +6,53 @@
 // data between renders except layout caches keyed by the view's identity.
 //
 // What it draws, all from fields the server returns (GET /swarms/{s}/view):
-//   - an overview strip of every retained message in the swarm, with a
+//   - an "Overview" strip of every retained message in the swarm, with a
 //     draggable window that selects the time range shown below it;
-//   - one lane per message sender (live agents and senders that have left),
-//     with role "human" lanes styled apart;
-//   - a time axis on which idle stretches longer than QUIET_MS are shrunk to
-//     a fixed-width "quiet" break so bursts of activity stay readable;
+//   - one lane per agent with something drawn in that range (a message, a
+//     read mark, or a mention from the selected message), including senders
+//     that have left, with lanes of people (declared model "human") styled
+//     apart;
+//   - a time axis labelled with the window's length and its start and end
+//     times, on which idle stretches longer than QUIET_MS are shrunk to a
+//     fixed-width "quiet" break (labelled on a row of its own) so bursts of
+//     activity stay readable;
 //   - for the selected channel only: the current pin (Chorus stores only the
 //     current pin, so there is one landmark, placed at the pinned message
 //     when it is still retained), each member's read position, and
 //     reply_to curves between messages of that channel;
-//   - highlights for messages matching the search, agent, or artifact filter.
+//   - highlights for messages matching the search or agent filter.
 // Direct-message reply_to values are ambiguous across the two inboxes, so
 // no reply curves are drawn for DMs.
 //
-// Viewport: the visible interval is state.timeWindow when app.js has set an
-// explicit time filter (the message list applies it too). Otherwise, while
-// following live, it is the last LIVE_WINDOW_MS; when the page pauses
-// (followLive false) the timeline keeps showing the interval it last showed
-// live, so later arrivals do not move what the user is looking at.
+// Viewport: the page is always live. While state.timeWindow is null the
+// timeline shows the last LIVE_WINDOW_MS and moves with new messages. The
+// user picks an earlier interval by dragging or clicking the overview strip,
+// paging, or selecting a message outside the view; each sets
+// state.timeWindow, which holds the view still (the message list applies it
+// too) until "Jump to latest" (actions.jumpToLatest) returns both the
+// timeline and the message list to the newest messages.
 //
-// Keyboard: the timeline is one focusable control. Left/Right move the
-// selection to the previous/next retained message (the view follows it),
-// Home/End jump to the first/last, PageUp/PageDown move the view by one
-// window width, Enter opens the selected message, and "f" toggles Follow
-// live. Clicking the overview strip moves the view there.
+// Hovering: pointing at a message dot, the pin, a read mark, or a quiet
+// break shows a one-line label at once (the browser's own tooltip waits
+// about a second). The pointer can move onto the label to read it, and
+// Escape dismisses it without moving the pointer or focus.
+//
+// Inspecting: clicking a message dot, the pin landmark, or a member's read
+// mark selects it in place (actions.selectMessage with reveal: false) and
+// shows one preview card next to it; the tab, filters, and page scroll stay
+// as they are. Only the card's "Show in conversation" button (or Enter)
+// opens the message in the conversation. The card is rebuilt from
+// state.selectedMessage on every render, so it never outlives the data it
+// describes. A read-mark card names the reader it was opened for; when that
+// reader's position moves, the card closes instead of describing a new spot.
+// The card closes with its close button, Escape, a second click on the same
+// mark, or a click on empty chart space.
+//
+// Keyboard: the timeline is one focusable control. Left/Right select the
+// previous/next retained message (the view follows it), Home/End jump to the
+// first/last, PageUp/PageDown move the view by its own duration, Enter shows
+// the selected message in the conversation, and Escape closes the preview.
+// Clicking the overview strip moves the view there.
 (function () {
   "use strict";
 
@@ -47,43 +69,115 @@
   // letter or digit, then up to 31 more letters, digits, '_' or '-'.
   const MENTION_RE = /(^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?![A-Za-z0-9_-])/g;
   // Layout constants in px.
-  const OVERVIEW_H = 28;
-  const AXIS_H = 18;
-  const LANE_H = 26;
-  const LABEL_W = 112;
+  const OVERVIEW_H = 34;
+  // The axis has three rows of text 16px apart (the measured height of a
+  // rendered label), so labels never overlap at any width: the window length
+  // and its edge clocks, then quiet-break labels, then the pin label just
+  // above the lanes.
+  const AXIS_ROW = 16;
+  // Space kept between two quiet labels on their row.
+  const LABEL_GAP = 6;
+  const AXIS_H = AXIS_ROW * 3;
+  const LANE_H = 38;
+  const LABEL_W = 160;
   const PAD = 8;
+  // Horizontal space between the label gutter (and the right edge) and the
+  // plot, so the first and last dots never touch a label or the border.
+  const PLOT_PAD = 18;
+  const PLOT_X0 = LABEL_W + PLOT_PAD;
+  // Lane identity mark: the provider logo (or initial) drawn at this size,
+  // with no circle or plate around it.
+  const AVATAR = 22;
+  // Dot radius, and radius of the selected dot.
+  const DOT_R = 6;
+  const DOT_R_SELECTED = 8;
 
-  // Per-root viewport memory. It is interaction state, never swarm data:
-  // swarm is the swarm it belongs to (memory is reset when the swarm
-  // changes, kept across channel and DM switches within a swarm), lastLive
-  // is the interval most recently shown while following live, and frozen is
-  // the interval shown while paused without an explicit filter.
-  const viewports = new WeakMap();
+  // Per-root swarm memory: the swarm each root last drew. When it changes, a
+  // drag started on the previous swarm's chart is dropped.
+  const drawnSwarm = new WeakMap();
+
+  // Per-root drag state while the overview window is being dragged. The
+  // pointer is captured on rootEl, which survives re-renders, so a drag keeps
+  // working while setTimeWindow redraws the SVG on every frame.
+  const drags = new WeakMap();
+  // Roots whose drag listeners are installed (once per root element).
+  const dragRoots = new WeakSet();
+  // Per-card function that places the card again next to its point, used
+  // when the scrolling message area moves under an open card.
+  const cardPlacers = new WeakMap();
+  // Roots whose scroll listener is installed (once per root element).
+  const scrollRoots = new WeakSet();
+  // Per-root last pointer position over the chart, so a hover label can be
+  // shown again after a redraw replaces the mark under a still pointer.
+  const pointers = new WeakMap();
+  // Roots whose hover-tracking listeners are installed (once per root).
+  const hoverRoots = new WeakSet();
+  // Per-root hover state: the pending timer that hides the label after the
+  // pointer leaves its mark, the hover key of the mark whose label is shown
+  // (so a redraw can restore it on that mark even while the pointer rests on
+  // the label itself), and the hover key of a mark whose label the user
+  // dismissed with Escape, which stays hidden until the pointer enters
+  // another mark.
+  const hoverState = new WeakMap();
+  // Per-root work that must wait until the whole page has finished updating
+  // after a render (placing the preview card and restoring the hover label).
+  // It runs once, in the next animation frame, which comes after app.js has
+  // drawn every surface and restored scroll positions but before the page is
+  // painted; placePreview runs it at once when asked earlier.
+  const finishers = new WeakMap();
+  // Roots whose stage-resize observer is installed (once per root element).
+  const resizeRoots = new WeakSet();
+  // How long a hover label waits after the pointer leaves its mark before it
+  // hides, so the pointer can move onto the label to read it.
+  const HOVER_GRACE_MS = 150;
 
   /**
    * render draws the timeline into rootEl.
-   * state fields read: view, selectedTarget, selectedMessage, timeWindow,
-   * followLive, filterAgent, filterArtifact, searchQuery.
+   * state fields read: view, selectedTarget, selectedMessage, timeWindow
+   * (null while showing the latest messages), filterAgent, searchQuery.
    * selectedTarget is {kind: "channel", name: "#x"} or
    * {kind: "dm", pairKey: "a↔b", a, b} with a and b sorted.
-   * selectedMessage is null or {target: "#channel" | "@recipient", seq}.
-   * actions used: selectTarget(selectedTarget), selectMessage(target, seq)
-   * where target is "#channel" or the recipient inbox "@handle",
-   * setTimeWindow({startMs, endMs}), setFollowLive(bool).
+   * selectedMessage is null or {target: "#channel" | "@recipient", seq,
+   * reader?} where reader is set when a member's read mark was picked.
+   * actions used: selectMessage(target, seq, opts) where target is
+   * "#channel" or the recipient inbox "@handle" and opts.reveal === false
+   * inspects in place (opts.reader names a picked read mark) while the default
+   * shows the message in the conversation; setReplyTo(channel, seq, sender,
+   * human) and composeDM(handle) for the card's Reply button;
+   * setTimeWindow({startMs, endMs} | null); and jumpToLatest(), which returns
+   * both the timeline and the message list to the newest messages.
    */
   function render(rootEl, state, actions) {
     const view = state && state.view;
     // Re-rendering replaces the SVG; keep keyboard focus on the timeline if
     // it had it, so arrow-key navigation survives new messages arriving.
-    const hadFocus = rootEl.contains(document.activeElement);
+    // Remember which control had focus (the chart or the Jump to latest
+    // button) so the same one gets it back.
+    const focused = document.activeElement;
+    const hadFocus = rootEl.contains(focused);
+    const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
+    // A focused preview-card button is found again by its data-tl-card name.
+    const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
+    // How far the open card's own contents were scrolled, and which item it
+    // described, so a redraw of the same card keeps showing the same part of
+    // it while a newly picked item starts at its top.
+    const oldCard = rootEl.querySelector(".tl-card");
+    const cardScroll = oldCard ? oldCard.scrollTop : 0;
+    const oldCardKey = oldCard ? oldCard.dataset.tlItem : "";
     clear(rootEl);
     if (!view) {
+      // app.js clears the view when it switches swarms, before loading the
+      // new one. The old chart is gone, so a drag on it ends here without
+      // applying or restoring anything, and its pointer capture is released.
+      const d = drags.get(rootEl);
+      dropDrag(rootEl);
+      if (d && rootEl.hasPointerCapture(d.pointerId)) rootEl.releasePointerCapture(d.pointerId);
       rootEl.appendChild(note("Loading swarm…"));
       return;
     }
     // Record which swarm this view belongs to before anything else, so an
-    // empty swarm still resets the paused interval of the previous one.
-    const mem = swarmMemory(rootEl, view.swarm);
+    // empty swarm still drops a drag started on the previous one.
+    noteSwarm(rootEl, view.swarm);
     const events = collectEvents(view);
     if (events.length === 0) {
       rootEl.appendChild(note("No messages yet. Agents' messages will appear here as they arrive."));
@@ -91,15 +185,19 @@
     }
 
     const width = Math.max(320, rootEl.clientWidth || 960);
-    const lanes = laneList(view, events);
-    const colors = colorMap(lanes);
+    const sel = state.selectedTarget || null;
+    const picked = state.selectedMessage || null;
     const axis = buildAxis(events);
-    const win = viewport(mem, state, axis);
-    const plotW = width - LABEL_W - PAD * 2;
-    // While reviewing earlier messages, one extra row under the lanes holds
-    // the notice, so it never overlaps the axis labels.
-    const noticeH = state.followLive ? 0 : 18;
-    const height = OVERVIEW_H + AXIS_H + lanes.length * LANE_H + PAD * 3 + noticeH;
+    const win = state.timeWindow || liveWindow(axis);
+    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
+    const channel = sel && sel.kind === "channel"
+      ? (view.channels || []).find((c) => c.name === sel.name)
+      : null;
+    const lanes = laneList(view, events, inWindow, channel, picked);
+    const colors = colorMap(view, events);
+    const plotW = width - PLOT_X0 - PLOT_PAD;
+    // A range with no activity keeps one row for its "No activity" note.
+    const height = OVERVIEW_H + AXIS_H + Math.max(1, lanes.length) * LANE_H + PAD * 3;
 
     const svg = el("svg", {
       class: "tl",
@@ -108,26 +206,36 @@
       viewBox: `0 0 ${width} ${height}`,
       role: "application",
       tabindex: "0",
-      "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Page Up and Page Down move the view, Enter opens, F toggles Follow live.`,
+      "aria-label": `Swarm timeline, ${events.length} messages. Left and Right move between messages, Home and End jump to the first and last, Page Up and Page Down move the view, Enter opens the selected message.`,
     });
 
     // Scales: overview maps the whole compressed axis; the main plot maps the
     // selected window.
-    const ox = (t) => LABEL_W + PAD + (axis.pos(t) / axis.total) * plotW;
+    const ox = (t) => PLOT_X0 + (axis.pos(t) / axis.total) * plotW;
     const w0 = axis.pos(win.startMs);
     const w1 = Math.max(w0 + 1, axis.pos(win.endMs));
-    const mx = (t) => LABEL_W + PAD + ((axis.pos(t) - w0) / (w1 - w0)) * plotW;
-    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
+    const mx = (t) => PLOT_X0 + ((axis.pos(t) - w0) / (w1 - w0)) * plotW;
 
     const match = matcher(state);
-    const sel = state.selectedTarget || null;
-    const picked = state.selectedMessage || null;
     const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
-    const pan = (next) => panTo(rootEl, state, actions, next);
-    drawOverview(svg, events, axis, ox, win, colors, plotW, actions, pan);
+    const pan = (next) => actions.setTimeWindow(next);
+    // inspect selects a message, pin, or read mark in place; picking the
+    // one already shown closes its preview.
+    const inspect = (target, seq, reader) => {
+      const same = picked != null && picked.target === target && picked.seq === seq &&
+        (picked.reader || "") === (reader || "");
+      if (same) actions.selectMessage(null, 0, { reveal: false });
+      else actions.selectMessage(target, seq, reader ? { reveal: false, reader } : { reveal: false });
+    };
+    installDrag(rootEl);
+    installCardScroll(rootEl);
+    installStageResize(rootEl);
+    installHover(rootEl);
+    drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state);
+    svg.appendChild(gutterClip(LABEL_W - PAD));
     const top = OVERVIEW_H + PAD;
-    drawAxis(svg, axis, w0, w1, mx, top, plotW, height);
+    drawAxis(svg, rootEl, axis, win, w0, w1, mx, top, plotW, height);
     const laneTop = top + AXIS_H;
     const laneY = new Map();
     lanes.forEach((lane, i) => {
@@ -135,17 +243,21 @@
       laneY.set(lane.handle, y);
       drawLane(svg, lane, y, width, colors);
     });
-
-    const channel = sel && sel.kind === "channel"
-      ? (view.channels || []).find((c) => c.name === sel.name)
-      : null;
-    if (channel) {
-      drawPin(svg, channel, mx, inWindow, laneTop, lanes.length);
-      drawReplies(svg, channel, mx, inWindow, laneY, colors);
-      drawReadPositions(svg, channel, mx, inWindow, win, laneY, plotW);
+    if (lanes.length === 0) {
+      // Centered on the whole chart: with no lanes the label gutter is empty,
+      // and the plot alone is narrower than this text on a 320px chart.
+      const empty = el("text", { class: "tl-label tl-empty-range", x: (width / 2).toFixed(1), y: String(laneTop + LANE_H / 2 + 4), "text-anchor": "middle" });
+      empty.textContent = "No activity in this window";
+      svg.appendChild(empty);
     }
 
-    const order = events.filter((e) => laneY.has(e.sender));
+    if (channel) {
+      drawPin(svg, rootEl, channel, mx, inWindow, laneTop, lanes.length, inspect);
+      drawReplies(svg, channel, mx, inWindow, laneY, colors);
+      drawReadPositions(svg, rootEl, channel, mx, inWindow, laneY, picked, inspect);
+    }
+
+    const order = events;
     for (const e of order) {
       if (!inWindow(e.t)) continue;
       const y = laneY.get(e.sender);
@@ -156,28 +268,80 @@
         class: "tl-dot" + (isSel ? " is-selected" : "") + (dim ? " is-dim" : "") + (sel && sameTarget(sel, e) ? " is-target" : ""),
         cx: mx(e.t).toFixed(1),
         cy: String(y),
-        r: isSel ? "6" : "4",
+        r: String(isSel ? DOT_R_SELECTED : DOT_R),
         fill: colors.get(e.sender),
       });
-      const title = el("title", {});
-      title.textContent = `${e.target} #${e.seq} · @${e.sender} · ${clock(e.t)} — ${firstLine(e.text, 120)}`;
-      dot.appendChild(title);
-      dot.addEventListener("click", () => openEvent(e, actions));
+      hoverable(rootEl, dot, `@${e.sender} · ${e.target} #${e.seq} · ${clock(e.t)} — ${firstLine(e.text, 80)}`, `dot ${itemKey(e.target, e.seq, "")}`, itemKey(e.target, e.seq, ""));
+      dot.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        inspect(e.target, e.seq, "");
+      });
       svg.appendChild(dot);
     }
 
     const chosen = order.find(isSelected);
     if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
 
-    if (!state.followLive) {
-      const back = el("text", { class: "tl-review", x: String(width - PAD), y: String(height - PAD), "text-anchor": "end" });
-      back.textContent = "Reviewing earlier messages · press F to follow live";
-      svg.appendChild(back);
-    }
-
-    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, actions, state, axis, win, pan));
+    svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, picked, actions, axis, win, pan));
+    // A click on empty plot space (below the overview strip, not on a dot or
+    // mark, whose handlers stop the click) closes the preview.
+    svg.addEventListener("click", (ev) => {
+      if (!picked || ev.clientY - svg.getBoundingClientRect().top < OVERVIEW_H + PAD) return;
+      actions.selectMessage(null, 0, { reveal: false });
+    });
     rootEl.appendChild(svg);
-    if (hadFocus) svg.focus();
+    fitQuietLabels(svg, PLOT_X0 + plotW);
+
+    // The preview card for the picked message or read mark.
+    const found = cardAnchor(picked, order, channel, inWindow);
+    let card = null;
+    if (found && found.stale) {
+      // The picked reader moved on: close the preview once this render ends,
+      // unless something else replaced the selection first.
+      queueMicrotask(() => {
+        if (state.selectedMessage === picked) actions.selectMessage(null, 0, { reveal: false });
+      });
+    } else if (found) {
+      const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
+      if (y != null) {
+        const lane = lanes.find((l) => l.handle === found.e.sender);
+        card = buildCard(found, lane, channel, actions, svg);
+        cardPlacers.set(card, () => placeCard(rootEl, svg, card, mx(found.e.t), y, width));
+        // The card is added now, so focus can return to it, but stays
+        // transparent until the page has finished updating and it is placed.
+        card.style.opacity = "0";
+        rootEl.appendChild(card);
+      }
+    }
+    const shownCard = card;
+    const sameItem = card != null && card.dataset.tlItem === oldCardKey;
+    scheduleFinish(rootEl, () => {
+      if (shownCard && shownCard.isConnected) {
+        cardPlacers.get(shownCard)();
+        if (sameItem) shownCard.scrollTop = cardScroll;
+        if (shownCard.contains(document.activeElement)) revealInCard(shownCard, document.activeElement);
+        shownCard.style.opacity = "";
+      }
+      rehover(rootEl);
+    });
+    // While an earlier interval is shown, one quiet button returns the whole
+    // page to the latest messages; it is a real button so keyboards and
+    // screen readers reach it.
+    if (state.timeWindow) {
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.className = "tl-jump";
+      jump.textContent = "Jump to latest";
+      jump.addEventListener("click", () => actions.jumpToLatest());
+      rootEl.appendChild(jump);
+      if (jumpHadFocus) jump.focus({ preventScroll: true });
+    }
+    // Restoring focus must not scroll the page under the reader. A focused
+    // card button keeps focus when its card is drawn again; when the card is
+    // gone, focus returns to the chart.
+    const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
+    if (cardTarget) cardTarget.focus({ preventScroll: true });
+    else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
   // collectEvents flattens every retained channel message and DM into one
@@ -201,7 +365,7 @@
   // (Chorus handles are case-sensitive, so @API and @api are different
   // agents), sorted, joined by ↔.
   function toEvent(target, m) {
-    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to };
+    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true };
     if (target.startsWith("@")) {
       const [a, b] = [m.sender, target.slice(1)].sort();
       e.pair = { a, b, pairKey: a + "↔" + b };
@@ -216,44 +380,422 @@
     return sel.kind === "channel" ? e.target === sel.name : !!e.pair && e.pair.pairKey === sel.pairKey;
   }
 
-  // openEvent selects the event's channel or DM conversation, then the
-  // message itself.
-  function openEvent(e, actions) {
-    if (e.pair) {
-      actions.selectTarget({ kind: "dm", pairKey: e.pair.pairKey, a: e.pair.a, b: e.pair.b });
-    } else {
-      actions.selectTarget({ kind: "channel", name: e.target });
+  // cardAnchor returns what the preview card describes: {e} for a picked
+  // message, {e, reader} for a picked read mark whose reader is still at that
+  // message, {stale: true} when the picked reader's position has moved or is
+  // gone, or null when nothing is picked or the message is outside the view.
+  function cardAnchor(picked, order, channel, inWindow) {
+    if (!picked) return null;
+    let reader = null;
+    if (picked.reader) {
+      reader = channel && channel.name === picked.target
+        ? (channel.positions || []).find((p) => p.handle === picked.reader && p.read_seq === picked.seq)
+        : null;
+      if (!reader) return { stale: true };
     }
-    actions.selectMessage(e.target, e.seq);
+    const e = order.find((x) => x.target === picked.target && x.seq === picked.seq);
+    if (!e || !inWindow(e.t)) return null;
+    return reader ? { e, reader } : { e };
   }
 
-  // laneList returns one lane per sender seen in retained messages plus every
-  // registered agent, sorted with humans first and then by handle. A sender
-  // with no current registration is marked "not registered": it may have
-  // left, expired, or disconnected, which the data cannot tell apart. The
-  // human mark reflects the agent's current role only.
-  function laneList(view, events) {
+  // buildCard returns the preview card for found (see cardAnchor): who sent
+  // the message, where and when, why it is picked (pin, reply, or a reader's
+  // position), the start of its text, and the Show in conversation, Reply,
+  // and close controls. Each control carries a data-tl-card name so focus can
+  // return to it after the next render.
+  function buildCard(found, lane, channel, actions, svg) {
+    const e = found.e;
+    const close = () => {
+      actions.selectMessage(null, 0, { reveal: false });
+      svg.focus({ preventScroll: true });
+    };
+    const card = html("div", "tl-card");
+    // Identifies the inspected item, so a redraw can tell the same card from
+    // a newly picked one.
+    card.dataset.tlItem = itemKey(e.target, e.seq, found.reader ? found.reader.handle : "");
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", `Preview of ${e.target} #${e.seq} from @${e.sender}`);
+    card.style.touchAction = "pan-y";
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      close();
+    });
+
+    const header = html("div", "tl-card-header");
+    const meta = html("div", "tl-card-meta");
+    // The badge follows the message's own human flag. The sender's current
+    // model only picks the provider logo for a message not sent as a person,
+    // and never marks such a message as a person's when the sender has since
+    // declared "human".
+    const current = lane ? lane.model : "";
+    const nowHuman = current.trim().toLowerCase() === "human";
+    const ui = window.ChorusUI;
+    meta.appendChild(ui && ui.handleBadge && (e.human || !nowHuman)
+      ? ui.handleBadge(e.sender, e.human ? "" : current, "", e.human)
+      : html("span", "", "@" + e.sender));
+    meta.appendChild(html("span", "", e.pair ? `${e.pair.a} ↔ ${e.pair.b} #${e.seq}` : `${e.target} #${e.seq}`));
+    meta.appendChild(html("span", "", clock(e.t)));
+    header.appendChild(meta);
+    const closeBtn = button("tl-card-close", "×", "close", close);
+    closeBtn.setAttribute("aria-label", "Close preview");
+    header.appendChild(closeBtn);
+    card.appendChild(header);
+
+    const notes = [];
+    if (found.reader) {
+      const p = found.reader;
+      notes.push(p.behind > 0 ? `@${p.handle} read through #${p.read_seq} · ${p.behind} behind` : `@${p.handle} is caught up`);
+    }
+    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
+    if (e.replyTo) notes.push(`↩ #${e.replyTo}`);
+    if (notes.length) card.appendChild(html("span", "tl-card-note", notes.join(" · ")));
+
+    card.appendChild(html("p", "tl-card-body", preview(e.text)));
+
+    const row = html("div", "tl-card-actions");
+    row.appendChild(button("", "Show in conversation", "show", () => actions.selectMessage(e.target, e.seq)));
+    row.appendChild(button("", "Reply", "reply", () => {
+      if (e.pair) actions.composeDM(e.sender);
+      else actions.setReplyTo(e.target, e.seq, e.sender, e.human);
+    }));
+    card.appendChild(row);
+    return card;
+  }
+
+  // placeCard adds card to rootEl and positions it next to the anchor at
+  // (x, y) in chart coordinates, kept horizontally inside the chart. It opens
+  // below the anchor, over the lanes below and the page under the chart, so
+  // it hides as few other messages as possible. The space that counts is
+  // the visible part of the scrolling area that holds the chart (between the
+  // page header and the composer), not the browser window: the card opens
+  // above when below does not fit there and above does, and otherwise on the
+  // side with more room, limited to that room so its buttons stay visible
+  // (the card scrolls inside). The card always stays inside that visible
+  // area. The card floats above the page, so placing it never moves layout.
+  function placeCard(rootEl, svg, card, x, y, width) {
+    // Placing again (after the message area scrolled) measures the card at
+    // its natural height, then restores how far its contents were scrolled.
+    const inner = card.scrollTop;
+    card.style.visibility = "hidden";
+    card.style.maxHeight = "";
+    card.style.overflowY = "";
+    if (!card.isConnected) rootEl.appendChild(card);
+    const rootBox = rootEl.getBoundingClientRect();
+    const svgBox = svg.getBoundingClientRect();
+    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
+    // The browser scales the chart to the section's width, so chart
+    // coordinates are converted to the pixels actually on screen.
+    const scale = svgBox.width / width;
+    const ax = svgBox.left + x * scale;
+    const ay = svgBox.top + y * scale;
+    const cw = card.offsetWidth;
+    const ch = card.offsetHeight;
+    const gap = (DOT_R_SELECTED + 6) * scale;
+    // Room counts only the visible part of the area on each side of the
+    // point, so a point scrolled out of view never claims space nobody sees.
+    const roomBelow = area.bottom - PAD - Math.max(ay + gap, area.top + PAD);
+    const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
+    const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
+    const room = below ? roomBelow : roomAbove;
+    if (ch > room) {
+      card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
+      card.style.overflowY = "auto";
+    }
+    const shown = Math.min(ch, Math.max(0, room));
+    const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
+    // When the point itself has scrolled out of the visible area, the card
+    // still stays wholly inside it, so its controls remain reachable.
+    const wanted = below ? ay + gap : ay - gap - shown;
+    const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
+    // Absolute positions are measured from the section's padding edge.
+    card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
+    card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
+    card.style.visibility = "";
+    card.scrollTop = inner;
+  }
+
+  // fitQuietLabels sizes the quiet labels by their rendered width, left to
+  // right: a label keeps its full text ("11m quiet") when it fits beside the
+  // previous one and inside the plot, else shows its length alone ("11m"),
+  // else shows no text. Every quiet break keeps the full text and its start
+  // and end times as its hover label.
+  function fitQuietLabels(svg, plotRight) {
+    const labels = [...svg.querySelectorAll("text.tl-quiet-label")]
+      .sort((a, b) => Number(a.getAttribute("x")) - Number(b.getAttribute("x")));
+    let freeFrom = PLOT_X0;
+    for (const lbl of labels) {
+      const cx = Number(lbl.getAttribute("x"));
+      const fits = () => {
+        const half = lbl.getComputedTextLength() / 2;
+        return cx - half >= freeFrom && cx + half <= plotRight;
+      };
+      if (!fits()) lbl.textContent = lbl.dataset.short;
+      if (!fits()) {
+        lbl.remove();
+        continue;
+      }
+      freeFrom = cx + lbl.getComputedTextLength() / 2 + LABEL_GAP;
+    }
+  }
+
+  // scheduleFinish records the work to run once the page has finished
+  // updating after this render, replacing work from an earlier render that
+  // has not run yet, and requests one animation frame for it.
+  function scheduleFinish(rootEl, fn) {
+    const pending = finishers.has(rootEl);
+    finishers.set(rootEl, fn);
+    if (!pending) requestAnimationFrame(() => runFinish(rootEl));
+  }
+
+  // runFinish runs and clears rootEl's pending finishing work, if any.
+  function runFinish(rootEl) {
+    const fn = finishers.get(rootEl);
+    finishers.delete(rootEl);
+    if (fn) fn();
+  }
+
+  // installStageResize places the open card again when the scrolling message
+  // area changes size (the window is resized or the composer grows), which
+  // changes the room around the card without a redraw. Installed once per
+  // root.
+  function installStageResize(rootEl) {
+    if (resizeRoots.has(rootEl)) return;
+    const area = rootEl.closest("#stage-container");
+    if (!area || typeof ResizeObserver !== "function") return;
+    resizeRoots.add(rootEl);
+    new ResizeObserver(() => placePreview(rootEl)).observe(area);
+  }
+
+  // installCardScroll places the open card again whenever the scrolling
+  // message area that holds the chart scrolls, so the card stays next to
+  // its point and inside the visible area. It is installed once per root.
+  function installCardScroll(rootEl) {
+    if (scrollRoots.has(rootEl)) return;
+    const area = rootEl.closest("#stage-container");
+    if (!area) return;
+    scrollRoots.add(rootEl);
+    area.addEventListener("scroll", () => {
+      const card = rootEl.querySelector(".tl-card");
+      const place = card && cardPlacers.get(card);
+      if (place) place();
+    }, { passive: true });
+  }
+
+  // revealInCard scrolls only the card's own contents so that control is
+  // fully visible; the page and the message area do not move.
+  function revealInCard(card, control) {
+    const top = control.offsetTop;
+    const bottom = top + control.offsetHeight;
+    if (top < card.scrollTop) card.scrollTop = top;
+    else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
+  }
+
+  // hoverable gives node an instant hover label with text, and the same text
+  // as its accessible name. Browsers delay native SVG tooltips by about a
+  // second, so the timeline draws its own label as soon as a mouse or pen
+  // pointer enters the mark. key names the mark itself and stays the same
+  // across redraws even when its text changes (a read mark's "3 behind"
+  // becoming "4 behind"), so a label is restored or kept dismissed by mark,
+  // not by wording. item names what the mark opens (see itemKey), so no
+  // label covers a mark whose preview card is already open; quiet breaks
+  // open nothing and pass "".
+  function hoverable(rootEl, node, text, key, item = "") {
+    node.setAttribute("aria-label", text);
+    node.dataset.tlHover = text;
+    node.dataset.tlHoverKey = key;
+    node.dataset.tlItem = item;
+    node.addEventListener("pointerenter", (ev) => {
+      if (ev.pointerType === "touch") return;
+      // Browsers also send pointerenter when a redraw puts a new mark under a
+      // pointer that has not moved, so entering the mark whose label the user
+      // dismissed keeps it dismissed; entering any other mark ends that.
+      const st = hoverOf(rootEl);
+      if (key === st.dismissed) return;
+      st.dismissed = "";
+      showHover(rootEl, node);
+    });
+    node.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+  }
+
+  // itemKey names an inspected item: its target, message number, and the
+  // reader for a read mark ("" otherwise). Cards and marks share it.
+  function itemKey(target, seq, reader) {
+    return `${target} ${seq} ${reader}`;
+  }
+
+  // hoverOf returns rootEl's hover state, creating it on first use.
+  function hoverOf(rootEl) {
+    let st = hoverState.get(rootEl);
+    if (!st) {
+      st = { timer: 0, leaving: false, dismissed: "", shown: "" };
+      hoverState.set(rootEl, st);
+    }
+    return st;
+  }
+
+  // installHover remembers where the pointer is over the chart, so rehover
+  // can restore a hover label after a redraw, and lets Escape dismiss the
+  // label without moving the pointer or focus (WCAG 1.4.13). It is installed
+  // once per root.
+  function installHover(rootEl) {
+    if (hoverRoots.has(rootEl)) return;
+    hoverRoots.add(rootEl);
+    rootEl.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType !== "touch") pointers.set(rootEl, { x: ev.clientX, y: ev.clientY });
+    });
+    rootEl.addEventListener("pointerleave", () => {
+      pointers.delete(rootEl);
+      hideHover(rootEl);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      if (!rootEl.querySelector(".tl-hover")) return;
+      const dismissed = hoverOf(rootEl).shown;
+      hideHover(rootEl);
+      hoverOf(rootEl).dismissed = dismissed;
+    });
+  }
+
+  // rehover shows the hover label again when the pointer still rests on a
+  // mark after a redraw replaced it (redraws happen on every live update),
+  // unless the user dismissed that label.
+  function rehover(rootEl) {
+    const st = hoverOf(rootEl);
+    // The label shown before the redraw belongs to a mark the redraw
+    // replaced; show it again on that mark's replacement. This also covers a
+    // pointer resting on the label, where hit-testing would find whatever
+    // lies under the label instead.
+    if (st.leaving) {
+      // The pointer had already left the mark and its label when the redraw
+      // removed them; let the label go rather than bring it back.
+      hideHover(rootEl);
+      return;
+    }
+    if (st.shown) {
+      const same = [...rootEl.querySelectorAll("[data-tl-hover-key]")].find((n) => n.dataset.tlHoverKey === st.shown);
+      if (same) {
+        showHover(rootEl, same);
+        return;
+      }
+    }
+    const at = pointers.get(rootEl);
+    if (!at) return;
+    const node = document.elementFromPoint(at.x, at.y);
+    if (!node || !node.dataset || !node.dataset.tlHoverKey || !rootEl.contains(node)) return;
+    if (node.dataset.tlHoverKey === st.dismissed) return;
+    showHover(rootEl, node);
+  }
+
+  // showHover places the single hover label above node (below it when the
+  // visible message area has no room above), kept inside the chart. The
+  // pointer can move onto the label and stay there to read it. A mark whose
+  // preview card is already open shows no label, since the card says more.
+  function showHover(rootEl, node) {
+    hideHover(rootEl);
+    const open = rootEl.querySelector(".tl-card");
+    if (open && node.dataset.tlItem && open.dataset.tlItem === node.dataset.tlItem) return;
+    hoverOf(rootEl).shown = node.dataset.tlHoverKey;
+    const label = html("div", "tl-hover", node.dataset.tlHover);
+    label.setAttribute("aria-hidden", "true");
+    label.style.visibility = "hidden";
+    label.addEventListener("pointerenter", () => {
+      const st = hoverOf(rootEl);
+      clearTimeout(st.timer);
+      st.leaving = false;
+    });
+    label.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    rootEl.appendChild(label);
+    const rootBox = rootEl.getBoundingClientRect();
+    const svgBox = rootEl.querySelector("svg.tl").getBoundingClientRect();
+    const box = node.getBoundingClientRect();
+    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
+    const w = label.offsetWidth;
+    const h = label.offsetHeight;
+    const cx = box.left + box.width / 2;
+    const left = Math.max(svgBox.left + PAD, Math.min(cx - w / 2, svgBox.right - w - PAD));
+    const above = box.top - 6 - h;
+    const top = above >= area.top ? above : box.bottom + 6;
+    label.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
+    label.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
+    label.style.visibility = "";
+  }
+
+  // hideHoverSoon hides the hover label after HOVER_GRACE_MS unless the
+  // pointer reaches the label or another mark first.
+  function hideHoverSoon(rootEl) {
+    const st = hoverOf(rootEl);
+    clearTimeout(st.timer);
+    st.leaving = true;
+    st.timer = setTimeout(() => hideHover(rootEl), HOVER_GRACE_MS);
+  }
+
+  // hideHover removes the hover label, if one is shown, and any pending
+  // timer that would hide it.
+  function hideHover(rootEl) {
+    const st = hoverOf(rootEl);
+    clearTimeout(st.timer);
+    st.leaving = false;
+    st.shown = "";
+    const label = rootEl.querySelector(".tl-hover");
+    if (label) label.remove();
+  }
+
+  // laneList returns the lanes to draw for the current range: each known
+  // handle (registered agents and senders of retained messages) that has
+  // something drawn there, namely a message in the range, its read mark in
+  // the selected channel, or a mention from the selected message. A range
+  // with no activity has no lanes (render shows a note instead). Lanes
+  // change as the range moves; the page keeps the chart itself still while
+  // that happens. Humans come first,
+  // then handles in order. A sender with no current registration keeps its
+  // messages but is drawn muted; the data cannot tell whether it left,
+  // expired, or disconnected, so the lane makes no claim about why. The human
+  // mark reflects the agent's current declared model only.
+  function laneList(view, events, inWindow, channel, picked) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
-    const handles = new Set(events.map((e) => e.sender));
-    for (const h of live.keys()) handles.add(h);
-    const lanes = [...handles].map((h) => {
+    const known = new Set([...live.keys(), ...events.map((e) => e.sender)]);
+    const shown = new Set();
+    for (const e of events) if (inWindow(e.t)) shown.add(e.sender);
+    if (channel) {
+      const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
+      for (const p of channel.positions || []) {
+        const m = bySeq.get(p.read_seq);
+        if (m && inWindow(m.sent_at_ms)) shown.add(p.handle);
+      }
+    }
+    const chosen = picked ? events.find((e) => e.target === picked.target && e.seq === picked.seq) : null;
+    if (chosen && inWindow(chosen.t)) {
+      for (const h of mentionTargets(chosen, view, known)) shown.add(h);
+    }
+    const lanes = [...shown].map((h) => {
       const a = live.get(h);
-      return { handle: h, human: !!(a && a.role === "human"), unregistered: !a };
+      return {
+        handle: h,
+        model: a ? a.model || "" : "",
+        human: !!(a && a.model === "human"),
+        unregistered: !a,
+      };
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
   }
 
-  // colorMap uses app.js's agentColorHex so each agent has the same color
-  // in the timeline and the message list, stable as agents come and go.
-  // app.js defines window.ChorusUI before it first calls render.
-  function colorMap(lanes) {
-    return new Map(lanes.map((l) => [l.handle, window.ChorusUI.agentColorHex(l.handle, l.human ? "human" : "")]));
+  // colorMap gives every registered agent and every retained sender a color
+  // from app.js's agentColorHex, so overview ticks keep their sender's color
+  // even when that sender has no lane in the current window, and colors match
+  // the message list. app.js defines window.ChorusUI before it first renders.
+  function colorMap(view, events) {
+    const models = new Map((view.agents || []).map((a) => [a.handle, a.model || ""]));
+    const handles = new Set([...models.keys(), ...events.map((e) => e.sender)]);
+    return new Map([...handles].map((h) => [h, window.ChorusUI.agentColorHex(h, models.get(h) || "")]));
   }
 
   // buildAxis maps real time to a compressed position: time inside active
   // stretches counts fully, and each gap longer than QUIET_MS counts as
-  // QUIET_UNITS. pos(t) is monotonic, so ordering is kept.
+  // QUIET_UNITS. Time before the oldest retained message counts fully too
+  // (negative positions), so a view longer than the retained history is
+  // drawn at its true scale. pos(t) is monotonic, so ordering is kept.
   function buildAxis(events) {
     const first = events[0].t;
     const last = events[events.length - 1].t;
@@ -271,7 +813,7 @@
         p -= covered;
         p += QUIET_UNITS * (covered / (g.to - g.from));
       }
-      return Math.max(0, p);
+      return p;
     }
     const total = Math.max(1, pos(last) + 60 * 1000);
     return { first, last, gaps, pos, total };
@@ -283,79 +825,66 @@
     return { startMs: Math.max(axis.first, endMs - LIVE_WINDOW_MS), endMs };
   }
 
-  // swarmMemory returns rootEl's viewport memory for swarm, starting fresh
-  // when the timeline shows a different swarm than last time.
-  function swarmMemory(rootEl, swarm) {
-    let mem = viewports.get(rootEl);
-    if (!mem || mem.swarm !== swarm) {
-      mem = { swarm, lastLive: null, frozen: null };
-      viewports.set(rootEl, mem);
-    }
-    return mem;
+  // noteSwarm records the swarm rootEl is drawing and, when it changes,
+  // drops any drag and hover label (shown or dismissed) left from the swarm
+  // shown before, so neither applies to the new one.
+  function noteSwarm(rootEl, swarm) {
+    if (drawnSwarm.get(rootEl) === swarm) return;
+    drawnSwarm.set(rootEl, swarm);
+    dropDrag(rootEl);
+    // Hover keys name marks within one swarm ("#room 1" exists in many), so
+    // a shown or dismissed label never carries over to another swarm.
+    hideHover(rootEl);
+    hoverState.delete(rootEl);
   }
 
-  // viewport returns the interval to draw (see the file comment) and updates
-  // mem, the memory that keeps a paused view still.
-  function viewport(mem, state, axis) {
-    if (state.timeWindow) return state.timeWindow;
-    if (state.followLive) {
-      mem.frozen = null;
-      mem.lastLive = liveWindow(axis);
-      return mem.lastLive;
-    }
-    if (!mem.frozen) mem.frozen = mem.lastLive || liveWindow(axis);
-    return mem.frozen;
+  // A view is a span of real time (state.timeWindow filters the message list
+  // by those timestamps), so moving it never changes its duration. The
+  // compressed axis only decides where things are drawn: a drag of the
+  // overview moves the view's start by the dragged distance on that axis.
+
+  // placeWindow returns a view of win's real duration starting at startMs,
+  // clamped to the retained history: it never ends after the newest message
+  // and never starts before the oldest one, except when the history is
+  // shorter than the view (for example after old messages were trimmed),
+  // where the view keeps its duration and ends at the newest message.
+  function placeWindow(axis, win, startMs) {
+    const dur = win.endMs - win.startMs;
+    const lastEnd = axis.last + 60 * 1000;
+    const start = Math.max(Math.min(axis.first, lastEnd - dur), Math.min(startMs, lastEnd - dur));
+    return { startMs: start, endMs: start + dur };
   }
 
-  // panTo shows the interval next. With an explicit filter it updates that
-  // filter through app.js; otherwise it moves the timeline's own paused view
-  // and pauses following live.
-  function panTo(rootEl, state, actions, next) {
-    if (state.timeWindow) {
-      actions.setTimeWindow(next);
-      return;
-    }
-    // render has already created this root's memory for the current swarm.
-    viewports.get(rootEl).frozen = next;
-    if (state.followLive) actions.setFollowLive(false);
-    else render(rootEl, state, actions);
-  }
-
-  // shiftWindow moves win by delta compressed-axis units, keeping its length.
+  // shiftWindow moves win by delta compressed-axis units, measured at its
+  // start, keeping its real duration.
   function shiftWindow(axis, win, delta) {
-    const w0 = axis.pos(win.startMs);
-    const w1 = axis.pos(win.endMs);
-    const len = w1 - w0;
-    const start = Math.min(Math.max(0, w0 + delta), Math.max(0, axis.total - len));
-    return { startMs: timeAt(axis, start), endMs: timeAt(axis, start + len) };
+    return placeWindow(axis, win, timeAt(axis, axis.pos(win.startMs) + delta));
   }
 
-  // centerWindow returns a window of win's length centered on time t.
+  // centerWindow returns a view of win's real duration centered on time t.
   function centerWindow(axis, win, t) {
-    const len = axis.pos(win.endMs) - axis.pos(win.startMs);
-    return shiftWindow(axis, win, axis.pos(t) - len / 2 - axis.pos(win.startMs));
+    return placeWindow(axis, win, t - (win.endMs - win.startMs) / 2);
   }
 
-  // matcher returns a predicate for the active search, agent, and artifact
-  // filters, or null when none is set.
+  // matcher returns a predicate for the active search and agent filters, or
+  // null when neither is set.
   function matcher(state) {
     const q = (state.searchQuery || "").trim().toLowerCase();
     const agent = state.filterAgent || "";
-    const art = state.filterArtifact || "";
-    if (!q && !agent && !art) return null;
+    if (!q && !agent) return null;
     return (e) =>
       (!q || e.text.toLowerCase().includes(q) || e.sender.toLowerCase().includes(q)) &&
-      (!agent || e.sender === agent) &&
-      (!art || e.text.includes(art));
+      (!agent || e.sender === agent);
   }
 
-  function drawOverview(svg, events, axis, ox, win, colors, plotW, actions, pan) {
+  // drawOverview draws the whole-history strip and the draggable window.
+  function drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
-    const strip = el("rect", { class: "tl-overview", x: String(LABEL_W + PAD), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
+    const strip = el("rect", { class: "tl-overview", x: String(PLOT_X0), y: String(y0), width: String(plotW), height: String(OVERVIEW_H - 8), rx: "4" });
     // Clicking the strip outside the window centers the view there.
     strip.addEventListener("click", (ev) => {
       const box = svg.getBoundingClientRect();
-      const frac = (ev.clientX - box.left - LABEL_W - PAD) / plotW;
+      const frac = (ev.clientX - box.left - PLOT_X0) / plotW;
       pan(centerWindow(axis, win, timeAt(axis, Math.min(1, Math.max(0, frac)) * axis.total)));
     });
     svg.appendChild(strip);
@@ -363,17 +892,20 @@
       svg.appendChild(el("line", {
         class: "tl-tick",
         x1: ox(e.t).toFixed(1), x2: ox(e.t).toFixed(1),
-        y1: String(y0 + 4), y2: String(y0 + OVERVIEW_H - 12),
+        y1: String(y0 + 5), y2: String(y0 + OVERVIEW_H - 13),
         stroke: colors.get(e.sender),
       }));
     }
-    const label = el("text", { class: "tl-label", x: String(PAD), y: String(y0 + 14) });
-    label.textContent = "Whole history";
+    const label = el("text", { class: "tl-label", x: String(PAD), y: String(y0 + 17) });
+    label.textContent = "Overview";
     svg.appendChild(label);
 
-    // The window rectangle can be dragged; dropping it stops Follow live and
-    // stores the new range through actions.setTimeWindow.
-    const x0 = ox(win.startMs);
+    // The window rectangle can be dragged. While it moves, the new range is
+    // sent to app.js on every animation frame, so the plot and the message
+    // list follow the drag live.
+    // A view longer than the retained history starts before the strip; the
+    // box then begins at the strip's left edge.
+    const x0 = Math.max(PLOT_X0, ox(win.startMs));
     const x1 = Math.max(x0 + 6, ox(win.endMs));
     const brush = el("rect", {
       class: "tl-window",
@@ -382,47 +914,74 @@
     const t = el("title", {});
     t.textContent = "Drag, or click the strip, to look at another part of the history";
     brush.appendChild(t);
-    // Stop the browser from scrolling or zooming while a touch drags it.
-    brush.style.touchAction = "none";
-    brush.addEventListener("pointerdown", (ev) => startDrag(ev, svg, brush, axis, ox, win, plotW, actions));
+    brush.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      drags.set(rootEl, {
+        pointerId: ev.pointerId,
+        startX: ev.clientX,
+        base: win,
+        original: state.timeWindow || null,
+        axis,
+        plotW,
+        actions,
+        frame: 0,
+        next: null,
+      });
+      // Capture after recording the drag, so pointermove and pointerup reach
+      // rootEl even when the pointer leaves the timeline.
+      rootEl.setPointerCapture(ev.pointerId);
+    });
     svg.appendChild(brush);
   }
 
-  function startDrag(ev, svg, brush, axis, ox, win, plotW, actions) {
-    ev.preventDefault();
-    brush.setPointerCapture(ev.pointerId);
-    const startX = ev.clientX;
-    const baseX = Number(brush.getAttribute("x"));
-    const w = Number(brush.getAttribute("width"));
-    const minX = LABEL_W + PAD;
-    const maxX = LABEL_W + PAD + plotW - w;
-    let x = baseX;
-    const move = (e) => {
-      x = Math.min(maxX, Math.max(minX, baseX + (e.clientX - startX)));
-      brush.setAttribute("x", x.toFixed(1));
+  // dropDrag forgets rootEl's drag, cancelling any frame update it scheduled
+  // so a stale window can never be applied afterwards.
+  function dropDrag(rootEl) {
+    const d = drags.get(rootEl);
+    if (!d) return;
+    drags.delete(rootEl);
+    if (d.frame) cancelAnimationFrame(d.frame);
+  }
+
+  // installDrag adds the pointer listeners for window drags to rootEl once.
+  // They read the drag state stored by the brush's pointerdown.
+  function installDrag(rootEl) {
+    if (dragRoots.has(rootEl)) return;
+    dragRoots.add(rootEl);
+    // Stop the browser from scrolling or zooming while a touch drags.
+    rootEl.style.touchAction = "pan-y";
+    rootEl.addEventListener("pointermove", (ev) => {
+      const d = drags.get(rootEl);
+      if (!d || ev.pointerId !== d.pointerId) return;
+      const delta = ((ev.clientX - d.startX) / d.plotW) * d.axis.total;
+      d.next = shiftWindow(d.axis, d.base, delta);
+      if (!d.frame) {
+        d.frame = requestAnimationFrame(() => {
+          d.frame = 0;
+          if (drags.get(rootEl) !== d || !d.next) return;
+          d.actions.setTimeWindow(d.next);
+        });
+      }
+    });
+    const end = (ev, cancelled) => {
+      const d = drags.get(rootEl);
+      if (!d || ev.pointerId !== d.pointerId) return;
+      dropDrag(rootEl);
+      if (rootEl.hasPointerCapture(ev.pointerId)) rootEl.releasePointerCapture(ev.pointerId);
+      if (cancelled) {
+        // An interrupted drag restores exactly the interval set before it
+        // (null when the latest messages were showing).
+        d.actions.setTimeWindow(d.original);
+      } else if (d.next) {
+        d.actions.setTimeWindow(d.next);
+      }
     };
-    const stop = () => {
-      brush.removeEventListener("pointermove", move);
-      brush.removeEventListener("pointerup", up);
-      brush.removeEventListener("pointercancel", cancel);
-    };
-    // An interrupted drag (pointercancel) puts the window back unchanged.
-    const cancel = () => {
-      stop();
-      brush.setAttribute("x", baseX.toFixed(1));
-    };
-    const up = () => {
-      stop();
-      // Convert the dragged pixel offset back to a time range of the same
-      // compressed length.
-      const frac0 = (x - minX) / plotW;
-      const frac1 = (x + w - minX) / plotW;
-      actions.setFollowLive(false);
-      actions.setTimeWindow({ startMs: timeAt(axis, frac0 * axis.total), endMs: timeAt(axis, frac1 * axis.total) });
-    };
-    brush.addEventListener("pointermove", move);
-    brush.addEventListener("pointerup", up);
-    brush.addEventListener("pointercancel", cancel);
+    rootEl.addEventListener("pointerup", (ev) => end(ev, false));
+    rootEl.addEventListener("pointercancel", (ev) => end(ev, true));
+    // Losing the capture (another element took it, or the window lost
+    // focus) ends the drag the same way as a cancel. After a normal
+    // pointerup the drag is already gone, so this does nothing.
+    rootEl.addEventListener("lostpointercapture", (ev) => end(ev, true));
   }
 
   // timeAt inverts axis.pos by binary search over real time.
@@ -437,47 +996,119 @@
     return Math.round(hi);
   }
 
-  function drawAxis(svg, axis, w0, w1, mx, top, plotW, height) {
-    const y = top + AXIS_H - 6;
+  // drawAxis draws the quiet breaks and the clock labels at both window edges
+  // (the view's own start and end times) on the upper line of the axis row;
+  // the pin badge uses the lower line.
+  // Quiet labels go on their own row; fitQuietLabels sizes them once the
+  // chart is on the page and their real text widths can be measured.
+  function drawAxis(svg, rootEl, axis, win, w0, w1, mx, top, plotW, height) {
+    const y = top + AXIS_ROW - 4;
+    const quietY = top + 2 * AXIS_ROW - 4;
     for (const g of axis.gaps) {
       if (axis.pos(g.to) < w0 || axis.pos(g.from) > w1) continue;
       const xa = mx(g.from);
       const xb = mx(g.to);
-      svg.appendChild(el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) }));
-      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(y), "text-anchor": "middle" });
-      lbl.textContent = quietLabel(g.to - g.from);
+      const full = `${duration(g.to - g.from)} quiet`;
+      const band = el("rect", { class: "tl-quiet", x: xa.toFixed(1), y: String(top), width: Math.max(2, xb - xa).toFixed(1), height: String(height - top - PAD) });
+      hoverable(rootEl, band, `${full} · ${clock(g.from)}–${clock(g.to)}`, `quiet ${g.from}`);
+      svg.appendChild(band);
+      const lbl = el("text", { class: "tl-quiet-label", x: ((xa + xb) / 2).toFixed(1), y: String(quietY), "text-anchor": "middle" });
+      lbl.textContent = full;
+      lbl.dataset.short = duration(g.to - g.from);
       svg.appendChild(lbl);
     }
     // Clock labels at both window edges.
-    const left = el("text", { class: "tl-axis", x: String(LABEL_W + PAD), y: String(y) });
-    left.textContent = clock(timeAt(axis, w0));
-    const right = el("text", { class: "tl-axis", x: String(LABEL_W + PAD + plotW), y: String(y), "text-anchor": "end" });
-    right.textContent = clock(timeAt(axis, w1));
+    const left = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(y) });
+    left.textContent = clock(win.startMs);
+    const right = el("text", { class: "tl-axis", x: String(PLOT_X0 + plotW), y: String(y), "text-anchor": "end" });
+    right.textContent = clock(win.endMs);
     svg.appendChild(left);
     svg.appendChild(right);
+    // The gutter names how much real time the plot below shows.
+    const span = el("text", { class: "tl-label", x: String(PAD), y: String(y) });
+    span.textContent = `${duration(win.endMs - win.startMs)} window`;
+    svg.appendChild(span);
   }
 
+  // drawLane draws a lane line and its @handle label, clipped to the label
+  // gutter so a long handle never runs into the plot. Details go in the
+  // label's tooltip rather than on the line.
   function drawLane(svg, lane, y, width, colors) {
     svg.appendChild(el("line", {
       class: "tl-lane" + (lane.human ? " is-human" : "") + (lane.unregistered ? " is-left" : ""),
-      x1: String(LABEL_W), x2: String(width - PAD), y1: String(y), y2: String(y),
+      x1: String(LABEL_W), x2: String(width - PLOT_PAD), y1: String(y), y2: String(y),
     }));
-    const label = el("text", { class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""), x: String(PAD), y: String(y + 4) });
-    label.textContent = "@" + lane.handle + (lane.human ? " · human" : "") + (lane.unregistered ? " · not registered" : "");
+    // Identity mark from app.js's shared resolver, so the lane shows the same
+    // provider logo (or neutral initial) as the rest of the page, with no
+    // circle around it.
+    const id = window.ChorusUI.resolveIdentity(lane.handle, lane.model, lane.human);
+    const cx = PAD + AVATAR / 2;
+    if (id.iconUrl) {
+      svg.appendChild(el("image", {
+        // The provider class lets one shared CSS rule size each provider's
+        // mark (the OpenAI glyph fills less of its canvas than the others).
+        class: "tl-avatar-icon provider-" + id.provider, href: id.iconUrl,
+        x: String(cx - AVATAR / 2), y: String(y - AVATAR / 2),
+        width: String(AVATAR), height: String(AVATAR),
+      }));
+    } else {
+      // No logo (a person, or an agent without a recognized model): draw the
+      // same two-letter badge the participant cards use, a soft disc in the
+      // lane's color with the letters centered on the lane line.
+      const color = colors.get(lane.handle);
+      svg.appendChild(el("circle", {
+        class: "tl-avatar-disc", cx: String(cx), cy: String(y), r: String(AVATAR / 2),
+        fill: color, "fill-opacity": "0.14",
+      }));
+      const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y), "text-anchor": "middle" });
+      initial.textContent = lane.handle.slice(0, 2).toLowerCase();
+      initial.setAttribute("fill", color);
+      svg.appendChild(initial);
+    }
+    const label = el("text", {
+      class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""),
+      x: String(PAD + AVATAR + 6), y: String(y + 4), "clip-path": "url(#tl-gutter)",
+    });
+    label.textContent = "@" + lane.handle;
     label.setAttribute("fill", colors.get(lane.handle));
+    const title = el("title", {});
+    // The exact model the agent declared on join or who, when it has one.
+    title.textContent = "@" + lane.handle + (lane.model ? " · " + lane.model : "") +
+      (lane.human ? " · human" : "") +
+      (lane.unregistered ? " · no current registration (messages kept)" : "");
+    label.appendChild(title);
     svg.appendChild(label);
+  }
+
+  // gutterClip returns the clipPath (id tl-gutter) that keeps lane labels
+  // inside the label column of the given width.
+  function gutterClip(width) {
+    const clip = el("clipPath", { id: "tl-gutter" });
+    clip.appendChild(el("rect", { x: "0", y: "0", width: String(width), height: "100000" }));
+    return clip;
   }
 
   // drawPin places the single current-pin landmark at the pinned message's
   // stored time when that message is still retained in the channel.
-  function drawPin(svg, channel, mx, inWindow, laneTop, laneCount) {
+  // Clicking the line or its label inspects the pinned message.
+  function drawPin(svg, rootEl, channel, mx, inWindow, laneTop, laneCount, inspect) {
     if (!channel.pin) return;
     const msg = (channel.messages || []).find((m) => m.seq === channel.pin.seq);
     if (!msg || !inWindow(msg.sent_at_ms)) return;
     const x = mx(msg.sent_at_ms).toFixed(1);
-    svg.appendChild(el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) }));
-    const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 6), "text-anchor": "middle" });
+    const pick = (ev) => {
+      ev.stopPropagation();
+      inspect(channel.name, channel.pin.seq, "");
+    };
+    const pinText = `Pin #${channel.pin.seq} — ${firstLine(msg.text, 80)}`;
+    const line = el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) });
+    line.addEventListener("click", pick);
+    hoverable(rootEl, line, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
+    svg.appendChild(line);
+    const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
     lbl.textContent = `Pin #${channel.pin.seq}`;
+    lbl.addEventListener("click", pick);
+    hoverable(rootEl, lbl, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
     svg.appendChild(lbl);
   }
 
@@ -503,48 +1134,36 @@
     }
   }
 
-  // drawReadPositions shows where each member of the channel last read, sent,
-  // or joined. A bar on the member's own lane marks that message when it is
-  // retained and inside the view. Otherwise a short note at the edge of the
-  // lane says where it is instead of placing it at a time it does not have:
-  // earlier or later than the view, or older than the kept history.
-  function drawReadPositions(svg, channel, mx, inWindow, win, laneY, plotW) {
+  // drawReadPositions marks, on each member's own lane, the message that
+  // member last read, sent, or joined at in this channel, when that message
+  // is retained and inside the view. Positions elsewhere are not drawn; the
+  // participant cards report every member's read state. Clicking a mark
+  // inspects that member's position; the picked mark is drawn selected.
+  function drawReadPositions(svg, rootEl, channel, mx, inWindow, laneY, picked, inspect) {
     const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
     for (const p of channel.positions || []) {
       const y = laneY.get(p.handle);
-      if (y == null || p.read_seq === 0) continue;
       const m = bySeq.get(p.read_seq);
-      const summary = p.behind > 0
+      if (y == null || !m || !inWindow(m.sent_at_ms)) continue;
+      // A short bar centered on the member's own lane line, so it cannot be
+      // read as belonging to the lane above or below.
+      const x = mx(m.sent_at_ms);
+      const chosen = picked != null && picked.reader === p.handle && picked.target === channel.name && picked.seq === p.read_seq;
+      const mark = el("rect", {
+        class: "tl-read" + (p.behind > 0 ? " is-behind" : "") + (chosen ? " is-selected" : ""),
+        x: (x - 1.5).toFixed(1),
+        y: String(y - LANE_H / 2 + 6),
+        width: "3",
+        height: String(LANE_H - 12),
+        rx: "1.5",
+      });
+      hoverable(rootEl, mark, p.behind > 0
         ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
-        : `@${p.handle} is caught up to #${p.read_seq}`;
-      let mark;
-      if (m && inWindow(m.sent_at_ms)) {
-        // A short bar centered on the member's own lane line, so it cannot
-        // be read as belonging to the lane above or below.
-        const x = mx(m.sent_at_ms);
-        mark = el("rect", {
-          class: "tl-read" + (p.behind > 0 ? " is-behind" : ""),
-          x: (x - 1.5).toFixed(1),
-          y: String(y - LANE_H / 2 + 3),
-          width: "3",
-          height: String(LANE_H - 6),
-          rx: "1.5",
-        });
-      } else {
-        const later = m && m.sent_at_ms > win.endMs;
-        mark = el("text", {
-          class: "tl-read-edge" + (p.behind > 0 ? " is-behind" : ""),
-          x: String(later ? LABEL_W + PAD + plotW : LABEL_W + PAD),
-          y: String(y - 4),
-          "text-anchor": later ? "end" : "start",
-        });
-        mark.textContent = !m
-          ? `◂ read #${p.read_seq} (older than kept history)`
-          : later ? `read #${p.read_seq} ▸` : `◂ read #${p.read_seq}`;
-      }
-      const title = el("title", {});
-      title.textContent = summary;
-      mark.appendChild(title);
+        : `@${p.handle} is caught up to #${p.read_seq}`, `read ${itemKey(channel.name, p.read_seq, p.handle)}`, itemKey(channel.name, p.read_seq, p.handle));
+      mark.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        inspect(channel.name, p.read_seq, p.handle);
+      });
       svg.appendChild(mark);
     }
   }
@@ -557,20 +1176,28 @@
   function drawMentions(svg, e, view, mx, laneY, colors) {
     const x = mx(e.t).toFixed(1);
     const y0 = laneY.get(e.sender);
-    // The server matches mentions case-insensitively, so @api reaches both
-    // @API and @api when both exist; every lane whose handle matches gets a
-    // connector, except the sender's own.
-    // "all" is reserved: it never matches a handle by name and expands only
-    // to the members of the message's channel.
+    for (const handle of mentionTargets(e, view, laneY.keys())) {
+      const y1 = laneY.get(handle);
+      svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
+      svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
+    }
+  }
+
+  // mentionTargets returns the handles among candidates that message e
+  // literally @-mentions, other than its sender. The server matches mentions
+  // case-insensitively, so @api reaches both @API and @api when both exist.
+  // "all" is reserved: it never matches a handle by name and expands only to
+  // the members of the message's channel, as the server treats it.
+  function mentionTargets(e, view, candidates) {
     const mentioned = new Set(mentionedHandles(e.text));
     const broadcast = mentioned.delete("all");
     const channel = e.pair ? null : (view.channels || []).find((c) => c.name === e.target);
     const members = new Set(broadcast && channel ? (channel.positions || []).map((p) => p.handle) : []);
-    for (const [handle, y1] of laneY) {
-      if (handle === e.sender || !(mentioned.has(handle.toLowerCase()) || members.has(handle))) continue;
-      svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
-      svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
+    const out = [];
+    for (const h of candidates) {
+      if (h !== e.sender && (mentioned.has(h.toLowerCase()) || members.has(h))) out.push(h);
     }
+    return out;
   }
 
   // mentionedHandles returns the lowercased handles @-mentioned in text, in
@@ -587,17 +1214,19 @@
   // onKey implements the keyboard contract in the file comment. order holds
   // every retained message with a lane, oldest first, so earlier history is
   // reachable; when the new selection is outside the view, the view is
-  // centered on it.
-  function onKey(ev, order, isSelected, actions, state, axis, win, pan) {
-    if (ev.key === "f" || ev.key === "F") {
+  // centered on it. Moving the selection inspects in place; only Enter shows
+  // the message in the conversation.
+  function onKey(ev, order, isSelected, picked, actions, axis, win, pan) {
+    if (ev.key === "Escape") {
+      if (!picked) return;
       ev.preventDefault();
-      actions.setFollowLive(!state.followLive);
+      actions.selectMessage(null, 0, { reveal: false });
       return;
     }
-    const len = axis.pos(win.endMs) - axis.pos(win.startMs);
     if (ev.key === "PageUp" || ev.key === "PageDown") {
       ev.preventDefault();
-      pan(shiftWindow(axis, win, ev.key === "PageUp" ? -len : len));
+      const dur = win.endMs - win.startMs;
+      pan(placeWindow(axis, win, win.startMs + (ev.key === "PageUp" ? -dur : dur)));
       return;
     }
     if (order.length === 0) return;
@@ -608,20 +1237,21 @@
     else if (ev.key === "End") i = order.length - 1;
     else if (ev.key === "Enter" && i >= 0) {
       ev.preventDefault();
-      openEvent(order[i], actions);
+      actions.selectMessage(order[i].target, order[i].seq);
       return;
     } else return;
     ev.preventDefault();
     const e = order[i];
     if (e.t < win.startMs || e.t > win.endMs) pan(centerWindow(axis, win, e.t));
-    openEvent(e, actions);
+    actions.selectMessage(e.target, e.seq, { reveal: false });
   }
 
-  function quietLabel(ms) {
+  // duration writes a length of time as "45m", "2h", or "2h 15m".
+  function duration(ms) {
     const min = Math.round(ms / 60000);
-    if (min < 60) return `${min}m quiet`;
+    if (min < 60) return `${min}m`;
     const h = Math.floor(min / 60);
-    return `${h}h${min % 60 ? " " + (min % 60) + "m" : ""} quiet`;
+    return `${h}h${min % 60 ? " " + (min % 60) + "m" : ""}`;
   }
 
   function clock(ms) {
@@ -631,6 +1261,29 @@
   function firstLine(text, max) {
     const line = String(text || "").split("\n")[0];
     return line.length > max ? line.slice(0, max - 1) + "…" : line;
+  }
+
+  // preview returns the first two lines of text, at most 280 characters.
+  function preview(text) {
+    const lines = String(text || "").split("\n").slice(0, 2).join("\n");
+    return lines.length > 280 ? lines.slice(0, 279) + "…" : lines;
+  }
+
+  // html creates an HTML element with an optional class and text.
+  function html(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  // button creates a card button named by data-tl-card that runs onClick.
+  function button(className, text, name, onClick) {
+    const b = html("button", className, text);
+    b.type = "button";
+    b.dataset.tlCard = name;
+    b.addEventListener("click", onClick);
+    return b;
   }
 
   function el(name, attrs) {
@@ -650,5 +1303,28 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
-  window.ChorusTimeline = { render };
+  // placePreview places the open preview card and hover label for the page
+  // as it is now. A render already schedules this for the next animation
+  // frame, after app.js has drawn every surface and restored scroll; app.js
+  // calls placePreview directly after a change that moves the chart without
+  // a render (opening or closing an agent's details above it).
+  function placePreview(rootEl) {
+    if (finishers.has(rootEl)) {
+      runFinish(rootEl);
+      return;
+    }
+    const card = rootEl.querySelector(".tl-card");
+    const place = card && cardPlacers.get(card);
+    if (place) {
+      place();
+      if (card.contains(document.activeElement)) revealInCard(card, document.activeElement);
+    }
+    rehover(rootEl);
+  }
+
+  window.ChorusTimeline = {
+    render,
+    placePreview,
+    isDragging: (rootEl) => drags.has(rootEl),
+  };
 })();

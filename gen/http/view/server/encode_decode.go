@@ -173,6 +173,7 @@ func marshalViewAgentToAgentResponseBody(v *view.Agent) *AgentResponseBody {
 	res := &AgentResponseBody{
 		Handle:               v.Handle,
 		Role:                 v.Role,
+		Model:                v.Model,
 		LastSeenUnix:         v.LastSeenUnix,
 		WatchingOnThisServer: v.WatchingOnThisServer,
 	}
@@ -234,6 +235,7 @@ func marshalViewPinToPinResponseBody(v *view.Pin) *PinResponseBody {
 		Seq:    v.Seq,
 		Sender: v.Sender,
 		Text:   v.Text,
+		Human:  v.Human,
 	}
 
 	return res
@@ -261,6 +263,7 @@ func marshalViewMessageToMessageResponseBody(v *view.Message) *MessageResponseBo
 		Text:     v.Text,
 		ReplyTo:  v.ReplyTo,
 		SentAtMs: v.SentAtMs,
+		Human:    v.Human,
 	}
 
 	return res

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	goahttp "goa.design/goa/v3/http"
+	"goa.design/pulse/rmap"
 )
 
 type (
@@ -182,6 +184,7 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		nil,
 	)
 	viewSrv.Use(viewGuard(origins))
+	viewSrv.Use(uiBuildStamp)
 	genviewsrv.Mount(mux, viewSrv)
 	mountUI(mux)
 	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +256,7 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.directory(ctx, p.Agent, role)
+	out, err := sw.directory(ctx, p.Agent, role, p.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +286,7 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 	if p.Role != nil {
 		role = *p.Role
 	}
-	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Tail)
+	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Model, p.Tail)
 	if err != nil {
 		return nil, err
 	}
@@ -454,6 +457,38 @@ func (s *Service) openSwarms() []*swarmHandle {
 		handles = append(handles, h)
 	}
 	return handles
+}
+
+// swarmHasLiveAgent reports whether any of agents is live in swarm name
+// according to the swarm's latest committed state: registered within the
+// online window, or watching on this server. A swarm this server already has
+// open is synced first; any other swarm's state is read through a temporary
+// replicated map that is closed before returning, so a lookup never makes the
+// server keep a swarm open.
+func (s *Service) swarmHasLiveAgent(ctx context.Context, name string, agents []string) (bool, error) {
+	s.mu.Lock()
+	sw := s.swarms[name]
+	s.mu.Unlock()
+	if sw != nil {
+		if err := sw.state.Sync(ctx); err != nil {
+			return false, fmt.Errorf("sync swarm %q state map: %w", name, err)
+		}
+		return slices.ContainsFunc(agents, sw.isLiveAgent), nil
+	}
+	state, err := rmap.Join(ctx, swarmStateMapName(name), s.rdb)
+	if err != nil {
+		return false, fmt.Errorf("read swarm %q state map: %w", name, err)
+	}
+	defer state.Close()
+	now := s.clock()
+	return slices.ContainsFunc(agents, func(agent string) bool {
+		raw, ok := state.Get(agentMapKey(agent))
+		if !ok {
+			return false
+		}
+		_, live := parseLiveAgentRecord(now, s.onlineWindow, raw)
+		return live
+	}), nil
 }
 
 // checkAgentSwarmAvailable verifies that agent is not currently active in a

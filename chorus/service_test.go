@@ -106,11 +106,11 @@ var (
 	sharedRedisAddr string
 
 	// channelMsgRegex matches "#chan#14 @sender: text", "#chan#14↩#12 @sender: text",
-	// and pinned manifest lines "pin #chan#1 @sender: text".
-	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+): (.*)$`)
+	// "#chan#14 @sender (human): text", and pinned manifest lines "pin #chan#1 @sender: text".
+	channelMsgRegex = regexp.MustCompile(`^(?:pin )?(#[a-zA-Z0-9_-]+)#(\d+)(?:↩#(\d+))? @([a-zA-Z0-9_-]+)(?: \(human\))?: (.*)$`)
 
-	// dmMsgRegex matches "@sender->me#3: text" and "@sender->me#3↩#2: text".
-	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)->me#(\d+)(?:↩#(\d+))?: (.*)$`)
+	// dmMsgRegex matches "@sender->me#3: text", "@sender->me#3↩#2: text", and "@sender (human)->me#3: text".
+	dmMsgRegex = regexp.MustCompile(`^@([a-zA-Z0-9_-]+)(?: \(human\))?->me#(\d+)(?:↩#(\d+))?: (.*)$`)
 )
 
 // TestMain boots a shared local redis-server instance for all integration tests
@@ -1174,6 +1174,164 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	if freshSend.seq != 1 {
 		t.Fatalf("expected first message in re-created #auth to get seq #1, got #%d", freshSend.seq)
 	}
+
+	// 7. Participants that declared model "human" (such as from the browser UI)
+	// are annotated with "(human)" on channel and direct-message wire lines so
+	// agents immediately distinguish human steering from peer worker messages.
+	// The role is free text and never decides it.
+	arch.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+	})
+	human := c.newAgent(0, swarm, "raphael")
+	human.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"model":    "human",
+	})
+	impostor := c.newAgent(0, swarm, "worker")
+	impostor.call("join", map[string]any{
+		"channels": []string{"#ui-review"},
+		"role":     "human",
+	})
+	impostor.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "role text alone",
+	})
+	human.call("send", map[string]any{
+		"to":   "#ui-review",
+		"text": "Please prioritize accessibility and contrast",
+	})
+	human.call("send", map[string]any{
+		"to":   "@arch",
+		"text": "Can you check the header spacing?",
+	})
+	archRead := arch.call("read", map[string]any{})
+	if !strings.Contains(archRead, "#ui-review#2 @raphael (human): Please prioritize accessibility and contrast") {
+		t.Fatalf("expected channel message from model=human to carry (human) tag, got:\n%s", archRead)
+	}
+	if !strings.Contains(archRead, "@raphael (human)->me#1: Can you check the header spacing?") {
+		t.Fatalf("expected direct message from model=human to carry (human) tag, got:\n%s", archRead)
+	}
+	if !strings.Contains(archRead, "@worker: role text alone") {
+		t.Fatalf("expected role=human without model=human to stay untagged, got:\n%s", archRead)
+	}
+
+	// Directory and member lines mark a person from the declared model only,
+	// outside the role's parentheses: a person with a descriptive role still
+	// reads as human, and an agent whose role says "human" does not.
+	human.call("who", map[string]any{"model": "human", "role": "Reviewer"})
+	dir := arch.call("who", map[string]any{})
+	if !strings.Contains(dir, "\nhuman @raphael (Reviewer)\n") {
+		t.Fatalf("expected person listed as human with their role, got:\n%s", dir)
+	}
+	if !strings.Contains(dir, "\n@worker (human)\n") {
+		t.Fatalf("expected agent with role \"human\" listed as an agent, got:\n%s", dir)
+	}
+	members := human.call("join", map[string]any{"channels": []string{"#ui-review"}, "model": "human"})
+	if !strings.Contains(members, "human @raphael (Reviewer)") {
+		t.Fatalf("expected members line to keep the declared role and mark the person, got:\n%s", members)
+	}
+	parsedHuman := parseWireMessages(t, archRead)
+	if len(parsedHuman) != 3 {
+		t.Fatalf("expected parseWireMessages to parse all three messages, got %d", len(parsedHuman))
+	}
+}
+
+// TestDeclarationOnStaleServer verifies who on a server whose copy is out of
+// date, in both directions: re-declaring the model that copy already holds
+// still saves it over a different model stored through another server, and
+// omitting the role leaves the stored role untouched. The test changes the
+// stored values without the update notification so the copy stays stale.
+func TestDeclarationOnStaleServer(t *testing.T) {
+	cases := []struct {
+		// copyModel is declared normally, so the server's copy holds it.
+		copyModel string
+		// storedModel then replaces it in Redis only.
+		storedModel string
+		// human is the expected mark after re-declaring copyModel.
+		human bool
+	}{
+		{copyModel: "gpt-5-codex", storedModel: "human", human: false},
+		{copyModel: "human", storedModel: "gpt-5-codex", human: true},
+	}
+	for i, tc := range cases {
+		c := newTestCluster(t, 1, nil)
+		swarm := fmt.Sprintf("declare%d", i)
+		hashKey := "map:chorus:" + swarm + ":state:content"
+		ctx := context.Background()
+		reader := c.newAgent(0, swarm, "reader")
+		reader.call("join", map[string]any{"channels": []string{"#d"}})
+		agent := c.newAgent(0, swarm, "raphael")
+		agent.call("join", map[string]any{"channels": []string{"#d"}, "model": tc.copyModel, "role": "Old"})
+
+		if err := c.rdb.HSet(ctx, hashKey, "model:raphael", tc.storedModel, "role:raphael", "Lead").Err(); err != nil {
+			t.Fatalf("case %d: write stored declaration: %v", i, err)
+		}
+		if got := viewedModel(t, c.replicas[0].httpServer.URL, swarm, "raphael"); got != tc.copyModel {
+			t.Fatalf("case %d: server copy holds %q, want stale %q", i, got, tc.copyModel)
+		}
+
+		agent.call("who", map[string]any{"model": tc.copyModel})
+		agent.send("#d", "after redeclaring", 0)
+		got := reader.call("read", map[string]any{})
+		if strings.Contains(got, "@raphael (human): after redeclaring") != tc.human {
+			t.Fatalf("case %d: re-declared %q over stored %q, want human=%v, got:\n%s", i, tc.copyModel, tc.storedModel, tc.human, got)
+		}
+		stored, err := c.rdb.HMGet(ctx, hashKey, "model:raphael", "role:raphael").Result()
+		if err != nil {
+			t.Fatalf("case %d: read stored declaration: %v", i, err)
+		}
+		if stored[0] != tc.copyModel || stored[1] != "Lead" {
+			t.Fatalf("case %d: stored model/role = %v/%v, want %q/%q", i, stored[0], stored[1], tc.copyModel, "Lead")
+		}
+	}
+}
+
+// TestHumanMarkUsesLatestDeclaration verifies that a message is marked from
+// the sender's declared model as stored in Redis, even when the sending
+// server's copy has not received the latest declaration. The test saves a
+// declaration in Redis the way another server's write does (new value and
+// next revision) but never publishes it, so the server's copy stays behind,
+// in both directions.
+func TestHumanMarkUsesLatestDeclaration(t *testing.T) {
+	cases := []struct {
+		// from is declared normally, so the server's copy holds it.
+		from string
+		// to is saved in Redis only.
+		to    string
+		human bool
+	}{
+		{from: "gpt-5-codex", to: "human", human: true},
+		{from: "human", to: "gpt-5-codex", human: false},
+	}
+	for i, tc := range cases {
+		c := newTestCluster(t, 1, nil)
+		// Bound every call in this test: if Sync ever waited for a broadcast
+		// that never comes, the send fails here instead of hanging the suite.
+		c.replicas[0].httpServer.Client().Timeout = 5 * time.Second
+		swarm := fmt.Sprintf("syncmark%d", i)
+		hashKey := "map:chorus:" + swarm + ":state:content"
+		ctx := context.Background()
+		reader := c.newAgent(0, swarm, "reader")
+		reader.call("join", map[string]any{"channels": []string{"#s"}})
+		sender := c.newAgent(0, swarm, "raphael")
+		sender.call("join", map[string]any{"channels": []string{"#s"}, "model": tc.from})
+
+		if err := c.rdb.HSet(ctx, hashKey, "model:raphael", tc.to).Err(); err != nil {
+			t.Fatalf("case %d: save unpublished declaration: %v", i, err)
+		}
+		if err := c.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err(); err != nil {
+			t.Fatalf("case %d: commit unpublished revision: %v", i, err)
+		}
+		if got := viewedModel(t, c.replicas[0].httpServer.URL, swarm, "raphael"); got != tc.from {
+			t.Fatalf("case %d: server copy holds %q, want stale %q", i, got, tc.from)
+		}
+
+		sender.send("#s", "after switching", 0)
+		got := reader.call("read", map[string]any{})
+		if strings.Contains(got, "@raphael (human): after switching") != tc.human {
+			t.Fatalf("case %d: switched %q to %q, want human=%v, got:\n%s", i, tc.from, tc.to, tc.human, got)
+		}
+	}
 }
 
 // newTestCluster flushes the shared Redis database and starts numReplicas
@@ -1458,6 +1616,9 @@ func (a *emulatedAgent) withIdentity(toolName string, args map[string]any) map[s
 		merged["agent"] = a.handle
 	}
 	if toolName == "who" || toolName == "join" {
+		if _, ok := merged["model"]; !ok {
+			merged["model"] = "test-model"
+		}
 		if _, ok := merged["swarm"]; !ok {
 			swarm := a.swarm
 			if swarm == "" {

@@ -21,6 +21,11 @@ type (
 		Topic *string
 		// Optional role description to advertise for the calling agent.
 		Role *string
+		// The exact id of the model you are running, as your provider names it (e.g.
+		// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
+		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+		// dashboard uses 'human'.
+		Model string
 		// Maximum recent messages to return per joined channel.
 		Tail int
 	}
@@ -73,5 +78,10 @@ type (
 		Swarm string
 		// Optional role description to advertise to peers in this swarm.
 		Role *string
+		// The exact id of the model you are running, as your provider names it (e.g.
+		// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
+		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+		// dashboard uses 'human'.
+		Model string
 	}
 )
