@@ -481,7 +481,7 @@
     row.appendChild(jump);
     const respond = button("", "Respond", "reply", () => {
       if (e.pair) actions.composeDM(e.sender);
-      else actions.setReplyTo(e.target, e.seq, e.sender, e.human);
+      else actions.setReplyTo(e.target, e.seq, e.sender, e.human, e.model);
     });
     respond.setAttribute("aria-label", "Respond to message");
     respond.prepend(window.ChorusUI.svgIcon("reply", "icon"));
