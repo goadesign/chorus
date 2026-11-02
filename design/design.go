@@ -70,7 +70,7 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.", func() {
+			Attribute("swarm", String, "Swarm name: the user's or lead's swarm name if given; otherwise the basename of the git repository root (e.g. 'chorus'). Outside a git repository, ask the user.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 				Example("chorus")
 			})
@@ -108,7 +108,7 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm name: use the current git repository or workspace directory basename (e.g. 'chorus') unless the user specifies a swarm name.", func() {
+			Attribute("swarm", String, "Swarm name: the user's or lead's swarm name if given; otherwise the basename of the git repository root (e.g. 'chorus'). Outside a git repository, ask the user.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 				Example("chorus")
 			})

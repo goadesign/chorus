@@ -15,8 +15,9 @@ type (
 	JoinPayloadTransport struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent *string `json:"agent"`
-		// Swarm name: use the current git repository or workspace directory basename
-		// (e.g. 'chorus') unless the user specifies a swarm name.
+		// Swarm name: the user's or lead's swarm name if given; otherwise the basename
+		// of the git repository root (e.g. 'chorus'). Outside a git repository, ask
+		// the user.
 		Swarm *string `json:"swarm"`
 		// Channels to create or subscribe to (each prefixed with '#').
 		Channels []string `json:"channels"`
@@ -89,8 +90,9 @@ type (
 	WhoPayloadTransport struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent *string `json:"agent"`
-		// Swarm name: use the current git repository or workspace directory basename
-		// (e.g. 'chorus') unless the user specifies a swarm name.
+		// Swarm name: the user's or lead's swarm name if given; otherwise the basename
+		// of the git repository root (e.g. 'chorus'). Outside a git repository, ask
+		// the user.
 		Swarm *string `json:"swarm"`
 		// Optional role description to advertise to peers in this swarm.
 		Role *string `json:"role,omitempty"`
