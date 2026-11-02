@@ -119,6 +119,9 @@ type Message struct {
 	// Absent otherwise, including for messages sent before senders declared a
 	// model.
 	Human *bool
+	// The model the sender had declared when the message was sent, kept after the
+	// sender leaves. Absent for messages sent before Chorus recorded it.
+	Model *string
 }
 
 // The channel's active pinned message.
@@ -132,6 +135,9 @@ type Pin struct {
 	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool
+	// The model the sender had declared when the message was pinned. Absent for
+	// pins made before Chorus recorded it.
+	Model *string
 }
 
 // A channel member's read position.
@@ -443,6 +449,9 @@ type jsonMessageTransport struct {
 	// Absent otherwise, including for messages sent before senders declared a
 	// model.
 	Human *bool `json:"human,omitempty"`
+	// The model the sender had declared when the message was sent, kept after the
+	// sender leaves. Absent for messages sent before Chorus recorded it.
+	Model *string `json:"model,omitempty"`
 }
 
 // validatejsonMessageTransport checks decoded JSON before it becomes a service value.
@@ -486,6 +495,9 @@ type jsonPinTransport struct {
 	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool `json:"human,omitempty"`
+	// The model the sender had declared when the message was pinned. Absent for
+	// pins made before Chorus recorded it.
+	Model *string `json:"model,omitempty"`
 }
 
 // validatejsonPinTransport checks decoded JSON before it becomes a service value.
@@ -1138,6 +1150,7 @@ func EncodeMessage(in *Message) ([]byte, error) {
 			Sender: &in.Sender,
 			Text:   &in.Text,
 			Human:  in.Human,
+			Model:  in.Model,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1179,6 +1192,7 @@ func ValidateMessageValue(in *Message) error {
 			Sender: &in.Sender,
 			Text:   &in.Text,
 			Human:  in.Human,
+			Model:  in.Model,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1226,6 +1240,7 @@ func DecodeMessage(data []byte) (out *Message, err error) {
 			Text:     *body.Text,
 			SentAtMs: int64(*body.SentAtMs),
 			Human:    body.Human,
+			Model:    body.Model,
 		}
 		if body.ReplyTo != nil {
 			replyTo := int(*body.ReplyTo)
@@ -1249,6 +1264,7 @@ func EncodePin(in *Pin) ([]byte, error) {
 			Sender: &in.Sender,
 			Text:   &in.Text,
 			Human:  in.Human,
+			Model:  in.Model,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1284,6 +1300,7 @@ func ValidatePinValue(in *Pin) error {
 			Sender: &in.Sender,
 			Text:   &in.Text,
 			Human:  in.Human,
+			Model:  in.Model,
 		}
 		seq := channelIntTransport(in.Seq)
 		body.Seq = &seq
@@ -1324,6 +1341,7 @@ func DecodePin(data []byte) (out *Pin, err error) {
 			Sender: *body.Sender,
 			Text:   *body.Text,
 			Human:  body.Human,
+			Model:  body.Model,
 		}
 	}
 	return out, nil
@@ -1654,6 +1672,7 @@ func decodeMessageTransportToMessage(v *jsonMessageTransport) *Message {
 		Text:     *v.Text,
 		SentAtMs: int64(*v.SentAtMs),
 		Human:    v.Human,
+		Model:    v.Model,
 	}
 	if v.ReplyTo != nil {
 		replyTo := int(*v.ReplyTo)
@@ -1669,6 +1688,7 @@ func decodePinTransportToPin(v *jsonPinTransport) *Pin {
 		Sender: *v.Sender,
 		Text:   *v.Text,
 		Human:  v.Human,
+		Model:  v.Model,
 	}
 
 	return res
@@ -1759,6 +1779,7 @@ func encodeMessageToMessageTransport(v *Message) *jsonMessageTransport {
 		Sender: &v.Sender,
 		Text:   &v.Text,
 		Human:  v.Human,
+		Model:  v.Model,
 	}
 	seq := channelIntTransport(v.Seq)
 	res.Seq = &seq
@@ -1777,6 +1798,7 @@ func encodePinToPinTransport(v *Pin) *jsonPinTransport {
 		Sender: &v.Sender,
 		Text:   &v.Text,
 		Human:  v.Human,
+		Model:  v.Model,
 	}
 	seq := channelIntTransport(v.Seq)
 	res.Seq = &seq
@@ -2091,6 +2113,13 @@ func validateChannelJSONValue4(path string, value any, description string) error
 			); err != nil {
 				return err
 			}
+		case "model":
+			if err := validateAgentJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The model the sender had declared when the message was sent, kept after the sender leaves. Absent for messages sent before Chorus recorded it.",
+			); err != nil {
+				return err
+			}
 		case "reply_to":
 			if err := validateChannelJSONValue2(
 				generatedJSONChildPath(path, key, false),
@@ -2129,6 +2158,7 @@ func validateChannelJSONValue4(path string, value any, description string) error
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"human",
+				"model",
 				"reply_to",
 				"sender",
 				"sent_at_ms",
@@ -2167,6 +2197,13 @@ func validateChannelJSONValue5(path string, value any, description string) error
 			); err != nil {
 				return err
 			}
+		case "model":
+			if err := validateAgentJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The model the sender had declared when the message was pinned. Absent for pins made before Chorus recorded it.",
+			); err != nil {
+				return err
+			}
 		case "sender":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
@@ -2191,6 +2228,7 @@ func validateChannelJSONValue5(path string, value any, description string) error
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"human",
+				"model",
 				"sender",
 				"seq",
 				"text",
@@ -2804,6 +2842,11 @@ func checkChannelPinValue(in *Pin, field string, active map[any]bool) error {
 		if !utf8.ValidString(string(in.Text)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
 		}
+		if in.Model != nil {
+			if !utf8.ValidString(string(*in.Model)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "model", false))
+			}
+		}
 	}
 	return nil
 }
@@ -2842,6 +2885,11 @@ func checkChannelMessageValue(in *Message, field string, active map[any]bool) er
 		}
 		if !utf8.ValidString(string(in.Text)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		}
+		if in.Model != nil {
+			if !utf8.ValidString(string(*in.Model)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "model", false))
+			}
 		}
 	}
 	return nil

@@ -379,6 +379,7 @@ func unmarshalPinResponseBodyToViewPin(v *PinResponseBody) *view.Pin {
 		Sender: *v.Sender,
 		Text:   *v.Text,
 		Human:  v.Human,
+		Model:  v.Model,
 	}
 
 	return res
@@ -407,6 +408,7 @@ func unmarshalMessageResponseBodyToViewMessage(v *MessageResponseBody) *view.Mes
 		ReplyTo:  v.ReplyTo,
 		SentAtMs: *v.SentAtMs,
 		Human:    v.Human,
+		Model:    v.Model,
 	}
 
 	return res

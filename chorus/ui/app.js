@@ -25,7 +25,7 @@
     filterAgent: "",
     searchQuery: "",
     // A pending reply retains only its destination and original author facts.
-    replyTo: null, // null | { target, seq, sender, human }
+    replyTo: null, // null | { target, seq, sender, human, model }
     pollAbort: null,
   };
 
@@ -33,6 +33,7 @@
   const ICON_PATHS = {
     close: ["M18 6 6 18", "m6 6 12 12"],
     reply: ["M9 17 4 12l5-5", "M20 18v-2a4 4 0 0 0-4-4H4"],
+    jump: ["M5 12h14", "m12 5 7 7-7 7"],
     edit: ["M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z", "m15 5 4 4"],
     pin: ["M12 17v5", "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"],
     code: ["m16 18 6-6-6-6", "m8 6-6 6 6 6"],
@@ -86,33 +87,74 @@
     return palette[Math.abs(hash) % palette.length];
   }
 
+  // declaredModel returns the explicit model hint, or the participant's live
+  // registration model, or the model recorded on their newest retained message
+  // or channel pin.
+  function declaredModel(handle, model) {
+    if (model != null && model !== "") return String(model);
+    const reg = (state.view?.agents || []).find((a) => a.handle === handle);
+    if (reg?.model) return reg.model;
+    let latestMs = -1;
+    let latestModel = "";
+    for (const ch of state.view?.channels || []) {
+      for (const m of ch.messages || []) {
+        if (m.sender === handle && m.model && m.sent_at_ms >= latestMs) {
+          latestMs = m.sent_at_ms;
+          latestModel = m.model;
+        }
+      }
+      if (!latestModel && ch.pin?.sender === handle && ch.pin.model) {
+        latestModel = ch.pin.model;
+      }
+    }
+    for (const ib of state.view?.inboxes || []) {
+      for (const m of ib.messages || []) {
+        if (m.sender === handle && m.model && m.sent_at_ms >= latestMs) {
+          latestMs = m.sent_at_ms;
+          latestModel = m.model;
+        }
+      }
+    }
+    return latestModel;
+  }
+
+  // isKnownParticipant reports whether handle is a live agent, inbox recipient,
+  // or sender of a retained message in state.view (matching findParticipant).
+  function isKnownParticipant(handle) {
+    if (!handle || !state.view) return false;
+    if ((state.view.agents || []).some((a) => a.handle === handle)) return true;
+    if ((state.view.inboxes || []).some((ib) => ib.recipient === handle || (ib.messages || []).some((m) => m.sender === handle))) return true;
+    return (state.view.channels || []).some((ch) => (ch.messages || []).some((m) => m.sender === handle));
+  }
+
   // resolveIdentity maps a participant's declared model (or saved send-time
   // human provenance) to the official brand mark under /ui/brands/. It matches
-  // supported model identifier forms (including Bedrock ARNs and Vertex/provider
-  // paths) and never guesses from handle prefixes, roles, or arbitrary substrings.
+  // supported model identifier forms (including Bedrock ARNs, Vertex/provider
+  // paths, space-separated model names, and OpenAI sol-* codenames) and never
+  // guesses from handle prefixes, roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
+    const known = isKnownParticipant(raw);
     if (isHuman) {
-      return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null };
+      return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null, known };
     }
-    const reg = (state.view?.agents || []).find((a) => a.handle === raw);
-    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "");
+    const mod = declaredModel(raw, model);
     const m = mod.trim().toLowerCase();
     if (m === "human") {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null, known };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
-    const leaf = m.replace(cloudPrefix, "");
+    const leaf = m.replace(cloudPrefix, "").replace(/\s+/g, "-");
     if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg", known };
     }
-    if (/^(?:gpt-[a-z0-9._:@-]+|chatgpt-[a-z0-9._:@-]+|codex(?:$|-[a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
+    if (/^(?:gpt(?:$|[-._:@][a-z0-9._:@-]+)|chatgpt-[a-z0-9._:@-]+|codex(?:$|[-._:@][a-z0-9._:@-]+)|sol(?:$|[-._:@][a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg", known };
     }
     if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png" };
+      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png", known };
     }
-    return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null };
+    return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null, known };
   }
 
   // handleBadge renders @<handle> with an inline brand mark (no circular border
@@ -443,8 +485,8 @@
 
     // setReplyTo preserves the clicked message's saved author facts even after
     // that message leaves the retained snapshot or its handle changes models.
-    setReplyTo(channelName, seq, sender, human) {
-      state.replyTo = { target: channelName, seq, sender, human };
+    setReplyTo(channelName, seq, sender, human = false, model = "") {
+      state.replyTo = { target: channelName, seq, sender, human: Boolean(human), model: String(model || "") };
       if (channelName) {
         const sendTarget = document.getElementById("send-target");
         if (sendTarget) sendTarget.value = channelName;
@@ -465,6 +507,13 @@
       document.getElementById("send-text")?.focus();
     },
 
+    // inspectAgent opens or closes the #agent-details inspection popover for handle.
+    inspectAgent(handle, anchorEl = null) {
+      const clean = String(handle || "").replace(/^@/, "");
+      if (!clean) return;
+      window.ChorusStream?.inspectAgent?.(document.getElementById("agent-details"), clean, state, actions, anchorEl);
+    },
+
     // updatePin sends the editor's exact text to its original channel. It
     // never reads or resets the main message draft, target, or reply fields.
     async updatePin(swarm, channelName, text) {
@@ -481,13 +530,12 @@
     const reply = state.replyTo;
     if (!reply) {
       container.replaceChildren();
-      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       return;
     }
     container.replaceChildren(
       el("span", { className: "context-pill" },
         svgIcon("reply", "icon icon-sm"), `#${reply.seq}`,
-        " (", handleBadge(reply.sender, "", "", reply.human), ")",
+        " (", handleBadge(reply.sender, reply.model || "", "", reply.human), ")",
         el("button", {
           type: "button", className: "icon-btn icon-btn-sm", "aria-label": "Cancel reply", title: "Cancel reply",
           onClick: () => {
@@ -496,7 +544,6 @@
           },
         }, svgIcon("close")))
     );
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
   }
 
   function renderLiveStatus() {
@@ -519,6 +566,13 @@
     }
   }
 
+  function isScrolledPastTimeline(stageEl) {
+    if (!stageEl || stageEl.scrollTop <= 4) return false;
+    const timelineRoot = document.getElementById("timeline-root");
+    const threshold = timelineRoot && timelineRoot.offsetHeight > 0 ? timelineRoot.offsetHeight : 120;
+    return stageEl.scrollTop > threshold;
+  }
+
   function renderHeaderAndTabs() {
     const select = document.getElementById("swarm-select");
     const sendBtn = document.getElementById("btn-send");
@@ -526,7 +580,16 @@
     const allSwarms = new Set(state.swarms);
     if (state.activeSwarm) allSwarms.add(state.activeSwarm);
     if (allSwarms.size === 0) allSwarms.add("default");
-    select.replaceChildren(...Array.from(allSwarms).sort().map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+    const sortedSwarms = Array.from(allSwarms).sort();
+    const swarmListKey = sortedSwarms.join(",");
+    if (select) {
+      if (select.dataset.swarmListKey !== swarmListKey) {
+        select.dataset.swarmListKey = swarmListKey;
+        select.replaceChildren(...sortedSwarms.map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+      } else if (state.activeSwarm && select.value !== state.activeSwarm) {
+        select.value = state.activeSwarm;
+      }
+    }
     renderLiveStatus();
 
     const channels = state.view?.channels || [];
@@ -542,13 +605,24 @@
 
     const tabsEl = document.getElementById("target-tabs");
     if (!tabsEl) return;
+    const prevScrollLeft = tabsEl.scrollLeft;
+    const focusedTabKey = tabsEl.contains(document.activeElement)
+      ? (document.activeElement?.closest?.("[data-tab-key]")?.dataset?.tabKey
+        || document.activeElement?.dataset?.tabKey
+        || "")
+      : "";
     const tabNodes = [];
     for (const ch of channels) {
       const isActive = state.selectedTarget?.kind === "channel" && state.selectedTarget.name === ch.name;
       const msgs = ch.messages || [];
       const count = formatMessageCount(msgs.length, [ch]);
       tabNodes.push(
-        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }) },
+        el("button", {
+          type: "button",
+          className: `target-tab${isActive ? " active" : ""}`,
+          dataset: { tabKey: `channel:${ch.name}` },
+          onClick: () => actions.selectTarget({ kind: "channel", name: ch.name }),
+        },
           el("span", {}, ch.name),
           el("span", { className: "count-pill", title: count.title }, count.text))
       );
@@ -557,7 +631,12 @@
       const isActive = state.selectedTarget?.kind === "dm" && state.selectedTarget.pairKey === pair.pairKey;
       const count = formatMessageCount(pair.messages.length, [pair.inboxA, pair.inboxB]);
       tabNodes.push(
-        el("button", { type: "button", className: `target-tab${isActive ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }) },
+        el("button", {
+          type: "button",
+          className: `target-tab${isActive ? " active" : ""}`,
+          dataset: { tabKey: `dm:${pair.pairKey}` },
+          onClick: () => actions.selectTarget({ kind: "dm", pairKey: pair.pairKey, a: pair.a, b: pair.b }),
+        },
           el("span", {}, handleBadge(pair.a), " ↔ ", handleBadge(pair.b)),
           el("span", { className: "count-pill", title: count.title }, count.text))
       );
@@ -567,11 +646,21 @@
     for (const p of pairedDMs) totalMsgs += p.messages.length;
     const allCount = formatMessageCount(totalMsgs, [...channels, ...(state.view?.inboxes || [])]);
     tabNodes.push(
-      el("button", { type: "button", className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`, onClick: () => actions.selectTarget({ kind: "all" }) },
+      el("button", {
+        type: "button",
+        className: `target-tab${state.selectedTarget?.kind === "all" ? " active" : ""}`,
+        dataset: { tabKey: "all" },
+        onClick: () => actions.selectTarget({ kind: "all" }),
+      },
         el("span", {}, "All Activity"),
         el("span", { className: "count-pill", title: allCount.title }, allCount.text))
     );
     tabsEl.replaceChildren(...tabNodes);
+    tabsEl.scrollLeft = prevScrollLeft;
+    if (focusedTabKey) {
+      const nextTab = [...tabsEl.querySelectorAll("[data-tab-key]")].find((n) => n.dataset.tabKey === focusedTabKey);
+      nextTab?.focus?.({ preventScroll: true });
+    }
 
     renderActiveFiltersBar();
   }
@@ -593,7 +682,7 @@
     const filtersBar = document.getElementById("active-filters-bar");
     if (!filtersBar) return;
     const stageEl = document.getElementById("stage-container");
-    const scrolledDown = Boolean(stageEl && stageEl.scrollTop > 4);
+    const scrolledDown = isScrolledPastTimeline(stageEl);
     const chips = [];
     if (state.filterAgent) {
       chips.push(el("button", { type: "button", className: "chip-btn active", "aria-label": `Clear agent filter @${state.filterAgent}`, onClick: () => actions.setFilterAgent("") },
@@ -647,7 +736,6 @@
       window.ChorusStream.render(
         {
           scrollEl: stageEl,
-          agentStripEl: document.getElementById("agent-strip"),
           detailsEl: document.getElementById("agent-details"),
           pinEl: document.getElementById("pin-container"),
           mentionsEl: document.getElementById("mentions-container"),
@@ -691,8 +779,24 @@
     window.ChorusTimeline?.placePreview?.(timelineRoot);
   }
 
+  // loadedUIBuild is the embedded UI digest stamped into index.html when this
+  // tab loaded. When a later server response reports a different X-Chorus-UI-Build
+  // header, the quiet update banner is shown so the reader can reload manually
+  // without losing an open composer draft or timeline selection.
+  const loadedUIBuild = (document.querySelector('meta[name="chorus-ui-build"]')?.content || "").trim();
+
+  function checkUIBuild(res) {
+    if (!loadedUIBuild || !res?.headers) return;
+    const serverBuild = (res.headers.get("X-Chorus-UI-Build") || "").trim();
+    const banner = document.getElementById("update-banner");
+    if (banner && serverBuild) {
+      banner.hidden = serverBuild === loadedUIBuild;
+    }
+  }
+
   async function fetchSwarms() {
     const res = await fetch("/swarms", { headers: { Accept: "application/json" } });
+    checkUIBuild(res);
     if (!res.ok) throw new Error(`GET /swarms HTTP ${res.status}`);
     const data = await res.json();
     state.swarms = Array.isArray(data.swarms) ? data.swarms : [];
@@ -734,6 +838,7 @@
         }
         const url = `/swarms/${encodeURIComponent(swarmName)}/view?wait=${waitSec}`;
         const res = await fetch(url, { headers, signal: abortCtrl.signal });
+        checkUIBuild(res);
 
         if (res.status === 304) {
           state.lastSyncMs = Date.now();
@@ -840,12 +945,10 @@
       ...parts.map((p) => (p instanceof Node ? p : document.createTextNode(String(p))))
     );
     clearTimeout(setComposerFeedback._timer);
-    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
     if (parts.length > 0 && kind === "ok") {
       setComposerFeedback._timer = setTimeout(() => {
         wrap.className = "composer-feedback";
         txt.replaceChildren();
-        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
       }, 4000);
     }
   }
@@ -1017,6 +1120,9 @@
     });
 
     document.getElementById("btn-send").addEventListener("click", sendMessage);
+    document.getElementById("btn-reload-ui")?.addEventListener("click", () => {
+      window.location.reload();
+    });
 
     const stageEl = document.getElementById("stage-container");
     if (stageEl) {
@@ -1024,7 +1130,7 @@
         "scroll",
         () => {
           const hasJumpBtn = Boolean(document.getElementById("btn-jump-latest"));
-          const needsJumpBtn = Boolean(state.timeWindow) || stageEl.scrollTop > 4;
+          const needsJumpBtn = Boolean(state.timeWindow) || isScrolledPastTimeline(stageEl);
           if (hasJumpBtn !== needsJumpBtn) {
             renderActiveFiltersBar();
           }

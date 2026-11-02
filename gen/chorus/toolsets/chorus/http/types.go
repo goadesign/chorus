@@ -24,9 +24,10 @@ type (
 		Topic *string `json:"topic,omitempty"`
 		// Optional role description to advertise for the calling agent.
 		Role *string `json:"role,omitempty"`
-		// The exact id of the model you are running, as your provider names it (e.g.
-		// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
-		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+		// The exact model id or codename your runtime exposes for the model you are
+		// running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro',
+		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only
+		// a family name, pass that; never guess a version. A person joining from the
 		// dashboard uses 'human'.
 		Model *string `json:"model"`
 		// Maximum recent messages to return per joined channel.
@@ -93,9 +94,10 @@ type (
 		Swarm *string `json:"swarm"`
 		// Optional role description to advertise to peers in this swarm.
 		Role *string `json:"role,omitempty"`
-		// The exact id of the model you are running, as your provider names it (e.g.
-		// 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro',
-		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the
+		// The exact model id or codename your runtime exposes for the model you are
+		// running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro',
+		// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only
+		// a family name, pass that; never guess a version. A person joining from the
 		// dashboard uses 'human'.
 		Model *string `json:"model"`
 	}

@@ -735,6 +735,7 @@ func (s *swarmHandle) appendUnderSemaphore(
 		Seq:     seq,
 		Sender:  sender,
 		Human:   senderModel == humanModel,
+		Model:   senderModel,
 		Text:    text,
 		ReplyTo: replyTo,
 	})

@@ -5,9 +5,44 @@
 
   window.ChorusStream = Object.freeze({
     render,
+    inspectAgent,
+    renderMessageText,
     captureScrollSnapshot,
     restoreScrollSnapshot,
     resetDisclosures,
+  });
+
+  // Configured Marked lexer instance with GFM tables, strikethrough, autolinks,
+  // and line breaks enabled, and raw HTML/XML tag tokenizers disabled so raw
+  // tags (<script>, <details>, <agent>) remain inert plain text tokens.
+  const mdEngine = new globalThis.marked.Marked({
+    gfm: true,
+    breaks: true,
+    tokenizer: {
+      html() { return undefined; },
+      tag() { return undefined; },
+    },
+  });
+
+  // Single detached <textarea> used by decodeEntities to resolve standard
+  // case-sensitive HTML5 named character references without parsing tags.
+  const entityDecoder = document.createElement("textarea");
+  entityDecoder.innerHTML = "&amp;";
+  const hasNativeEntityDecoder = entityDecoder.value === "&";
+  const FALLBACK_ENTITIES = Object.freeze({
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: "\u00a0",
+    copy: "\u00a9",
+    eacute: "\u00e9",
+    Lt: "\u226a",
+    Gt: "\u226b",
+    ndash: "\u2013",
+    mdash: "\u2014",
+    hellip: "\u2026",
   });
 
   // Displayed previews belong only to this page visit and the retained messages
@@ -18,6 +53,15 @@
   // The observer is replaced after each render so removed rows are not retained.
   let previewObserver = null;
   document.addEventListener("visibilitychange", observeUnshownPreviews);
+  document.addEventListener("pointerdown", (ev) => {
+    const detailsEl = document.getElementById("agent-details");
+    if (!detailsEl || !detailsEl.dataset?.agent || detailsEl.hidden) return;
+    const t = ev.target;
+    if (!t || typeof t.closest !== "function") return;
+    if (detailsEl.contains(t)) return;
+    if (t.closest('.tl-lane-inspect, [data-tl-lane], [data-inspect-handle], [data-focus-key^="inspect:"]')) return;
+    closeAgentDrawer(detailsEl, false);
+  });
 
   // render updates the message surfaces without keeping another copy of swarm
   // data. Disclosure choices and reading position belong to the existing DOM.
@@ -29,11 +73,9 @@
       previewSwarm = state.activeSwarm;
     }
     if (state.view === null) {
-      for (const root of [els.agentStripEl, els.mentionsEl, els.detailsEl]) {
-        root.replaceChildren();
-      }
+      els.mentionsEl?.replaceChildren();
+      if (els.detailsEl) closeAgentDrawer(els.detailsEl, false);
       renderPin(els.pinEl, state, actions);
-      delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
       els.subtitleEl.textContent = "Loading swarm…";
       els.streamEl.replaceChildren(empty("Loading messages", "Connecting to the swarm…"));
@@ -50,10 +92,10 @@
       ? null
       : (els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl));
 
-    renderAgents(els, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderMessages(els.streamEl, visible, targetEntries, state, actions);
+    renderInspectedAgent(els.detailsEl, state, actions, entries);
 
     if (!els.preserveScroll) {
       restoreScrollSnapshot(els.streamEl, els.scrollEl, scrollSnapshot);
@@ -132,118 +174,182 @@
       .toLowerCase().includes(query);
   }
 
-  // renderAgents renders each active and historical participant card with their
-  // 32px circular avatar, role, watch state on this server, last call/heartbeat
-  // or latest message age, compact sequence-position gap badge, and latest message.
-  function renderAgents(els, state, actions, entries) {
-    const latest = new Map();
-    for (const entry of entries) latest.set(entry.message.sender, entry);
-    const activeChannel = state.selectedTarget?.kind === "channel"
-      ? state.view.channels.find((ch) => ch.name === state.selectedTarget.name)
-      : null;
-    const inboxByHandle = new Map((state.view.inboxes || []).map((ib) => [ib.recipient, ib]));
-
-    const registeredByHandle = new Map();
-    const participants = [];
-    for (const agent of state.view.agents || []) {
-      const item = { ...agent, registered: true };
-      registeredByHandle.set(agent.handle, item);
-      participants.push(item);
-    }
-    for (const [handle, entry] of latest) {
-      if (registeredByHandle.has(handle)) continue;
-      const seenChannels = [...new Set(entries.filter((e) => e.message.sender === handle && e.target.startsWith("#")).map((e) => e.target))];
-      participants.push({
-        handle, role: "", last_seen_unix: 0, last_message_ms: entry.message.sent_at_ms,
-        channels: seenChannels, watching_on_this_server: false, registered: false,
-      });
-    }
-    const participantByHandle = new Map(participants.map((p) => [p.handle, p]));
-
-    const nodes = participants.map((agent) => {
-      const entry = latest.get(agent.handle);
-      const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
-      const inbox = inboxByHandle.get(agent.handle) || null;
-      const human = Boolean(agent.registered && agent.model === "human");
-      const colorClass = senderColorClass(agent.handle, state, human);
-      const statusNode = agent.registered && agent.watching_on_this_server
-        ? element("span", "agent-status-inline is-watching", element("span", "presence-dot"), "Watching")
-        : element("span", "agent-status-inline",
-            agent.registered ? `Active ${age(agent.last_seen_unix * 1000)} ago` : (entry ? `Last post ${age(entry.message.sent_at_ms)} ago` : "Earlier"));
-      let modelNode = null;
-      if (agent.model && agent.model !== "human") {
-        modelNode = element("span", "agent-model-inline", agent.model);
-        modelNode.title = agent.model;
+  // findParticipant builds the live or historical participant record for handle
+  // from state.view.agents and retained message entries.
+  function findParticipant(handle, state, entries) {
+    const reg = (state.view?.agents || []).find((a) => a.handle === handle);
+    let latest = null;
+    let latestModel = reg?.model || "";
+    const seenChannels = new Set(reg?.channels || []);
+    for (const entry of entries) {
+      if (entry.message.sender === handle) {
+        latest = entry;
+        if (!reg?.model && entry.message.model) latestModel = entry.message.model;
+        if (entry.target.startsWith("#")) seenChannels.add(entry.target);
       }
-      const headerRow = element("span", "agent-card-top",
-        avatarNode(agent.handle, state, agent.registered ? agent.model || "" : "", human),
-        element("strong", `agent-name ${colorClass}`.trim(), `@${agent.handle}`),
-        ...(human ? [element("span", "human-pill", "Human")] : []),
-        ...(modelNode ? [modelNode] : []),
-        statusNode);
-
-      if (!human && pos && pos.behind > 0) {
-        const gapLabel = `Position gap ${pos.behind} · Read through #${pos.read_seq}${pos.mentioned ? " · @mentioned" : ""}`;
-        const pill = element("span", "agent-behind-pill", `${pos.behind} behind`);
-        pill.title = gapLabel;
-        pill.setAttribute("aria-label", gapLabel);
-        headerRow.append(pill);
-        if (pos.mentioned) {
-          const atDot = element("span", "agent-mention-dot", "@ mention");
-          atDot.title = `@mentioned after #${pos.read_seq}`;
-          atDot.setAttribute("aria-label", `@mentioned after #${pos.read_seq}`);
-          headerRow.append(atDot);
-        }
-      } else if (!human && inbox && inbox.behind > 0) {
-        const dmGapLabel = `DM position gap ${inbox.behind} · Read through #${inbox.read_seq}`;
-        const pill = element("span", "agent-behind-pill", `DM ${inbox.behind} behind`);
-        pill.title = dmGapLabel;
-        pill.setAttribute("aria-label", dmGapLabel);
-        headerRow.append(pill);
-      } else if (!human && pos && pos.read_seq > 0) {
-        const readLabel = `Read through #${pos.read_seq}`;
-        const pill = element("span", "agent-caught-up-pill", `read #${pos.read_seq}`);
-        pill.title = readLabel;
-        pill.setAttribute("aria-label", readLabel);
-        headerRow.append(pill);
-      }
-
-      const cardChildren = [headerRow];
-      if (agent.role && agent.role !== "human") cardChildren.push(element("span", "agent-role-inline", agent.role));
-      cardChildren.push(element("span", "agent-latest",
-        ...(entry ? [`${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): `, formattedPreview(entry.message.text)] : ["No messages available"])));
-      const button = element("button",
-        `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
-        ...cardChildren);
-      button.type = "button";
-      button.dataset.focusKey = `agent:${agent.handle}`;
-      button.setAttribute("aria-label", `Inspect @${agent.handle}`);
-      button.addEventListener("click", () => {
-        if (els.detailsEl.dataset.agent === agent.handle) {
-          delete els.detailsEl.dataset.agent;
-          els.detailsEl.replaceChildren();
-          window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-          return;
-        }
-        els.detailsEl.dataset.agent = agent.handle;
-        showAgent(els.detailsEl, agent, state, actions, entry);
-        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-      });
-      return button;
-    });
-
-    if (nodes.length === 0) {
-      nodes.push(element("p", "empty-inline", "No active agents in the last 5 minutes. Historical messages remain visible below."));
     }
-    replaceKeepingFocus(els.agentStripEl, nodes);
-    const inspected = els.detailsEl.dataset.agent;
-    if (inspected) {
-      const agent = participantByHandle.get(inspected);
-      if (agent) showAgent(els.detailsEl, agent, state, actions, latest.get(inspected));
-      else {
-        delete els.detailsEl.dataset.agent;
-        els.detailsEl.replaceChildren();
+    if (reg) {
+      return {
+        agent: { ...reg, model: reg.model || latestModel, registered: true },
+        latest,
+      };
+    }
+    if (!latest && !(state.view?.inboxes || []).some((ib) => ib.recipient === handle)) {
+      return null;
+    }
+    return {
+      agent: {
+        handle,
+        role: "",
+        model: latestModel,
+        last_seen_unix: 0,
+        last_message_ms: latest ? latest.message.sent_at_ms : 0,
+        channels: [...seenChannels],
+        watching_on_this_server: false,
+        registered: false,
+      },
+      latest,
+    };
+  }
+
+  // isAnchorVisible reports whether node is connected and not hidden inside a
+  // collapsed <details> disclosure body.
+  function isAnchorVisible(node) {
+    if (!node || !node.isConnected) return false;
+    let cur = node;
+    while (cur) {
+      const details = cur.parentElement?.closest?.("details");
+      if (!details) break;
+      const summary = [...(details.children || [])].find((c) => c.tagName === "SUMMARY");
+      if (!details.open && (!summary || !summary.contains(cur))) {
+        return false;
       }
+      cur = details;
+    }
+    return true;
+  }
+
+  // resolveAgentAnchor locates the live invoking button or timeline lane for
+  // the open #agent-details popover.
+  function resolveAgentAnchor(detailsEl) {
+    if (!detailsEl) return null;
+    const returnKey = detailsEl.dataset.returnFocusKey || "";
+    if (returnKey) {
+      const target = [...document.querySelectorAll("[data-focus-key]")]
+        .find((node) => node.dataset.focusKey === returnKey);
+      return isAnchorVisible(target) ? target : null;
+    }
+    const laneHandle = detailsEl.dataset.returnLane || "";
+    if (laneHandle) {
+      const laneNode = [...document.querySelectorAll("[data-tl-lane]")]
+        .find((node) => node.dataset.tlLane === laneHandle);
+      return isAnchorVisible(laneNode) ? laneNode : null;
+    }
+    return null;
+  }
+
+  // closeAgentDrawer clears and hides the #agent-details popover and restores
+  // keyboard focus to the control that opened it when restoreFocus is true.
+  function closeAgentDrawer(detailsEl, restoreFocus = true) {
+    if (!detailsEl) return;
+    const returnKey = detailsEl.dataset.returnFocusKey || "";
+    const returnLane = detailsEl.dataset.returnLane || "";
+    delete detailsEl.dataset.agent;
+    delete detailsEl.dataset.returnFocusKey;
+    delete detailsEl.dataset.returnLane;
+    detailsEl.removeAttribute("role");
+    detailsEl.removeAttribute("aria-label");
+    detailsEl.hidden = true;
+    detailsEl.style.left = "";
+    detailsEl.style.top = "";
+    detailsEl.style.maxHeight = "";
+    detailsEl.replaceChildren();
+    if (!restoreFocus) return;
+    if (returnKey) {
+      const target = [...document.querySelectorAll("[data-focus-key]")]
+        .find((node) => node.dataset.focusKey === returnKey);
+      if (isAnchorVisible(target)) {
+        target.focus?.({ preventScroll: true });
+        return;
+      }
+    }
+    if (returnLane) {
+      const laneNode = [...document.querySelectorAll("[data-tl-lane]")]
+        .find((node) => node.dataset.tlLane === returnLane);
+      if (isAnchorVisible(laneNode)) {
+        laneNode.focus?.({ preventScroll: true });
+        return;
+      }
+    }
+    document.querySelector("svg.tl")?.focus?.({ preventScroll: true });
+  }
+
+  // inspectAgent toggles or switches the anchored #agent-details popover for
+  // handle when the reader clicks a timeline lane, an Inspect action, or an
+  // inline @handle mention badge.
+  function inspectAgent(detailsEl, handle, state, actions, anchorEl = null) {
+    if (!detailsEl || !state?.view) return;
+    const clean = String(handle || "").replace(/^@/, "");
+    if (!clean) return;
+    const fromInsidePopover = Boolean(anchorEl && detailsEl.contains(anchorEl));
+    const active = document.activeElement;
+    const invoker = fromInsidePopover
+      ? null
+      : (anchorEl || (active && !detailsEl.contains(active) && (active.dataset?.focusKey || active.dataset?.tlLane) ? active : null));
+    const invokerKey = invoker?.dataset?.focusKey || "";
+    if (detailsEl.dataset.agent === clean) {
+      if (fromInsidePopover) return;
+      const sameFocusKey = invokerKey && detailsEl.dataset.returnFocusKey === invokerKey;
+      const sameLane = !invokerKey && !detailsEl.dataset.returnFocusKey;
+      if (sameFocusKey || sameLane) {
+        closeAgentDrawer(detailsEl, true);
+        return;
+      }
+    }
+    const found = findParticipant(clean, state, retainedMessages(state.view));
+    if (!found) return;
+    if (invokerKey) {
+      detailsEl.dataset.returnFocusKey = invokerKey;
+      delete detailsEl.dataset.returnLane;
+    } else if (!fromInsidePopover) {
+      detailsEl.dataset.returnLane = clean;
+      delete detailsEl.dataset.returnFocusKey;
+    } else if (!detailsEl.dataset.returnFocusKey) {
+      detailsEl.dataset.returnLane = clean;
+    }
+    detailsEl.dataset.agent = clean;
+    detailsEl.hidden = false;
+    detailsEl.setAttribute("role", "dialog");
+    detailsEl.setAttribute("aria-label", `Details for @${clean}`);
+    showAgent(detailsEl, found.agent, state, actions, found.latest);
+    const anchor = (invoker && invokerKey && isAnchorVisible(invoker))
+      ? invoker
+      : resolveAgentAnchor(detailsEl);
+    if (anchor) {
+      window.ChorusTimeline?.placeAnchored?.(detailsEl, anchor);
+    }
+    detailsEl.querySelector?.('[data-focus-key="close-agent"]')?.focus?.({ preventScroll: true });
+  }
+
+  // renderInspectedAgent refreshes #agent-details on live polls while an agent
+  // is being inspected, or closes it if the handle or its anchor is no longer
+  // present in the active view.
+  function renderInspectedAgent(detailsEl, state, actions, entries) {
+    const inspected = detailsEl?.dataset.agent;
+    if (!inspected) {
+      if (detailsEl) detailsEl.hidden = true;
+      return;
+    }
+    const found = findParticipant(inspected, state, entries);
+    const anchor = found ? resolveAgentAnchor(detailsEl) : null;
+    if (found && anchor) {
+      detailsEl.hidden = false;
+      detailsEl.setAttribute("role", "dialog");
+      detailsEl.setAttribute("aria-label", `Details for @${inspected}`);
+      showAgent(detailsEl, found.agent, state, actions, found.latest);
+      window.ChorusTimeline?.placeAnchored?.(detailsEl, anchor);
+    } else {
+      closeAgentDrawer(detailsEl, Boolean(detailsEl && detailsEl.contains(document.activeElement)));
     }
   }
 
@@ -251,11 +357,14 @@
   // declared model, per-channel and DM sequence-position gaps and read watermarks,
   // and 1-click actions to message, filter, or copy the chorus watch command.
   function showAgent(root, agent, state, actions, latest) {
-    const close = iconButton("close", "Close", "close-agent", () => {
-      delete root.dataset.agent;
-      root.replaceChildren();
-      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-    });
+    const closeDrawer = () => closeAgentDrawer(root, true);
+    root.onkeydown = (ev) => {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeDrawer();
+      }
+    };
+    const close = iconButton("close", "Close", "close-agent", closeDrawer);
 
     const posSummaries = [];
     for (const ch of state.view.channels || []) {
@@ -303,20 +412,34 @@
     });
     copyWatchBtn.setAttribute("aria-live", "polite");
 
-    const isHuman = Boolean(agent.registered && agent.model === "human");
+    const isHuman = agent.registered !== false
+      ? agent.model === "human"
+      : (agent.model === "human" || Boolean(latest && isFromHumanMessage(latest.message)));
+    const modelHint = agent.model || "";
     const nodes = [
       element("div", "details-heading",
         element("h3", "details-agent-title",
-          avatarNode(agent.handle, state, agent.registered !== false ? agent.model || "" : "", isHuman),
+          avatarNode(agent.handle, state, modelHint, isHuman),
           `@${agent.handle}`),
         close),
     ];
-    if (agent.role) nodes.push(element("p", "agent-role", agent.role));
+    if (agent.role) {
+      const roleP = element("p", "agent-role");
+      appendTextWithMentions(roleP, agent.role, {
+        prefix: `agent-role:${agent.handle}`,
+        count: 0,
+        onInspect: (h, el) => actions?.inspectAgent?.(h, el),
+      });
+      nodes.push(roleP);
+    }
     nodes.push(facts);
     if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): `, formattedPreview(latest.message.text)));
     nodes.push(element("div", "detail-actions",
-      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
-      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
+      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `dm:${agent.handle}`, () => {
+        closeAgentDrawer(root, false);
+        actions.composeDM(agent.handle);
+      }),
+      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
       copyWatchBtn));
     replaceKeepingFocus(root, nodes);
   }
@@ -360,14 +483,14 @@
     const summary = element("summary", "pin-summary",
       svgIcon("pin", "icon icon-sm pin-icon"),
       element("strong", "pin-title", `Pin #${pin.seq} · ${cleanPinHeadline(pin.text)}`),
-      element("span", "pin-meta", "by ", handleBadgeNode(pin.sender, state, "", pinFromHuman), ` · ${newer} newer`));
+      element("span", "pin-meta", "by ", handleBadgeNode(pin.sender, state, "", pinFromHuman, pin.model), ` · ${newer} newer`));
     summary.dataset.focusKey = `pin:${key}`;
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
 
     const clauses = pinClauses(pin.text);
     const raw = element("pre", "pin-raw-text", pin.text);
-    const structured = renderPinStructured(clauses);
+    const structured = renderPinStructured(clauses, key, actions);
     const rawMode = sameChannel && root.dataset.pinMode === "raw";
     raw.hidden = clauses.length > 0 && !rawMode;
     structured.hidden = clauses.length === 0 || rawMode;
@@ -391,6 +514,12 @@
       if (disclosure.open && root.contains(disclosure)) {
         root.dataset.updated = "false";
         disclosure.querySelector(".pin-updated")?.remove();
+      } else if (!disclosure.open) {
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...disclosure.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
       }
     });
     root.dataset.pinKey = key;
@@ -409,20 +538,20 @@
   // renderPinStructured separates the documented fields for reading. Owners
   // remain authored text: known handles receive badges without inferred work
   // assignments, removed punctuation, or a new ownership grammar.
-  function renderPinStructured(clauses) {
+  function renderPinStructured(clauses, pinKey = "pin", actions = null) {
     const container = element("div", "pin-structured");
-    for (const clause of clauses) {
+    clauses.forEach((clause, idx) => {
       const kind = clause.key.toLowerCase();
       if (kind === "goal") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Goal"),
-          element("div", "pin-goal-block", formattedText(clause.value))));
+          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal:${idx}`, actions))));
       } else if (kind === "owners") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Owners"),
-          element("div", "pin-owner-text", formattedText(clause.value))));
+          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners:${idx}`, actions))));
       } else if (kind === "verify") {
-        const copyBtn = actionButton("Copy command", `copy-verify:${clause.value}`, async (ev) => {
+        const copyBtn = actionButton("Copy command", `copy-verify:${idx}:${clause.value}`, async (ev) => {
           const btn = ev.currentTarget;
           try {
             await navigator.clipboard.writeText(clause.value);
@@ -436,7 +565,7 @@
           element("h3", "pin-section-label", "Verify"),
           element("div", "pin-verify-row", element("code", "pin-verify-code", clause.value), copyBtn)));
       }
-    }
+    });
     return container;
   }
 
@@ -523,11 +652,12 @@
     return form;
   }
 
-  // cleanPinHeadline removes only the display convention's Goal label; the
-  // original message remains unchanged in its text view and edit form.
+  // cleanPinHeadline removes the display convention's Goal label and inline
+  // markdown delimiters; the original message remains unchanged in its text
+  // view and edit form.
   function cleanPinHeadline(text) {
     const goal = pinClauses(text).find((clause) => clause.key.toLowerCase() === "goal");
-    return headline(goal?.value || text).replace(/^\s*Goal\s*:\s*/i, "");
+    return stripInlineMarkdown(headline(goal?.value || text)).replace(/^\s*Goal\s*:\s*/i, "");
   }
 
   // pinClauses recognizes complete labelled segments for display only. Any
@@ -563,7 +693,7 @@
     const last = mentions.at(-1);
     const mentionsSummary = element("summary", "mentions-summary",
       ...(last
-        ? ["Recent mentions: ", handleBadgeNode(last.entry.message.sender, state, "", isFromHumanMessage(last.entry.message)), " → ", handleBadgeNode(last.handle, state), ` (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`]
+        ? ["Recent mentions: ", handleBadgeNode(last.entry.message.sender, state, "", isFromHumanMessage(last.entry.message), last.entry.message.model), " → ", handleBadgeNode(last.handle, state), ` (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`]
         : ["No mentions in this view"]));
     mentionsSummary.dataset.focusKey = "mentions-summary";
     disclosure.append(mentionsSummary);
@@ -571,14 +701,14 @@
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
         actionButton(
-          [handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message)), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
+          [handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message), entry.message.model), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
           `mention:${coordinate(entry)}:${handle}`,
           () => actions.selectMessage(entry.target, entry.message.seq)
         ),
         element("span", "message-time", `${age(entry.message.sent_at_ms)} ago`));
       if (entry.target.startsWith("#")) {
         const reply = entries.find((item) => item.target === entry.target && item.message.reply_to === entry.message.seq);
-        if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state, "", isFromHumanMessage(reply.message))], `mention-reply:${coordinate(reply)}`,
+        if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state, "", isFromHumanMessage(reply.message), reply.message.model)], `mention-reply:${coordinate(reply)}`,
           () => actions.selectMessage(reply.target, reply.message.seq)));
       }
       list.append(row);
@@ -715,8 +845,9 @@
   }
 
   // revealSelectedMessage opens the selected message's disclosure (and parent
-  // thread disclosure) and scrolls it into view when shouldScroll is true
-  // (on explicit navigation such as "Show in conversation" or Enter).
+  // thread disclosure) and scrolls it into the center of the stage when
+  // shouldScroll is true (on explicit navigation such as "Jump", parent-quote
+  // click, or Enter).
   function revealSelectedMessage(root, state, shouldScroll) {
     if (!shouldScroll) return;
     const selected = state.selectedMessage;
@@ -729,7 +860,8 @@
         thread.open = true;
         thread.classList.remove("is-selected");
       }
-      node.scrollIntoView({ block: "nearest" });
+      const reducedMotion = Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+      node.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
     }
   }
 
@@ -850,7 +982,7 @@
     const senderColor = senderColorClass(last.message.sender, state, lastFromHuman);
     const metaRow = element("span", "message-meta",
       element("strong", `message-sender ${senderColor}`.trim(), `@${last.message.sender}`),
-      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman), ")")] : []),
+      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman, first.message.model), ")")] : []),
       ...(latestReplyToHuman ? [element("span", "human-response-pill", latestReplyToHuman)] : []),
       element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
       element("span", "thread-count-pill", `${entries.length} messages`),
@@ -859,9 +991,9 @@
     const contentCol = element("span", "row-main",
       metaRow,
       element("strong", "thread-title", formattedPreview(first.message.text)),
-      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman), ` #${last.message.seq}): `, formattedPreview(last.message.text)));
+      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman, last.message.model), ` #${last.message.seq}): `, formattedPreview(last.message.text)));
 
-    const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, "", lastFromHuman), contentCol);
+    const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, last.message.model || "", lastFromHuman), contentCol);
     summary.dataset.focusKey = key;
     preparePreviewCue(summary, first, last);
     details.append(summary);
@@ -869,6 +1001,11 @@
       if (!details.open) {
         for (const child of details.querySelectorAll("details[open]")) child.open = false;
         if (entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
       }
     });
 
@@ -890,7 +1027,7 @@
         const btn = element("button", "message-parent-quote",
           svgIcon("reply", "icon icon-xs"),
           element("span", "message-parent-label", "In reply to"),
-          handleBadgeNode(parent.message.sender, state, "", parentFromHuman),
+          handleBadgeNode(parent.message.sender, state, "", parentFromHuman, parent.message.model),
           element("span", "message-coordinate", `#${parent.message.seq}`),
           element("span", "message-parent-excerpt", formattedPreview(parent.message.text)));
         btn.type = "button";
@@ -953,35 +1090,45 @@
       element("span", "message-coordinate", `${entry.target}#${message.seq}`),
       element("time", "message-time", `${age(message.sent_at_ms)} ago · ${clock(message.sent_at_ms)}`));
 
-    const second = secondLine(message.text);
+    const secondPreview = formattedPreview(message.text, 1);
     const contentCol = element("span", "row-main",
       meta,
-      element("span", "message-headline", formattedPreview(message.text)),
-      ...(second ? [element("span", "message-supporting", formattedPreview(message.text, 1))] : []));
+      element("span", "message-headline", formattedPreview(message.text, 0)),
+      ...(secondPreview.hasChildNodes() ? [element("span", "message-supporting", secondPreview)] : []));
 
-    const summary = element("summary", "message-summary", avatarNode(message.sender, state, "", fromHuman), contentCol);
+    const summary = element("summary", "message-summary", avatarNode(message.sender, state, message.model || "", fromHuman), contentCol);
     summary.dataset.focusKey = `message:${key}`;
     preparePreviewCue(summary, entry);
     details.append(summary);
     details.addEventListener("toggle", () => {
-      if (!details.open && selected(entry, state)) actions.selectMessage(null, 0);
+      if (!details.open) {
+        if (selected(entry, state)) actions.selectMessage(null, 0);
+        const detailsEl = document.getElementById("agent-details");
+        if (detailsEl?.dataset?.returnFocusKey
+          && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
+          closeAgentDrawer(detailsEl, false);
+        }
+      }
     });
 
     const detailPane = element("div", "message-detail-pane");
     const parentQuote = renderParentContext(entry, state, actions, byTarget, key);
     if (parentQuote) detailPane.append(parentQuote);
-    detailPane.append(element("div", "message-body", formattedText(message.text)));
+    detailPane.append(element("div", "message-body", formattedText(message.text, `msg:${key}`, actions)));
 
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
       controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply:${key}`, () => {
-        actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman);
+        actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman, message.model);
       }));
     } else {
-      controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman)], `dm-reply:${key}`, () => {
+      controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `dm-reply:${key}`, () => {
         actions.composeDM(message.sender);
       }));
     }
+    controls.append(actionButton(["Inspect ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `inspect:${key}`, (ev) => {
+      actions.inspectAgent(message.sender, ev.currentTarget);
+    }));
     controls.append(copyTextButton(message.text, `copy:${key}`));
     detailPane.append(controls);
     details.append(detailPane);
@@ -1009,8 +1156,7 @@
     const label = String(handle || "?").slice(0, 2);
     const node = element("span", `agent-avatar ${colorClass}`.trim());
     node.setAttribute("aria-hidden", "true");
-    const modelHint = model || (state?.view?.agents || []).find((a) => a.handle === handle)?.model || "";
-    const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle, modelHint, isHuman) : null;
+    const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle, model, isHuman) : null;
     if (identity?.model && identity.model !== "human") node.title = `@${handle} · ${identity.model}`;
     if ((identity?.iconUrl || identity?.avatarUrl) && !isHuman) {
       node.dataset.provider = identity.provider || "";
@@ -1027,10 +1173,9 @@
     return node;
   }
 
-  function handleBadgeNode(handle, state, extraClass = "", isHuman = false) {
-    const modelHint = (state?.view?.agents || []).find((a) => a.handle === handle)?.model || "";
+  function handleBadgeNode(handle, state, extraClass = "", isHuman = false, model = "") {
     return window.ChorusUI?.handleBadge
-      ? window.ChorusUI.handleBadge(handle, modelHint, extraClass, isHuman)
+      ? window.ChorusUI.handleBadge(handle, model, extraClass, isHuman)
       : element("span", extraClass, `@${handle}`);
   }
 
@@ -1042,71 +1187,428 @@
     return [...result.values()];
   }
 
-  // formattedText decorates prose mentions while keeping inline and fenced
-  // code literal. The same code boundaries govern the collapsed previews.
-  function formattedText(text) {
-    const fragment = document.createDocumentFragment();
-    for (const part of textParts(text)) {
-      if (part.kind === "block") {
-        fragment.append(element("pre", "message-code", element("code", "", part.text.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\n/, ""))));
-      } else if (part.kind === "inline") {
-        fragment.append(element("code", "", part.text.slice(1, -1)));
-      } else {
-        appendTextWithMentions(fragment, part.text);
+  // decodeEntities resolves decimal, hexadecimal, and standard case-sensitive
+  // HTML5 named character references in non-code Markdown text, link URLs, and
+  // link titles.
+  function decodeEntities(str) {
+    return String(str || "").replace(
+      /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/g,
+      (match, dec, hex, named) => {
+        if (dec !== undefined || hex !== undefined) {
+          const cp = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex, 16);
+          if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "\uFFFD";
+          return String.fromCodePoint(cp);
+        }
+        if (hasNativeEntityDecoder) {
+          entityDecoder.innerHTML = match;
+          const val = entityDecoder.value;
+          return val === match || (named !== "semi" && val.endsWith(";")) ? match : val;
+        }
+        return Object.hasOwn(FALLBACK_ENTITIES, named) ? FALLBACK_ENTITIES[named] : match;
       }
-    }
+    );
+  }
+
+  // lexMarkdownBlocks tokenizes text into CommonMark/GFM block and inline
+  // tokens using the configured Marked lexer instance.
+  function lexMarkdownBlocks(text) {
+    const str = String(text || "").replace(/\r\n|\r/g, "\n");
+    if (!str.trim()) return [];
+    return mdEngine.lexer(str);
+  }
+
+  // formattedText renders a full message body with CommonMark/GFM blocks,
+  // clickable http/https links with stable focus keys, and clickable @handle
+  // mention badges.
+  function formattedText(text, focusPrefix = "md", actions = null) {
+    return renderMessageText(text, {
+      allowLinks: true,
+      focusPrefix,
+      onInspect: (h, el) => (actions || window.ChorusUI?.actions)?.inspectAgent?.(h, el),
+    });
+  }
+
+  // renderMessageText renders CommonMark/GFM Markdown into a DocumentFragment
+  // using direct DOM construction (createElement / createTextNode) without
+  // innerHTML. Raw HTML in messages stays inert text.
+  function renderMessageText(text, opts = {}) {
+    const allowLinks = opts.allowLinks !== false;
+    const linkCtx = {
+      prefix: opts.focusPrefix || "md",
+      count: 0,
+      onInspect: opts.onInspect || ((h, el) => window.ChorusUI?.actions?.inspectAgent?.(h, el)),
+    };
+    const fragment = document.createDocumentFragment();
+    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks, linkCtx);
     return fragment;
   }
 
-  // formattedPreview selects a nonblank source line without losing its code
-  // context. For example, an @mention inside a fence stays plain in line two.
+  // formattedPreview renders the lineNumber-th nonblank logical line from the
+  // Markdown lexer token tree so full messages and collapsed summaries share
+  // one grammar: lines inside fenced (```, ~~~, ````) or indented code blocks
+  // stay literal plain text, while prose lines render inline formatting
+  // (bold, italic, inline code, strikethrough, and @handle badges) without
+  // nested interactive <a> links.
   function formattedPreview(text, lineNumber = 0) {
     const fragment = document.createDocumentFragment();
-    let line = null;
-    let index = 0;
-    for (const match of text.matchAll(/[^\n]+/g)) {
-      if (!match[0].trim()) continue;
-      if (index++ === lineNumber) {
-        line = match;
-        break;
+    const lines = [];
+    collectPreviewLines(lexMarkdownBlocks(text), lines, lineNumber + 1);
+    const entry = lines[lineNumber];
+    if (!entry) {
+      if (lineNumber === 0) {
+        const fallback = String(text || "").trim();
+        fragment.append(fallback || "Empty message");
       }
-    }
-    if (!line) {
-      if (lineNumber === 0) fragment.append("Empty message");
       return fragment;
     }
-    const start = line.index + line[0].search(/\S/);
-    const end = line.index + line[0].trimEnd().length;
-    let offset = 0;
-    for (const part of textParts(text)) {
-      if (offset >= end) break;
-      const from = Math.max(0, start - offset);
-      const to = Math.min(part.text.length, end - offset);
-      if (from < to) {
-        const excerpt = part.text.slice(from, to);
-        if (part.kind === "text") appendTextWithMentions(fragment, excerpt);
-        else fragment.append(excerpt);
-      }
-      offset += part.text.length;
+    if (entry.kind === "code") {
+      fragment.append(document.createTextNode(entry.text));
+    } else {
+      renderInlineTokens(fragment, entry.tokens, false, null);
     }
     return fragment;
   }
 
-  // textParts preserves the original delimiters and offsets so all text
-  // surfaces can distinguish prose from code before decorating mentions.
-  function* textParts(text) {
-    for (const part of text.split(/(```[\s\S]*?```)/g)) {
-      if (part.startsWith("```") && part.endsWith("```")) {
-        yield { kind: "block", text: part };
-      } else {
-        for (const inline of part.split(/(`[^`\n]+`)/g)) {
-          yield { kind: inline.startsWith("`") && inline.endsWith("`") ? "inline" : "text", text: inline };
+  // renderBlockTokens walks CommonMark/GFM block tokens and appends DOM nodes
+  // to target.
+  function renderBlockTokens(target, tokens, allowLinks, linkCtx) {
+    for (const tok of tokens || []) {
+      if (tok.type === "space" || tok.type === "def") continue;
+      switch (tok.type) {
+        case "hr":
+          target.append(element("hr", "md-hr"));
+          break;
+        case "heading": {
+          const level = Math.min(4, Math.max(1, tok.depth || 1));
+          const h = element("h4", `md-heading md-h${level}`);
+          renderInlineTokens(h, tok.tokens || [], allowLinks, linkCtx);
+          target.append(h);
+          break;
+        }
+        case "code": {
+          const codeEl = element("code", "", tok.text || "");
+          if (tok.lang) codeEl.dataset.lang = tok.lang;
+          target.append(element("pre", "message-code", codeEl));
+          break;
+        }
+        case "blockquote": {
+          const bq = element("blockquote", "md-quote");
+          renderBlockTokens(bq, tok.tokens || [], allowLinks, linkCtx);
+          target.append(bq);
+          break;
+        }
+        case "list": {
+          const listEl = element(tok.ordered ? "ol" : "ul", "md-list");
+          if (tok.ordered && tok.start && tok.start !== 1) listEl.start = Number(tok.start);
+          for (const item of tok.items || []) {
+            listEl.append(renderListItem(item, allowLinks, linkCtx));
+          }
+          target.append(listEl);
+          break;
+        }
+        case "table": {
+          const wrap = element("div", "md-table-wrap");
+          const table = element("table", "md-table");
+          if (Array.isArray(tok.header) && tok.header.length > 0) {
+            const thead = document.createElement("thead");
+            const tr = document.createElement("tr");
+            for (const cell of tok.header) {
+              const th = document.createElement("th");
+              if (cell.align) th.style.textAlign = cell.align;
+              renderInlineTokens(th, cell.tokens || [], allowLinks, linkCtx);
+              tr.append(th);
+            }
+            thead.append(tr);
+            table.append(thead);
+          }
+          if (Array.isArray(tok.rows) && tok.rows.length > 0) {
+            const tbody = document.createElement("tbody");
+            for (const row of tok.rows) {
+              const tr = document.createElement("tr");
+              for (const cell of row) {
+                const td = document.createElement("td");
+                if (cell.align) td.style.textAlign = cell.align;
+                renderInlineTokens(td, cell.tokens || [], allowLinks, linkCtx);
+                tr.append(td);
+              }
+              tbody.append(tr);
+            }
+            table.append(tbody);
+          }
+          wrap.append(table);
+          target.append(wrap);
+          break;
+        }
+        case "paragraph":
+        case "text":
+        default: {
+          const p = element("p", "md-p");
+          if (Array.isArray(tok.tokens)) {
+            renderInlineTokens(p, tok.tokens, allowLinks, linkCtx);
+          } else {
+            appendTextWithMentions(p, decodeEntities(tok.raw ?? tok.text ?? ""), allowLinks ? linkCtx : null);
+          }
+          target.append(p);
+          break;
         }
       }
     }
   }
 
-  function appendTextWithMentions(target, text) {
+  // renderListItem builds a <li class="md-list-item"> from a Marked list_item
+  // token, grouping tight inline text and task checkboxes into .md-li-text
+  // while appending nested lists, code blocks, and loose paragraphs as blocks.
+  function renderListItem(item, allowLinks, linkCtx) {
+    const li = element("li", `md-list-item${item.task ? " is-task-item" : ""}`);
+    let inlineSpan = null;
+    for (const child of item.tokens || []) {
+      if (child.type === "space" || child.type === "def") continue;
+      if (child.type === "checkbox") {
+        if (!inlineSpan) {
+          inlineSpan = element("span", "md-li-text");
+          li.append(inlineSpan);
+        }
+        inlineSpan.append(taskCheckboxNode(child.checked));
+      } else if (child.type === "text") {
+        if (!inlineSpan) {
+          inlineSpan = element("span", "md-li-text");
+          li.append(inlineSpan);
+        } else if (inlineSpan.childNodes.length > 0 && inlineSpan.lastChild?.tagName !== "INPUT") {
+          inlineSpan.append(document.createElement("br"));
+        }
+        if (Array.isArray(child.tokens)) {
+          renderInlineTokens(inlineSpan, child.tokens, allowLinks, linkCtx);
+        } else {
+          appendTextWithMentions(inlineSpan, decodeEntities(child.raw ?? child.text ?? ""), allowLinks ? linkCtx : null);
+        }
+      } else {
+        inlineSpan = null;
+        renderBlockTokens(li, [child], allowLinks, linkCtx);
+      }
+    }
+    return li;
+  }
+
+  // taskCheckboxNode creates a disabled checkbox for GFM task list items.
+  function taskCheckboxNode(checked) {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "md-task-check";
+    input.disabled = true;
+    input.checked = Boolean(checked);
+    input.setAttribute("aria-label", checked ? "Completed task" : "Incomplete task");
+    return input;
+  }
+
+  // renderInlineTokens walks CommonMark/GFM inline tokens and appends DOM
+  // elements and text nodes to target. Non-code text, link URLs, and titles
+  // decode HTML character references before URL validation and text-node creation.
+  function renderInlineTokens(target, tokens, allowLinks, linkCtx) {
+    for (const tok of tokens || []) {
+      switch (tok.type) {
+        case "codespan":
+          target.append(element("code", "md-inline-code", tok.text ?? ""));
+          break;
+        case "strong": {
+          const strong = document.createElement("strong");
+          renderInlineTokens(strong, tok.tokens || [], allowLinks, linkCtx);
+          target.append(strong);
+          break;
+        }
+        case "em": {
+          const em = document.createElement("em");
+          renderInlineTokens(em, tok.tokens || [], allowLinks, linkCtx);
+          target.append(em);
+          break;
+        }
+        case "del": {
+          const del = document.createElement("del");
+          renderInlineTokens(del, tok.tokens || [], allowLinks, linkCtx);
+          target.append(del);
+          break;
+        }
+        case "br":
+          target.append(document.createElement("br"));
+          break;
+        case "checkbox":
+          target.append(taskCheckboxNode(tok.checked));
+          break;
+        case "escape":
+          target.append(document.createTextNode(tok.text ?? ""));
+          break;
+        case "link": {
+          const rawHref = tok.autolink ? (tok.href ?? "") : decodeEntities(tok.href ?? "");
+          const href = allowLinks ? safeHttpUrl(rawHref) : "";
+          if (href) {
+            const idx = linkCtx ? linkCtx.count++ : 0;
+            const a = element("a", "md-link");
+            a.href = href;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.dataset.focusKey = `${linkCtx?.prefix || "md"}:link:${idx}`;
+            if (tok.title) a.title = decodeEntities(tok.title);
+            if (tok.autolink) {
+              a.append(document.createTextNode(tok.text ?? href));
+            } else {
+              renderInlineTokens(a, tok.tokens || [], false, linkCtx);
+            }
+            target.append(a);
+          } else if (tok.autolink) {
+            target.append(document.createTextNode(tok.raw ?? tok.text ?? ""));
+          } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+            renderInlineTokens(target, tok.tokens, false, linkCtx);
+          } else {
+            appendTextWithMentions(target, decodeEntities(tok.text ?? ""), allowLinks ? linkCtx : null);
+          }
+          break;
+        }
+        case "image":
+          appendTextWithMentions(target, decodeEntities(tok.text || tok.raw || ""), allowLinks ? linkCtx : null);
+          break;
+        case "text":
+        default:
+          if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+            renderInlineTokens(target, tok.tokens, allowLinks, linkCtx);
+          } else {
+            appendTextWithMentions(target, decodeEntities(tok.raw ?? tok.text ?? ""), allowLinks ? linkCtx : null);
+          }
+          break;
+      }
+    }
+  }
+
+  // collectPreviewLines walks the block token tree and collects up to limit
+  // logical preview lines, keeping fenced/indented code block lines as literal
+  // code text and splitting prose inline tokens on line breaks.
+  function collectPreviewLines(tokens, out, limit) {
+    for (const tok of tokens || []) {
+      if (out.length >= limit) return;
+      switch (tok.type) {
+        case "space":
+        case "def":
+        case "hr":
+          break;
+        case "code":
+          for (const rawLine of String(tok.text || "").split("\n")) {
+            const trimmed = rawLine.trim();
+            if (!trimmed) continue;
+            out.push({ kind: "code", text: trimmed });
+            if (out.length >= limit) return;
+          }
+          break;
+        case "blockquote":
+          collectPreviewLines(tok.tokens || [], out, limit);
+          break;
+        case "list":
+          for (const item of tok.items || []) {
+            collectPreviewLines(item.tokens || [], out, limit);
+            if (out.length >= limit) return;
+          }
+          break;
+        case "table":
+          if (Array.isArray(tok.header) && tok.header.length > 0) {
+            out.push({ kind: "inline", tokens: joinTableCells(tok.header) });
+            if (out.length >= limit) return;
+          }
+          for (const row of tok.rows || []) {
+            out.push({ kind: "inline", tokens: joinTableCells(row) });
+            if (out.length >= limit) return;
+          }
+          break;
+        case "heading":
+        case "paragraph":
+        case "text":
+        default:
+          if (Array.isArray(tok.tokens)) {
+            for (const lineTokens of splitInlineByLine(tok.tokens)) {
+              out.push({ kind: "inline", tokens: lineTokens });
+              if (out.length >= limit) return;
+            }
+          } else if (tok.text && tok.text.trim()) {
+            out.push({ kind: "code", text: tok.text.trim() });
+          }
+          break;
+      }
+    }
+  }
+
+  // splitInlineByLine splits an array of inline tokens at { type: "br" }
+  // boundaries, preserving enclosing strong/em/del/link wrappers on each line.
+  function splitInlineByLine(tokens) {
+    const lines = [[]];
+    for (const tok of tokens || []) {
+      if (tok.type === "br") {
+        lines.push([]);
+      } else if (tok.type === "checkbox") {
+        continue;
+      } else if ((tok.type === "strong" || tok.type === "em" || tok.type === "del" || tok.type === "link") && Array.isArray(tok.tokens)) {
+        const subLines = splitInlineByLine(tok.tokens);
+        subLines.forEach((subTokens, idx) => {
+          if (idx > 0) lines.push([]);
+          if (subTokens.length > 0) {
+            lines.at(-1).push({ ...tok, tokens: subTokens });
+          }
+        });
+      } else {
+        lines.at(-1).push(tok);
+      }
+    }
+    return lines.filter((line) => line.length > 0);
+  }
+
+  // joinTableCells joins table row cells with a middle-dot separator for
+  // single-line collapsed previews.
+  function joinTableCells(cells) {
+    const out = [];
+    (cells || []).forEach((cell, idx) => {
+      if (idx > 0) out.push({ type: "text", raw: " · ", text: " · " });
+      out.push(...(cell.tokens || []));
+    });
+    return out;
+  }
+
+  // safeHttpUrl returns a normalized href when rawUrl parses as http: or https:,
+  // or "" for any other scheme or malformed URL.
+  function safeHttpUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  // stripInlineMarkdown extracts plain text from the first logical line of
+  // text using the Markdown lexer so collapsed pin headlines strip heading,
+  // quote, list, link, emphasis, and multi-backtick code delimiters cleanly.
+  function stripInlineMarkdown(text) {
+    const lines = [];
+    collectPreviewLines(lexMarkdownBlocks(text), lines, 1);
+    if (lines.length === 0) return String(text || "").trim();
+    const first = lines[0];
+    return first.kind === "code" ? first.text : inlineTokensToPlainText(first.tokens).trim();
+  }
+
+  // inlineTokensToPlainText flattens inline tokens to unescaped plain text.
+  function inlineTokensToPlainText(tokens) {
+    let out = "";
+    for (const tok of tokens || []) {
+      if (tok.type === "codespan" || tok.type === "escape") {
+        out += tok.text ?? "";
+      } else if (tok.type === "image") {
+        out += decodeEntities(tok.text ?? "");
+      } else if (tok.type === "br") {
+        out += " ";
+      } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
+        out += inlineTokensToPlainText(tok.tokens);
+      } else if (tok.type !== "checkbox") {
+        out += decodeEntities(tok.raw ?? tok.text ?? "");
+      }
+    }
+    return out;
+  }
+
+  function appendTextWithMentions(target, text, linkCtx = null) {
     const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g;
     let lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
@@ -1115,8 +1617,29 @@
       const matchStart = match.index + prefix.length;
       if (matchStart > lastIndex) target.append(document.createTextNode(text.slice(lastIndex, matchStart)));
       const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle) : null;
-      target.append(identity?.iconUrl && window.ChorusUI?.handleBadge
-        ? window.ChorusUI.handleBadge(handle) : document.createTextNode(`@${handle}`));
+      const isKnown = Boolean(identity?.iconUrl || identity?.known);
+      const badge = isKnown && window.ChorusUI?.handleBadge
+        ? window.ChorusUI.handleBadge(handle)
+        : document.createTextNode(`@${handle}`);
+      if (linkCtx && isKnown && handle.toLowerCase() !== "all") {
+        const idx = linkCtx.count++;
+        const btn = element("button", "handle-mention-btn", badge);
+        btn.type = "button";
+        btn.dataset.inspectHandle = handle;
+        btn.dataset.focusKey = `${linkCtx.prefix || "md"}:mention:${idx}`;
+        btn.setAttribute("aria-label", `Inspect @${handle}`);
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (typeof linkCtx.onInspect === "function") {
+            linkCtx.onInspect(handle, ev.currentTarget);
+          } else {
+            window.ChorusUI?.actions?.inspectAgent?.(handle, ev.currentTarget);
+          }
+        });
+        target.append(btn);
+      } else {
+        target.append(badge);
+      }
       lastIndex = matchStart + 1 + handle.length;
     }
     if (lastIndex < text.length) target.append(document.createTextNode(text.slice(lastIndex)));
@@ -1124,11 +1647,6 @@
 
   function headline(text) {
     return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || "Empty message";
-  }
-
-  function secondLine(text) {
-    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-    return lines.length > 1 ? lines[1] : "";
   }
 
   function coordinate(entry) { return `${entry.target}:${entry.message.seq}`; }

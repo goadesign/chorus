@@ -119,6 +119,17 @@
   // dismissed with Escape, which stays hidden until the pointer enters
   // another mark.
   const hoverState = new WeakMap();
+  // Per-mark builders of rich hover label content (see hoverable).
+  const hoverBuilders = new WeakMap();
+  // Popovers placed by placeAnchored and the control each is anchored to.
+  // A popover is forgotten once it leaves the page.
+  const anchors = new WeakMap();
+  const anchored = new Set();
+  // Whether the shared scroll and resize listeners for anchored popovers are
+  // installed, and the function that places every open popover again (also
+  // run by placePreview after the dashboard's final layout).
+  let anchoredInstalled = false;
+  let repositionAnchored = () => {};
   // Per-root work that must wait until the whole page has finished updating
   // after a render (placing the preview card and restoring the hover label).
   // It runs once, in the next animation frame, which comes after app.js has
@@ -156,11 +167,18 @@
     const focused = document.activeElement;
     const hadFocus = rootEl.contains(focused);
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
+    // A focused lane handle is found again by its data-tl-lane handle.
+    const laneFocus = hadFocus && focused.dataset ? focused.dataset.tlLane || "" : "";
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
-    // How far the open card's own contents were scrolled, and which item it
-    // described, so a redraw of the same card keeps showing the same part of
-    // it while a newly picked item starts at its top.
+    // A focused link inside the card's message is found again by its
+    // position among the message's links; the same message always renders
+    // the same links in the same order.
+    const oldBody = rootEl.querySelector(".tl-card .tl-card-body");
+    const linkFocus = oldBody && oldBody.contains(focused) ? [...oldBody.querySelectorAll("a[href]")].indexOf(focused) : -1;
+    // How far the open card was scrolled, and which item it described, so a
+    // redraw of the same card keeps showing the same part while a newly
+    // picked item starts at its top.
     const oldCard = rootEl.querySelector(".tl-card");
     const cardScroll = oldCard ? oldCard.scrollTop : 0;
     const oldCardKey = oldCard ? oldCard.dataset.tlItem : "";
@@ -241,7 +259,7 @@
     lanes.forEach((lane, i) => {
       const y = laneTop + i * LANE_H + LANE_H / 2;
       laneY.set(lane.handle, y);
-      drawLane(svg, lane, y, width, colors);
+      drawLane(svg, lane, y, width, colors, actions);
     });
     if (lanes.length === 0) {
       // Centered on the whole chart: with no lanes the label gutter is empty,
@@ -271,7 +289,16 @@
         r: String(isSel ? DOT_R_SELECTED : DOT_R),
         fill: colors.get(e.sender),
       });
-      hoverable(rootEl, dot, `@${e.sender} · ${e.target} #${e.seq} · ${clock(e.t)} — ${firstLine(e.text, 80)}`, `dot ${itemKey(e.target, e.seq, "")}`, itemKey(e.target, e.seq, ""));
+      hoverable(rootEl, dot, `@${e.sender} in ${place(e)} at ${clock(e.t)}: ${firstLine(e.text, 120)}`,
+        `dot ${itemKey(e.target, e.seq, "")}`, itemKey(e.target, e.seq, ""), () => {
+          const meta = html("div", "tl-hover-meta");
+          meta.appendChild(senderMark(e, lanes.find((l) => l.handle === e.sender)));
+          if (!sel || sel.kind === "all" || !sameTarget(sel, e)) meta.appendChild(html("span", "", place(e)));
+          meta.appendChild(html("span", "", clock(e.t)));
+          const notes = messageNotes(e, channel, order, axis);
+          if (notes.length) meta.appendChild(html("span", "", notes.join(" · ")));
+          return hoverContent(meta, e.text);
+        });
       dot.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(e.target, e.seq, "");
@@ -305,7 +332,7 @@
       const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
       if (y != null) {
         const lane = lanes.find((l) => l.handle === found.e.sender);
-        card = buildCard(found, lane, channel, actions, svg);
+        card = buildCard(found, lane, channel, axis, sel, order, actions, svg);
         cardPlacers.set(card, () => placeCard(rootEl, svg, card, mx(found.e.t), y, width));
         // The card is added now, so focus can return to it, but stays
         // transparent until the page has finished updating and it is placed.
@@ -337,10 +364,19 @@
       if (jumpHadFocus) jump.focus({ preventScroll: true });
     }
     // Restoring focus must not scroll the page under the reader. A focused
-    // card button keeps focus when its card is drawn again; when the card is
-    // gone, focus returns to the chart.
-    const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
+    // card button, a focused link in the same card's message, or a focused
+    // lane handle keeps focus when drawn again; when it is gone (the card
+    // closed, or the lane left the range), focus returns to the chart.
+    const sameCard = card != null && card.dataset.tlItem === oldCardKey;
+    const cardTarget = !card ? null
+      : cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`)
+        : linkFocus >= 0 && sameCard ? card.querySelectorAll(".tl-card-body a[href]")[linkFocus] || null
+          : null;
+    const laneTarget = laneFocus
+      ? [...svg.querySelectorAll("[data-tl-lane]")].find((n) => n.dataset.tlLane === laneFocus) || null
+      : null;
     if (cardTarget) cardTarget.focus({ preventScroll: true });
+    else if (laneTarget) laneTarget.focus({ preventScroll: true });
     else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
@@ -365,7 +401,7 @@
   // (Chorus handles are case-sensitive, so @API and @api are different
   // agents), sorted, joined by ↔.
   function toEvent(target, m) {
-    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true };
+    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true, model: m.model || "" };
     if (target.startsWith("@")) {
       const [a, b] = [m.sender, target.slice(1)].sort();
       e.pair = { a, b, pairKey: a + "↔" + b };
@@ -398,12 +434,15 @@
     return reader ? { e, reader } : { e };
   }
 
-  // buildCard returns the preview card for found (see cardAnchor): who sent
-  // the message, where and when, why it is picked (pin, reply, or a reader's
-  // position), the start of its text, and the Show in conversation, Reply,
-  // and close controls. Each control carries a data-tl-card name so focus can
-  // return to it after the next render.
-  function buildCard(found, lane, channel, actions, svg) {
+  // buildCard returns the preview card for found (see cardAnchor). Its
+  // header shows who sent the message (the provider logo, or the handle when
+  // there is no logo), where it lives when that is not the open tab, and
+  // when. A note says why it matters: whose read position this is, that it
+  // is pinned, whom it replies to, or the quiet break it ends. The body is
+  // the whole message, formatted by the reading pane's renderer and
+  // scrolling inside the card when long. Jump opens it in the conversation
+  // and Respond starts a reply; Escape or the close button closes the card.
+  function buildCard(found, lane, channel, axis, sel, order, actions, svg) {
     const e = found.e;
     const close = () => {
       actions.selectMessage(null, 0, { reveal: false });
@@ -414,7 +453,7 @@
     // a newly picked one.
     card.dataset.tlItem = itemKey(e.target, e.seq, found.reader ? found.reader.handle : "");
     card.setAttribute("role", "group");
-    card.setAttribute("aria-label", `Preview of ${e.target} #${e.seq} from @${e.sender}`);
+    card.setAttribute("aria-label", `Message from @${e.sender} in ${place(e)} at ${clock(e.t)}`);
     card.style.touchAction = "pan-y";
     card.addEventListener("keydown", (ev) => {
       if (ev.key !== "Escape") return;
@@ -424,17 +463,8 @@
 
     const header = html("div", "tl-card-header");
     const meta = html("div", "tl-card-meta");
-    // The badge follows the message's own human flag. The sender's current
-    // model only picks the provider logo for a message not sent as a person,
-    // and never marks such a message as a person's when the sender has since
-    // declared "human".
-    const current = lane ? lane.model : "";
-    const nowHuman = current.trim().toLowerCase() === "human";
-    const ui = window.ChorusUI;
-    meta.appendChild(ui && ui.handleBadge && (e.human || !nowHuman)
-      ? ui.handleBadge(e.sender, e.human ? "" : current, "", e.human)
-      : html("span", "", "@" + e.sender));
-    meta.appendChild(html("span", "", e.pair ? `${e.pair.a} ↔ ${e.pair.b} #${e.seq}` : `${e.target} #${e.seq}`));
+    meta.appendChild(senderMark(e, lane));
+    if (!sel || sel.kind === "all" || !sameTarget(sel, e)) meta.appendChild(html("span", "", place(e)));
     meta.appendChild(html("span", "", clock(e.t)));
     header.appendChild(meta);
     const closeBtn = button("tl-card-close", "×", "close", close);
@@ -442,25 +472,98 @@
     header.appendChild(closeBtn);
     card.appendChild(header);
 
-    const notes = [];
+    const notes = messageNotes(e, channel, order, axis);
     if (found.reader) {
       const p = found.reader;
-      notes.push(p.behind > 0 ? `@${p.handle} read through #${p.read_seq} · ${p.behind} behind` : `@${p.handle} is caught up`);
+      notes.unshift(`@${p.handle} · ${p.behind > 0 ? `${p.behind} behind${p.mentioned ? " · @-mentioned" : ""}` : "caught up"}`);
     }
-    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
-    if (e.replyTo) notes.push(`↩ #${e.replyTo}`);
     if (notes.length) card.appendChild(html("span", "tl-card-note", notes.join(" · ")));
 
-    card.appendChild(html("p", "tl-card-body", preview(e.text)));
+    const body = html("div", "tl-card-body");
+    body.appendChild(window.ChorusStream.renderMessageText(e.text, { allowLinks: true }));
+    card.appendChild(body);
 
     const row = html("div", "tl-card-actions");
-    row.appendChild(button("", "Show in conversation", "show", () => actions.selectMessage(e.target, e.seq)));
-    row.appendChild(button("", "Reply", "reply", () => {
+    const jump = button("", "Jump", "show", () => actions.selectMessage(e.target, e.seq));
+    jump.setAttribute("aria-label", "Jump to message in conversation");
+    jump.prepend(window.ChorusUI.svgIcon("jump", "icon"));
+    row.appendChild(jump);
+    const respond = button("", "Respond", "reply", () => {
       if (e.pair) actions.composeDM(e.sender);
-      else actions.setReplyTo(e.target, e.seq, e.sender, e.human);
-    }));
+      else actions.setReplyTo(e.target, e.seq, e.sender, e.human, e.model);
+    });
+    respond.setAttribute("aria-label", "Respond to message");
+    respond.prepend(window.ChorusUI.svgIcon("reply", "icon"));
+    row.appendChild(respond);
     card.appendChild(row);
     return card;
+  }
+
+  // senderMark returns who sent message e: the provider logo, titled with
+  // the handle, when the sender's model has one, else the handle badge. A
+  // message that saved its sender's model uses that, so it keeps its logo
+  // after the sender leaves. An older message follows its own human flag:
+  // the sender's current model only picks the logo for a message not sent as
+  // a person, and never marks such a message as a person's when the sender
+  // has since declared "human".
+  function senderMark(e, lane) {
+    if (e.model) return agentMark(e.sender, e.model, e.human);
+    const current = lane ? lane.model : "";
+    const nowHuman = current.trim().toLowerCase() === "human";
+    if (!e.human && nowHuman) return html("span", "", "@" + e.sender);
+    return agentMark(e.sender, e.human ? "" : current, e.human);
+  }
+
+  // agentMark returns an agent's provider logo, titled with its handle and
+  // model, when its model has one, else its handle badge. An empty model
+  // means the agent's current registration.
+  function agentMark(handle, model, human) {
+    const ui = window.ChorusUI;
+    const id = ui.resolveIdentity(handle, model, human);
+    if (!id.iconUrl) return ui.handleBadge(handle, model, "", human);
+    const img = document.createElement("img");
+    img.className = `inline-brand-logo provider-${id.provider}`;
+    img.src = id.iconUrl;
+    img.alt = `@${handle}`;
+    img.title = `@${handle}${id.model ? " · " + id.model : ""}`;
+    return img;
+  }
+
+  // hoverContent returns a hover label's content: its meta row, then the
+  // start of text formatted by the reading pane's renderer, without links
+  // (the label is not a place to click; the card is). The stylesheet limits
+  // the text to three lines.
+  function hoverContent(meta, text) {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(meta);
+    const body = html("div", "tl-hover-body");
+    body.appendChild(window.ChorusStream.renderMessageText(text, { allowLinks: false }));
+    frag.appendChild(body);
+    return frag;
+  }
+
+  // place names where message e lives: its channel, or the two sides of a
+  // direct-message conversation.
+  function place(e) {
+    return e.pair ? `@${e.pair.a} ↔ @${e.pair.b}` : e.target;
+  }
+
+  // messageNotes returns the short facts that make message e matter: pinned
+  // in the selected channel, whom it replies to (when that message is still
+  // in the view; direct-message reply numbers are ambiguous, so those say
+  // only that it is a reply), and the quiet break it ends, which keyboard
+  // and touch users can reach here even when the axis has no room to label
+  // the break.
+  function messageNotes(e, channel, order, axis) {
+    const notes = [];
+    if (channel && channel.name === e.target && channel.pin && channel.pin.seq === e.seq) notes.push("Pinned");
+    if (e.replyTo) {
+      const parent = e.pair ? null : order.find((x) => x.target === e.target && x.seq === e.replyTo);
+      notes.push(parent ? `↩ Reply to @${parent.sender}` : "↩ Reply");
+    }
+    const quiet = axis.gaps.find((g) => g.to === e.t);
+    if (quiet) notes.push(`After ${duration(quiet.to - quiet.from)} quiet`);
+    return notes;
   }
 
   // placeCard adds card to rootEl and positions it next to the anchor at
@@ -469,50 +572,134 @@
   // it hides as few other messages as possible. The space that counts is
   // the visible part of the scrolling area that holds the chart (between the
   // page header and the composer), not the browser window: the card opens
-  // above when below does not fit there and above does, and otherwise on the
-  // side with more room, limited to that room so its buttons stay visible
-  // (the card scrolls inside). The card always stays inside that visible
-  // area. The card floats above the page, so placing it never moves layout.
+  // above when below does not fit there and above does, and otherwise uses
+  // the whole visible area (see below); the card is its own (and only) scrolling
+  // area, so a long message or a tight space scrolls inside the card. The
+  // card always stays inside that visible area. The card floats above the
+  // page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
-    // Placing again (after the message area scrolled) measures the card at
-    // its natural height, then restores how far its contents were scrolled.
-    const inner = card.scrollTop;
-    card.style.visibility = "hidden";
-    card.style.maxHeight = "";
-    card.style.overflowY = "";
     if (!card.isConnected) rootEl.appendChild(card);
-    const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
-    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
     // The browser scales the chart to the section's width, so chart
     // coordinates are converted to the pixels actually on screen.
     const scale = svgBox.width / width;
     const ax = svgBox.left + x * scale;
     const ay = svgBox.top + y * scale;
+    fitInArea(card, { left: ax, right: ax, top: ay, bottom: ay }, (DOT_R_SELECTED + 6) * scale,
+      svgBox.left, svgBox.right, "center");
+  }
+
+  // fitInArea positions card (absolutely, in its offset parent) next to the
+  // anchor box, given in viewport pixels, inside the visible part of the
+  // scrolling message area (between the page header and the composer). It
+  // opens below the anchor when it fits there, else above; otherwise it uses
+  // the whole visible area, covering the anchor if it must, centred on it as
+  // far as the area allows, and scrolls inside, so it is never squeezed into
+  // a thin strip. Horizontally it stays within [minX, maxX], centred on the
+  // anchor or aligned with its left edge. The card always stays wholly inside
+  // the visible area, even when the anchor has scrolled out of view, and it
+  // keeps how far it was scrolled. The card floats above the page, so placing
+  // it never moves layout.
+  function fitInArea(card, box, gap, minX, maxX, align) {
+    const inner = card.scrollTop;
+    card.style.visibility = "hidden";
+    card.style.maxHeight = "";
+    const area = (document.getElementById("stage-container") || document.documentElement).getBoundingClientRect();
     const cw = card.offsetWidth;
     const ch = card.offsetHeight;
-    const gap = (DOT_R_SELECTED + 6) * scale;
     // Room counts only the visible part of the area on each side of the
-    // point, so a point scrolled out of view never claims space nobody sees.
-    const roomBelow = area.bottom - PAD - Math.max(ay + gap, area.top + PAD);
-    const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
-    const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
-    const room = below ? roomBelow : roomAbove;
-    if (ch > room) {
-      card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
-      card.style.overflowY = "auto";
+    // anchor, so an anchor scrolled out of view never claims space nobody sees.
+    const roomBelow = area.bottom - PAD - Math.max(box.bottom + gap, area.top + PAD);
+    const roomAbove = Math.min(box.top - gap, area.bottom - PAD) - (area.top + PAD);
+    const whole = area.bottom - area.top - 2 * PAD;
+    const side = ch <= roomBelow ? "below" : ch <= roomAbove ? "above" : "";
+    const shown = side ? ch : Math.max(0, Math.min(ch, whole));
+    if (shown < ch) {
+      // max-height excludes padding and border unless the card sizes its
+      // border box, so subtract them to make the drawn card exactly fit.
+      const cs = getComputedStyle(card);
+      const frame = cs.boxSizing === "border-box" ? 0
+        : parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) +
+          parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+      card.style.maxHeight = `${Math.max(0, Math.floor(shown - frame))}px`;
     }
-    const shown = Math.min(ch, Math.max(0, room));
-    const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
-    // When the point itself has scrolled out of the visible area, the card
-    // still stays wholly inside it, so its controls remain reachable.
-    const wanted = below ? ay + gap : ay - gap - shown;
+    const lo = Math.max(minX, area.left) + PAD;
+    const hi = Math.min(maxX, area.right) - PAD;
+    const preferred = align === "center" ? (box.left + box.right) / 2 - cw / 2 : box.left;
+    const left = Math.max(lo, Math.min(preferred, hi - cw));
+    const mid = (box.top + box.bottom) / 2;
+    const wanted = side === "below" ? box.bottom + gap : side === "above" ? box.top - gap - shown : mid - shown / 2;
     const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
-    // Absolute positions are measured from the section's padding edge.
-    card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
-    card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
+    // Absolute positions are measured from the offset parent's padding edge,
+    // plus its own scroll when that parent is itself a scrolling area.
+    const parent = card.offsetParent || document.documentElement;
+    const pbox = parent.getBoundingClientRect();
+    card.style.left = `${Math.round(left - pbox.left - parent.clientLeft + parent.scrollLeft)}px`;
+    card.style.top = `${Math.round(top - pbox.top - parent.clientTop + parent.scrollTop)}px`;
     card.style.visibility = "";
     card.scrollTop = inner;
+  }
+
+  // placeAnchored positions card (an absolutely positioned popover, such as
+  // the agent details) next to anchorEl, the control that opened it, with
+  // the same rules as the timeline's preview card (see fitInArea), left
+  // aligned with the anchor. It keeps the card placed while the message area
+  // scrolls or changes size and after redraws replace the anchor (found again
+  // by its data-tl-lane or data-focus-key), until the card leaves the page.
+  // On a narrow screen (under 600px) it clears its own placement, so the
+  // stylesheet can present the card as a bottom sheet instead.
+  function placeAnchored(card, anchorEl) {
+    anchors.set(card, anchorEl);
+    trackAnchored(card);
+    applyAnchored(card);
+  }
+
+  // applyAnchored places one tracked popover against its anchor's current
+  // position, or clears its placement on a narrow screen.
+  function applyAnchored(card) {
+    if (window.matchMedia("(max-width: 599px)").matches) {
+      card.style.left = card.style.top = card.style.maxHeight = "";
+      return;
+    }
+    let anchor = anchors.get(card);
+    if (!anchor.isConnected) {
+      anchor = findAnchor(anchor) || anchor;
+      anchors.set(card, anchor);
+    }
+    const area = (document.getElementById("stage-container") || document.documentElement).getBoundingClientRect();
+    fitInArea(card, anchor.getBoundingClientRect(), 6, area.left, area.right, "start");
+  }
+
+  // findAnchor finds the control that replaced a removed anchor after a
+  // redraw, by the stable identity both kinds of anchor carry.
+  function findAnchor(old) {
+    const lane = old.dataset ? old.dataset.tlLane : "";
+    if (lane) return [...document.querySelectorAll("[data-tl-lane]")].find((n) => n.dataset.tlLane === lane) || null;
+    const key = old.dataset ? old.dataset.focusKey : "";
+    if (key) return [...document.querySelectorAll("[data-focus-key]")].find((n) => n.dataset.focusKey === key) || null;
+    return null;
+  }
+
+  // trackAnchored keeps an open popover placed: it is placed again whenever
+  // the message area scrolls or resizes, the window resizes, or the page
+  // redraws, and forgotten once it leaves the page.
+  function trackAnchored(card) {
+    anchored.add(card);
+    if (anchoredInstalled) return;
+    anchoredInstalled = true;
+    const again = () => {
+      for (const c of anchored) {
+        if (c.isConnected && !c.hidden) applyAnchored(c);
+        else anchored.delete(c);
+      }
+    };
+    const area = document.getElementById("stage-container");
+    if (area) {
+      area.addEventListener("scroll", again, { passive: true });
+      if (typeof ResizeObserver === "function") new ResizeObserver(again).observe(area);
+    }
+    window.addEventListener("resize", again);
+    repositionAnchored = again;
   }
 
   // fitQuietLabels sizes the quiet labels by their rendered width, left to
@@ -582,13 +769,13 @@
     }, { passive: true });
   }
 
-  // revealInCard scrolls only the card's own contents so that control is
-  // fully visible; the page and the message area do not move.
+  // revealInCard scrolls only the card so that a focused control inside it
+  // is fully visible; the page and the message area do not move.
   function revealInCard(card, control) {
-    const top = control.offsetTop;
-    const bottom = top + control.offsetHeight;
-    if (top < card.scrollTop) card.scrollTop = top;
-    else if (bottom > card.scrollTop + card.clientHeight) card.scrollTop = bottom - card.clientHeight;
+    const view = card.getBoundingClientRect();
+    const box = control.getBoundingClientRect();
+    if (box.top < view.top) card.scrollTop -= view.top - box.top;
+    else if (box.bottom > view.bottom) card.scrollTop += box.bottom - view.bottom;
   }
 
   // hoverable gives node an instant hover label with text, and the same text
@@ -599,9 +786,12 @@
   // becoming "4 behind"), so a label is restored or kept dismissed by mark,
   // not by wording. item names what the mark opens (see itemKey), so no
   // label covers a mark whose preview card is already open; quiet breaks
-  // open nothing and pass "".
-  function hoverable(rootEl, node, text, key, item = "") {
+  // open nothing and pass "". build, when given, returns the label's visible
+  // content (logo, place, time, and formatted text); text is then only the
+  // mark's accessible name.
+  function hoverable(rootEl, node, text, key, item = "", build = null) {
     node.setAttribute("aria-label", text);
+    if (build) hoverBuilders.set(node, build);
     node.dataset.tlHover = text;
     node.dataset.tlHoverKey = key;
     node.dataset.tlItem = item;
@@ -615,7 +805,18 @@
       st.dismissed = "";
       showHover(rootEl, node);
     });
-    node.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    node.addEventListener("pointerleave", (ev) => {
+      // A finger lifting off the screen also counts as leaving; a label shown
+      // by a tap stays until the next tap elsewhere.
+      if (ev.pointerType !== "touch") hideHoverSoon(rootEl);
+    });
+    // A quiet break opens no card, so on a touch screen a tap shows its
+    // label instead; the next tap anywhere else hides it.
+    if (!item) {
+      node.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType === "touch") showHover(rootEl, node);
+      });
+    }
   }
 
   // itemKey names an inspected item: its target, message number, and the
@@ -644,9 +845,20 @@
     rootEl.addEventListener("pointermove", (ev) => {
       if (ev.pointerType !== "touch") pointers.set(rootEl, { x: ev.clientX, y: ev.clientY });
     });
-    rootEl.addEventListener("pointerleave", () => {
+    rootEl.addEventListener("pointerleave", (ev) => {
+      // A finger lifting off counts as leaving too; a tapped label stays
+      // until the next tap elsewhere.
+      if (ev.pointerType === "touch") return;
       pointers.delete(rootEl);
       hideHover(rootEl);
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "touch" && !rootEl.contains(ev.target)) hideHover(rootEl);
+    });
+    rootEl.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "touch") return;
+      const key = ev.target && ev.target.dataset ? ev.target.dataset.tlHoverKey || "" : "";
+      if (!key.startsWith("quiet ")) hideHover(rootEl);
     });
     document.addEventListener("keydown", (ev) => {
       if (ev.key !== "Escape") return;
@@ -696,7 +908,9 @@
     const open = rootEl.querySelector(".tl-card");
     if (open && node.dataset.tlItem && open.dataset.tlItem === node.dataset.tlItem) return;
     hoverOf(rootEl).shown = node.dataset.tlHoverKey;
-    const label = html("div", "tl-hover", node.dataset.tlHover);
+    const build = hoverBuilders.get(node);
+    const label = html("div", "tl-hover", build ? null : node.dataset.tlHover);
+    if (build) label.appendChild(build());
     label.setAttribute("aria-hidden", "true");
     label.style.visibility = "hidden";
     label.addEventListener("pointerenter", () => {
@@ -704,7 +918,9 @@
       clearTimeout(st.timer);
       st.leaving = false;
     });
-    label.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    label.addEventListener("pointerleave", (ev) => {
+      if (ev.pointerType !== "touch") hideHoverSoon(rootEl);
+    });
     rootEl.appendChild(label);
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = rootEl.querySelector("svg.tl").getBoundingClientRect();
@@ -772,13 +988,23 @@
       const a = live.get(h);
       return {
         handle: h,
-        model: a ? a.model || "" : "",
+        model: a ? a.model || "" : lastModel(events, h),
         human: !!(a && a.model === "human"),
         unregistered: !a,
       };
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
+  }
+
+  // lastModel returns the model saved on handle's most recent message, or ""
+  // when none of its messages recorded one. It names a sender that is no
+  // longer registered.
+  function lastModel(events, handle) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].sender === handle && events[i].model) return events[i].model;
+    }
+    return "";
   }
 
   // colorMap gives every registered agent and every retained sender a color
@@ -1032,8 +1258,9 @@
 
   // drawLane draws a lane line and its @handle label, clipped to the label
   // gutter so a long handle never runs into the plot. Details go in the
-  // label's tooltip rather than on the line.
-  function drawLane(svg, lane, y, width, colors) {
+  // label's tooltip rather than on the line, and clicking the handle or its
+  // mark (or pressing Enter on the handle) opens the agent's details.
+  function drawLane(svg, lane, y, width, colors, actions) {
     svg.appendChild(el("line", {
       class: "tl-lane" + (lane.human ? " is-human" : "") + (lane.unregistered ? " is-left" : ""),
       x1: String(LABEL_W), x2: String(width - PLOT_PAD), y1: String(y), y2: String(y),
@@ -1043,8 +1270,10 @@
     // circle around it.
     const id = window.ChorusUI.resolveIdentity(lane.handle, lane.model, lane.human);
     const cx = PAD + AVATAR / 2;
+    // The lane's identity mark: its logo, or its badge disc and letters.
+    const marks = [];
     if (id.iconUrl) {
-      svg.appendChild(el("image", {
+      marks.push(el("image", {
         // The provider class lets one shared CSS rule size each provider's
         // mark (the OpenAI glyph fills less of its canvas than the others).
         class: "tl-avatar-icon provider-" + id.provider, href: id.iconUrl,
@@ -1056,15 +1285,16 @@
       // same two-letter badge the participant cards use, a soft disc in the
       // lane's color with the letters centered on the lane line.
       const color = colors.get(lane.handle);
-      svg.appendChild(el("circle", {
+      marks.push(el("circle", {
         class: "tl-avatar-disc", cx: String(cx), cy: String(y), r: String(AVATAR / 2),
         fill: color, "fill-opacity": "0.14",
       }));
       const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y), "text-anchor": "middle" });
       initial.textContent = lane.handle.slice(0, 2).toLowerCase();
       initial.setAttribute("fill", color);
-      svg.appendChild(initial);
+      marks.push(initial);
     }
+    for (const mark of marks) svg.appendChild(mark);
     const label = el("text", {
       class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""),
       x: String(PAD + AVATAR + 6), y: String(y + 4), "clip-path": "url(#tl-gutter)",
@@ -1078,6 +1308,28 @@
       (lane.unregistered ? " · no current registration (messages kept)" : "");
     label.appendChild(title);
     svg.appendChild(label);
+
+    // The lane's handle and mark open that agent's details. The handle is
+    // also a keyboard stop (Enter or Space), named for what it does.
+    const inspect = (ev) => {
+      ev.stopPropagation();
+      actions.inspectAgent(lane.handle);
+    };
+    for (const node of [label, ...marks]) {
+      node.classList.add("tl-lane-inspect");
+      node.addEventListener("click", inspect);
+    }
+    label.setAttribute("role", "button");
+    label.setAttribute("tabindex", "0");
+    // Stable across redraws: render and the details panel find the handle
+    // again by it to put keyboard focus back.
+    label.dataset.tlLane = lane.handle;
+    label.setAttribute("aria-label", `Show details for @${lane.handle}`);
+    label.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      inspect(ev);
+    });
   }
 
   // gutterClip returns the clipPath (id tl-gutter) that keeps lane labels
@@ -1100,15 +1352,16 @@
       ev.stopPropagation();
       inspect(channel.name, channel.pin.seq, "");
     };
-    const pinText = `Pin #${channel.pin.seq} — ${firstLine(msg.text, 80)}`;
+    const pinText = `Pinned at ${clock(msg.sent_at_ms)}: ${firstLine(msg.text, 120)}`;
+    const pinLabel = () => hoverContent(html("div", "tl-hover-meta", `Pinned · ${clock(msg.sent_at_ms)}`), msg.text);
     const line = el("line", { class: "tl-pin", x1: x, x2: x, y1: String(laneTop - 4), y2: String(laneTop + laneCount * LANE_H) });
     line.addEventListener("click", pick);
-    hoverable(rootEl, line, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
+    hoverable(rootEl, line, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""), pinLabel);
     svg.appendChild(line);
     const lbl = el("text", { class: "tl-pin-label", x: x, y: String(laneTop - 3), "text-anchor": "middle" });
-    lbl.textContent = `Pin #${channel.pin.seq}`;
+    lbl.textContent = "Pin";
     lbl.addEventListener("click", pick);
-    hoverable(rootEl, lbl, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""));
+    hoverable(rootEl, lbl, pinText, `pin ${channel.name}`, itemKey(channel.name, channel.pin.seq, ""), pinLabel);
     svg.appendChild(lbl);
   }
 
@@ -1157,9 +1410,14 @@
         height: String(LANE_H - 12),
         rx: "1.5",
       });
-      hoverable(rootEl, mark, p.behind > 0
-        ? `@${p.handle} last read #${p.read_seq} · ${p.behind} messages since${p.mentioned ? " · @-mentioned since" : ""}`
-        : `@${p.handle} is caught up to #${p.read_seq}`, `read ${itemKey(channel.name, p.read_seq, p.handle)}`, itemKey(channel.name, p.read_seq, p.handle));
+      const status = p.behind > 0 ? `${p.behind} behind${p.mentioned ? " · @-mentioned" : ""}` : "caught up";
+      hoverable(rootEl, mark, `@${p.handle} ${status}`, `read ${itemKey(channel.name, p.read_seq, p.handle)}`,
+        itemKey(channel.name, p.read_seq, p.handle), () => {
+          const meta = html("div", "tl-hover-meta");
+          meta.appendChild(agentMark(p.handle, "", false));
+          meta.appendChild(html("span", "", `@${p.handle} · ${status}`));
+          return meta;
+        });
       mark.addEventListener("click", (ev) => {
         ev.stopPropagation();
         inspect(channel.name, p.read_seq, p.handle);
@@ -1263,12 +1521,6 @@
     return line.length > max ? line.slice(0, max - 1) + "…" : line;
   }
 
-  // preview returns the first two lines of text, at most 280 characters.
-  function preview(text) {
-    const lines = String(text || "").split("\n").slice(0, 2).join("\n");
-    return lines.length > 280 ? lines.slice(0, 279) + "…" : lines;
-  }
-
   // html creates an HTML element with an optional class and text.
   function html(tag, className, text) {
     const node = document.createElement(tag);
@@ -1307,8 +1559,10 @@
   // as it is now. A render already schedules this for the next animation
   // frame, after app.js has drawn every surface and restored scroll; app.js
   // calls placePreview directly after a change that moves the chart without
-  // a render (opening or closing an agent's details above it).
+  // a render. It also places any open anchored popover (see placeAnchored)
+  // again, since the final layout may have moved its anchor.
   function placePreview(rootEl) {
+    repositionAnchored();
     if (finishers.has(rootEl)) {
       runFinish(rootEl);
       return;
@@ -1325,6 +1579,7 @@
   window.ChorusTimeline = {
     render,
     placePreview,
+    placeAnchored,
     isDragging: (rootEl) => drags.has(rootEl),
   };
 })();
