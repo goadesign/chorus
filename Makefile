@@ -9,7 +9,10 @@
 # - "lint" runs go vet across all packages
 # - "test" runs the test suite with the race detector
 # - "release" regenerates code and diagrams, runs preflight checks, tags and pushes
-#   the release, builds multi-arch release archives, and publishes to GitHub.
+#   the release, builds multi-arch release archives, publishes to GitHub, and
+#   updates the Homebrew formula
+# - "update-tap" writes Formula/chorus.rb for VERSION from dist/checksums.txt and
+#   pushes it to github.com/goadesign/homebrew-tap (run by "release")
 #
 # Meta targets:
 # - "all" is the default target; it runs "gen", "diagram", "lint", and "test"
@@ -25,8 +28,8 @@ GOPATH=$(shell go env GOPATH)
 GOBIN_DIR=$(GOPATH)/bin
 DIST_DIR=dist
 
-.PHONY: all depend gen diagram lint test test-release release-preflight build-release-assets warm-proxy release
-.NOTPARALLEL: release release-preflight build-release-assets warm-proxy
+.PHONY: all depend gen diagram lint test test-release release-preflight build-release-assets update-tap warm-proxy release
+.NOTPARALLEL: release release-preflight build-release-assets update-tap warm-proxy
 
 all: gen diagram lint test
 
@@ -71,6 +74,17 @@ build-release-assets:
 		rm -rf "$$stage"; \
 	done
 	@cd "$(DIST_DIR)" && shasum -a 256 *.tar.gz > checksums.txt
+
+update-tap:
+	@tap="$$(mktemp -d)"; \
+	gh repo clone goadesign/homebrew-tap "$$tap" -- --quiet --depth 1 && \
+	scripts/homebrew-formula.sh "$(VERSION)" "$(DIST_DIR)/checksums.txt" > "$$tap/Formula/chorus.rb" && \
+	git -C "$$tap" add Formula/chorus.rb && \
+	git -C "$$tap" commit --quiet -m "Chorus $(RELEASE_TAG)" && \
+	git -C "$$tap" push --quiet origin HEAD; \
+	result=$$?; \
+	rm -rf "$$tap"; \
+	exit $$result
 
 warm-proxy:
 	@tag="$(RELEASE_TAG)"; \
@@ -120,6 +134,7 @@ release:
 		--repo goadesign/chorus \
 		--title "Chorus $(RELEASE_TAG)" \
 		--generate-notes
+	$(MAKE) update-tap
 	@rm -rf "$(DIST_DIR)"
 	@$(MAKE) warm-proxy RELEASE_TAG="$(RELEASE_TAG)"
 	@echo "Release $(RELEASE_TAG) complete"
