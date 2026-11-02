@@ -160,6 +160,11 @@
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
+    // A focused link inside the card's message is found again by its
+    // position among the message's links; the same message always renders
+    // the same links in the same order.
+    const oldBody = rootEl.querySelector(".tl-card .tl-card-body");
+    const linkFocus = oldBody && oldBody.contains(focused) ? [...oldBody.querySelectorAll("a[href]")].indexOf(focused) : -1;
     // How far the open card's message body was scrolled, and which item the
     // card described, so a redraw of the same card keeps showing the same
     // part of the message while a newly picked item starts at its top.
@@ -348,9 +353,14 @@
       if (jumpHadFocus) jump.focus({ preventScroll: true });
     }
     // Restoring focus must not scroll the page under the reader. A focused
-    // card button keeps focus when its card is drawn again; when the card is
-    // gone, focus returns to the chart.
-    const cardTarget = card && cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`) : null;
+    // card button, or a focused link in the same card's message, keeps focus
+    // when the card is drawn again; when the card is gone, focus returns to
+    // the chart.
+    const sameCard = card != null && card.dataset.tlItem === oldCardKey;
+    const cardTarget = !card ? null
+      : cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`)
+        : linkFocus >= 0 && sameCard ? card.querySelectorAll(".tl-card-body a[href]")[linkFocus] || null
+          : null;
     if (cardTarget) cardTarget.focus({ preventScroll: true });
     else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
@@ -575,13 +585,22 @@
     const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
     const below = ch <= roomBelow || (ch > roomAbove && roomBelow >= roomAbove);
     const room = below ? roomBelow : roomAbove;
-    if (ch > room) card.style.maxHeight = `${Math.max(0, Math.floor(room))}px`;
-    const shown = Math.min(ch, Math.max(0, room));
+    // The card's fixed parts (header, notes, buttons) never shrink; only the
+    // message body does. When the room is smaller than those parts, the card
+    // keeps their height and is aligned to the bottom of the visible area
+    // below, so Jump and Respond stay reachable (Escape still closes it).
+    const chrome = ch - body.offsetHeight;
+    const fitted = Math.max(chrome, Math.floor(room));
+    if (ch > fitted) card.style.maxHeight = `${fitted}px`;
+    const shown = Math.min(ch, fitted);
     const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
     // When the point itself has scrolled out of the visible area, the card
     // still stays wholly inside it, so its controls remain reachable.
     const wanted = below ? ay + gap : ay - gap - shown;
-    const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
+    // A card taller than the whole visible area is aligned to its bottom, so
+    // the buttons rather than the header stay visible.
+    const lowest = area.bottom - PAD - shown;
+    const top = shown > area.bottom - area.top - 2 * PAD ? lowest : Math.max(area.top + PAD, Math.min(wanted, lowest));
     // Absolute positions are measured from the section's padding edge.
     card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
     card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
@@ -695,7 +714,11 @@
       st.dismissed = "";
       showHover(rootEl, node);
     });
-    node.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    node.addEventListener("pointerleave", (ev) => {
+      // A finger lifting off the screen also counts as leaving; a label shown
+      // by a tap stays until the next tap elsewhere.
+      if (ev.pointerType !== "touch") hideHoverSoon(rootEl);
+    });
     // A quiet break opens no card, so on a touch screen a tap shows its
     // label instead; the next tap anywhere else hides it.
     if (!item) {
@@ -798,7 +821,9 @@
       clearTimeout(st.timer);
       st.leaving = false;
     });
-    label.addEventListener("pointerleave", () => hideHoverSoon(rootEl));
+    label.addEventListener("pointerleave", (ev) => {
+      if (ev.pointerType !== "touch") hideHoverSoon(rootEl);
+    });
     rootEl.appendChild(label);
     const rootBox = rootEl.getBoundingClientRect();
     const svgBox = rootEl.querySelector("svg.tl").getBoundingClientRect();
