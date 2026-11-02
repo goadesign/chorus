@@ -158,6 +158,8 @@
     const focused = document.activeElement;
     const hadFocus = rootEl.contains(focused);
     const jumpHadFocus = hadFocus && focused.classList.contains("tl-jump");
+    // A focused lane handle is found again by its data-tl-lane handle.
+    const laneFocus = hadFocus && focused.dataset ? focused.dataset.tlLane || "" : "";
     // A focused preview-card button is found again by its data-tl-card name.
     const cardFocus = hadFocus && focused.dataset ? focused.dataset.tlCard || "" : "";
     // A focused link inside the card's message is found again by its
@@ -353,15 +355,19 @@
       if (jumpHadFocus) jump.focus({ preventScroll: true });
     }
     // Restoring focus must not scroll the page under the reader. A focused
-    // card button, or a focused link in the same card's message, keeps focus
-    // when the card is drawn again; when the card is gone, focus returns to
-    // the chart.
+    // card button, a focused link in the same card's message, or a focused
+    // lane handle keeps focus when drawn again; when it is gone (the card
+    // closed, or the lane left the range), focus returns to the chart.
     const sameCard = card != null && card.dataset.tlItem === oldCardKey;
     const cardTarget = !card ? null
       : cardFocus ? card.querySelector(`[data-tl-card="${cardFocus}"]`)
         : linkFocus >= 0 && sameCard ? card.querySelectorAll(".tl-card-body a[href]")[linkFocus] || null
           : null;
+    const laneTarget = laneFocus
+      ? [...svg.querySelectorAll("[data-tl-lane]")].find((n) => n.dataset.tlLane === laneFocus) || null
+      : null;
     if (cardTarget) cardTarget.focus({ preventScroll: true });
+    else if (laneTarget) laneTarget.focus({ preventScroll: true });
     else if (hadFocus && !(jumpHadFocus && state.timeWindow)) svg.focus({ preventScroll: true });
   }
 
@@ -1219,6 +1225,9 @@
     }
     label.setAttribute("role", "button");
     label.setAttribute("tabindex", "0");
+    // Stable across redraws: render and the details panel find the handle
+    // again by it to put keyboard focus back.
+    label.dataset.tlLane = lane.handle;
     label.setAttribute("aria-label", `Show details for @${lane.handle}`);
     label.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
