@@ -285,17 +285,16 @@
   }
 
   // inspectAgent toggles or switches the anchored #agent-details popover for
-  // handle when the reader clicks a timeline lane, an Inspect action, or an
-  // inline @handle mention badge.
-  function inspectAgent(detailsEl, handle, state, actions, anchorEl = null) {
+  // handle. anchorEl is the control the reader activated: a timeline lane
+  // label (data-tl-lane), an Inspect action or inline @handle mention
+  // (data-focus-key), or a mention inside the popover itself, which switches
+  // the agent but keeps the original opener as the anchor.
+  function inspectAgent(detailsEl, handle, state, actions, anchorEl) {
     if (!detailsEl || !state?.view) return;
     const clean = String(handle || "").replace(/^@/, "");
     if (!clean) return;
-    const fromInsidePopover = Boolean(anchorEl && detailsEl.contains(anchorEl));
-    const active = document.activeElement;
-    const invoker = fromInsidePopover
-      ? null
-      : (anchorEl || (active && !detailsEl.contains(active) && (active.dataset?.focusKey || active.dataset?.tlLane) ? active : null));
+    const fromInsidePopover = detailsEl.contains(anchorEl);
+    const invoker = fromInsidePopover ? null : anchorEl;
     const invokerKey = invoker?.dataset?.focusKey || "";
     if (detailsEl.dataset.agent === clean) {
       if (fromInsidePopover) return;
