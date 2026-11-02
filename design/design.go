@@ -288,7 +288,8 @@ var MessageType = Type("Message", func() {
 		Example(true)
 	})
 	Attribute("model", String, "The model the sender had declared when the message was sent, kept after the sender leaves. Absent for messages sent before Chorus recorded it.", func() {
-		Example("claude-opus-5-5")
+		// Matches the human example: a person declares the model "human".
+		Example("human")
 	})
 	Required("seq", "sender", "text", "sent_at_ms")
 })
@@ -311,7 +312,8 @@ var Pin = Type("Pin", func() {
 		Example(true)
 	})
 	Attribute("model", String, "The model the sender had declared when the message was pinned. Absent for pins made before Chorus recorded it.", func() {
-		Example("claude-opus-5-5")
+		// Matches the human example: a person declares the model "human".
+		Example("human")
 	})
 	Required("seq", "sender", "text")
 })
