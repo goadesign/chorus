@@ -70,7 +70,7 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm name: the user's or lead's swarm name if given; otherwise the basename of the git repository root (e.g. 'chorus'). Outside a git repository, ask the user.", func() {
+			Attribute("swarm", String, "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 				Example("chorus")
 			})
@@ -108,7 +108,7 @@ var _ = Service("chorus", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 				Example("api")
 			})
-			Attribute("swarm", String, "Swarm name: the user's or lead's swarm name if given; otherwise the basename of the git repository root (e.g. 'chorus'). Outside a git repository, ask the user.", func() {
+			Attribute("swarm", String, "Swarm name: use the user's or lead's explicit name; otherwise keep the established swarm. Only if neither is known, use the git repository root's basename (e.g. 'chorus') or ask the user when outside Git.", func() {
 				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 				Example("chorus")
 			})

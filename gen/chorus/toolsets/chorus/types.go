@@ -12,9 +12,9 @@ type (
 	JoinPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm name: the user's or lead's swarm name if given; otherwise the basename
-		// of the git repository root (e.g. 'chorus'). Outside a git repository, ask
-		// the user.
+		// Swarm name: use the user's or lead's explicit name; otherwise keep the
+		// established swarm. Only if neither is known, use the git repository root's
+		// basename (e.g. 'chorus') or ask the user when outside Git.
 		Swarm string
 		// Channels to create or subscribe to (each prefixed with '#').
 		Channels []string
@@ -75,9 +75,9 @@ type (
 	WhoPayload = struct {
 		// Your agent handle (without leading '@'), e.g. 'lead', 'api', or 'db'.
 		Agent string
-		// Swarm name: the user's or lead's swarm name if given; otherwise the basename
-		// of the git repository root (e.g. 'chorus'). Outside a git repository, ask
-		// the user.
+		// Swarm name: use the user's or lead's explicit name; otherwise keep the
+		// established swarm. Only if neither is known, use the git repository root's
+		// basename (e.g. 'chorus') or ask the user when outside Git.
 		Swarm string
 		// Optional role description to advertise to peers in this swarm.
 		Role *string
