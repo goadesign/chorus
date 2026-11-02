@@ -81,6 +81,12 @@
   const LANE_H = 38;
   const LABEL_W = 160;
   const PAD = 8;
+  // A card that fits on neither side of its anchor goes on the side with
+  // more room, shortened and scrolling, while that side has at least this
+  // many pixels: a heading, a few lines, and the action row stay readable
+  // and the card leaves its opener visible. With less room on both sides
+  // the card uses the whole visible area instead.
+  const MIN_SIDE = 200;
   // Horizontal space between the label gutter (and the right edge) and the
   // plot, so the first and last dots never touch a label or the border.
   const PLOT_PAD = 18;
@@ -592,10 +598,12 @@
   // fitInArea positions card (absolutely, in its offset parent) next to the
   // anchor box, given in viewport pixels, inside the visible part of the
   // scrolling message area (between the page header and the composer). It
-  // opens below the anchor when it fits there, else above; otherwise it uses
-  // the whole visible area, covering the anchor if it must, centred on it as
-  // far as the area allows, and scrolls inside, so it is never squeezed into
-  // a thin strip. Horizontally it stays within [minX, maxX], centred on the
+  // opens below the anchor when it fits there, else above. When it fits on
+  // neither side, it takes the side with more room, shortened to that room
+  // and scrolling inside, so its opener stays visible, provided that side
+  // has at least MIN_SIDE pixels. With less room on both sides it uses the
+  // whole visible area, covering the anchor if it must, centred on it as far
+  // as the area allows, so it is never squeezed into a thin strip. Horizontally it stays within [minX, maxX], centred on the
   // anchor or aligned with its left edge. The card always stays wholly inside
   // the visible area, even when the anchor has scrolled out of view, and it
   // keeps how far it was scrolled. The card floats above the page, so placing
@@ -612,8 +620,12 @@
     const roomBelow = area.bottom - PAD - Math.max(box.bottom + gap, area.top + PAD);
     const roomAbove = Math.min(box.top - gap, area.bottom - PAD) - (area.top + PAD);
     const whole = area.bottom - area.top - 2 * PAD;
-    const side = ch <= roomBelow ? "below" : ch <= roomAbove ? "above" : "";
-    const shown = side ? ch : Math.max(0, Math.min(ch, whole));
+    const roomier = roomBelow >= roomAbove ? "below" : "above";
+    const side = ch <= roomBelow ? "below" : ch <= roomAbove ? "above"
+      : Math.max(roomBelow, roomAbove) >= MIN_SIDE ? roomier : "";
+    const shown = side === "below" ? Math.min(ch, roomBelow)
+      : side === "above" ? Math.min(ch, roomAbove)
+        : Math.max(0, Math.min(ch, whole));
     if (shown < ch) {
       // max-height excludes padding and border unless the card sizes its
       // border box, so subtract them to make the drawn card exactly fit.
