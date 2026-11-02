@@ -248,7 +248,7 @@
     lanes.forEach((lane, i) => {
       const y = laneTop + i * LANE_H + LANE_H / 2;
       laneY.set(lane.handle, y);
-      drawLane(svg, lane, y, width, colors);
+      drawLane(svg, lane, y, width, colors, actions);
     });
     if (lanes.length === 0) {
       // Centered on the whole chart: with no lanes the label gutter is empty,
@@ -1156,8 +1156,9 @@
 
   // drawLane draws a lane line and its @handle label, clipped to the label
   // gutter so a long handle never runs into the plot. Details go in the
-  // label's tooltip rather than on the line.
-  function drawLane(svg, lane, y, width, colors) {
+  // label's tooltip rather than on the line, and clicking the handle or its
+  // mark (or pressing Enter on the handle) opens the agent's details.
+  function drawLane(svg, lane, y, width, colors, actions) {
     svg.appendChild(el("line", {
       class: "tl-lane" + (lane.human ? " is-human" : "") + (lane.unregistered ? " is-left" : ""),
       x1: String(LABEL_W), x2: String(width - PLOT_PAD), y1: String(y), y2: String(y),
@@ -1167,8 +1168,10 @@
     // circle around it.
     const id = window.ChorusUI.resolveIdentity(lane.handle, lane.model, lane.human);
     const cx = PAD + AVATAR / 2;
+    // The lane's identity mark: its logo, or its badge disc and letters.
+    const marks = [];
     if (id.iconUrl) {
-      svg.appendChild(el("image", {
+      marks.push(el("image", {
         // The provider class lets one shared CSS rule size each provider's
         // mark (the OpenAI glyph fills less of its canvas than the others).
         class: "tl-avatar-icon provider-" + id.provider, href: id.iconUrl,
@@ -1180,15 +1183,16 @@
       // same two-letter badge the participant cards use, a soft disc in the
       // lane's color with the letters centered on the lane line.
       const color = colors.get(lane.handle);
-      svg.appendChild(el("circle", {
+      marks.push(el("circle", {
         class: "tl-avatar-disc", cx: String(cx), cy: String(y), r: String(AVATAR / 2),
         fill: color, "fill-opacity": "0.14",
       }));
       const initial = el("text", { class: "tl-avatar-initial", x: String(cx), y: String(y), "text-anchor": "middle" });
       initial.textContent = lane.handle.slice(0, 2).toLowerCase();
       initial.setAttribute("fill", color);
-      svg.appendChild(initial);
+      marks.push(initial);
     }
+    for (const mark of marks) svg.appendChild(mark);
     const label = el("text", {
       class: "tl-lane-label" + (lane.unregistered ? " is-left" : ""),
       x: String(PAD + AVATAR + 6), y: String(y + 4), "clip-path": "url(#tl-gutter)",
@@ -1202,6 +1206,25 @@
       (lane.unregistered ? " · no current registration (messages kept)" : "");
     label.appendChild(title);
     svg.appendChild(label);
+
+    // The lane's handle and mark open that agent's details. The handle is
+    // also a keyboard stop (Enter or Space), named for what it does.
+    const inspect = (ev) => {
+      ev.stopPropagation();
+      actions.inspectAgent(lane.handle);
+    };
+    for (const node of [label, ...marks]) {
+      node.classList.add("tl-lane-inspect");
+      node.addEventListener("click", inspect);
+    }
+    label.setAttribute("role", "button");
+    label.setAttribute("tabindex", "0");
+    label.setAttribute("aria-label", `Show details for @${lane.handle}`);
+    label.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      inspect(ev);
+    });
   }
 
   // gutterClip returns the clipPath (id tl-gutter) that keeps lane labels
