@@ -64,23 +64,21 @@
     <button type="button" class="btn-tonal update-reload-btn" id="btn-reload-ui">Reload</button>
   </div>
 
-  <!-- Main Single-Canvas Stage (Participants + Timeline + Newest-First Stream) -->
+  <!-- Main Single-Canvas Stage (Timeline + Newest-First Stream) -->
   <main class="stage-container scroller" id="stage-container">
     <div class="stage-inner">
-      <!-- 1. Participants Strip: Each agent's handle, watch status, read watermark, and latest words -->
-      <section class="agent-strip-section" id="agent-strip" aria-label="Swarm participants"></section>
       <div id="agent-details"></div>
 
-      <!-- 2. Interactive Sliding Swarm Timeline (Live-scrubbing overview + swimlanes) -->
+      <!-- 1. Interactive Sliding Swarm Timeline (Live-scrubbing overview + swimlanes) -->
       <section class="timeline-section" id="timeline-root" aria-label="Swarm timeline"></section>
 
-      <!-- 3. Collapsible Pinned Goal + Recent Mentions -->
+      <!-- 2. Collapsible Pinned Goal + Recent Mentions -->
       <section class="context-strips">
         <div id="pin-container"></div>
         <div id="mentions-container"></div>
       </section>
 
-      <!-- 4. Stream Controls & Newest-First Progressive Disclosure Feed -->
+      <!-- 3. Stream Controls & Newest-First Progressive Disclosure Feed -->
       <section class="stream-section" aria-label="Messages">
         <div class="stream-toolbar">
           <div class="stream-toolbar-left">

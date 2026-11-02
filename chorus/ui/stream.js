@@ -5,14 +5,35 @@
 
   window.ChorusStream = Object.freeze({
     render,
+    inspectAgent,
     renderMessageText,
     captureScrollSnapshot,
     restoreScrollSnapshot,
     resetDisclosures,
   });
 
-  // Cached Marked lexer instance with raw HTML/XML tag tokenizers disabled.
-  let cachedMdEngine = null;
+  // Configured Marked lexer instance with GFM tables, strikethrough, autolinks,
+  // and line breaks enabled, and raw HTML/XML tag tokenizers disabled so raw
+  // tags (<script>, <details>, <agent>) remain inert plain text tokens.
+  const mdEngine = new globalThis.marked.Marked({
+    gfm: true,
+    breaks: true,
+    tokenizer: {
+      html() { return undefined; },
+      tag() { return undefined; },
+    },
+  });
+
+  // Standard named HTML character references decoded in non-code Markdown text,
+  // link URLs, and link titles.
+  const NAMED_ENTITIES = Object.freeze({
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: "\u00a0",
+  });
 
   // Displayed previews belong only to this page visit and the retained messages
   // in the current swarm. Displaying a preview does not mean reading its text.
@@ -33,11 +54,11 @@
       previewSwarm = state.activeSwarm;
     }
     if (state.view === null) {
-      for (const root of [els.agentStripEl, els.mentionsEl, els.detailsEl]) {
-        root.replaceChildren();
+      for (const root of [els.mentionsEl, els.detailsEl]) {
+        root?.replaceChildren();
       }
       renderPin(els.pinEl, state, actions);
-      delete els.detailsEl.dataset.agent;
+      if (els.detailsEl) delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
       els.subtitleEl.textContent = "Loading swarm…";
       els.streamEl.replaceChildren(empty("Loading messages", "Connecting to the swarm…"));
@@ -54,7 +75,7 @@
       ? null
       : (els.scrollSnapshot || captureScrollSnapshot(els.streamEl, els.scrollEl));
 
-    renderAgents(els, state, actions, entries);
+    renderInspectedAgent(els.detailsEl, state, actions, entries);
     renderPin(els.pinEl, state, actions);
     renderMentions(els.mentionsEl, targetEntries, state, actions, entries);
     renderMessages(els.streamEl, visible, targetEntries, state, actions);
@@ -136,118 +157,75 @@
       .toLowerCase().includes(query);
   }
 
-  // renderAgents renders each active and historical participant card with their
-  // 32px circular avatar, role, watch state on this server, last call/heartbeat
-  // or latest message age, compact sequence-position gap badge, and latest message.
-  function renderAgents(els, state, actions, entries) {
-    const latest = new Map();
-    for (const entry of entries) latest.set(entry.message.sender, entry);
-    const activeChannel = state.selectedTarget?.kind === "channel"
-      ? state.view.channels.find((ch) => ch.name === state.selectedTarget.name)
-      : null;
-    const inboxByHandle = new Map((state.view.inboxes || []).map((ib) => [ib.recipient, ib]));
-
-    const registeredByHandle = new Map();
-    const participants = [];
-    for (const agent of state.view.agents || []) {
-      const item = { ...agent, registered: true };
-      registeredByHandle.set(agent.handle, item);
-      participants.push(item);
-    }
-    for (const [handle, entry] of latest) {
-      if (registeredByHandle.has(handle)) continue;
-      const seenChannels = [...new Set(entries.filter((e) => e.message.sender === handle && e.target.startsWith("#")).map((e) => e.target))];
-      participants.push({
-        handle, role: "", last_seen_unix: 0, last_message_ms: entry.message.sent_at_ms,
-        channels: seenChannels, watching_on_this_server: false, registered: false,
-      });
-    }
-    const participantByHandle = new Map(participants.map((p) => [p.handle, p]));
-
-    const nodes = participants.map((agent) => {
-      const entry = latest.get(agent.handle);
-      const pos = activeChannel?.positions?.find((p) => p.handle === agent.handle) || null;
-      const inbox = inboxByHandle.get(agent.handle) || null;
-      const human = Boolean(agent.registered && agent.model === "human");
-      const colorClass = senderColorClass(agent.handle, state, human);
-      const statusNode = agent.registered && agent.watching_on_this_server
-        ? element("span", "agent-status-inline is-watching", element("span", "presence-dot"), "Watching")
-        : element("span", "agent-status-inline",
-            agent.registered ? `Active ${age(agent.last_seen_unix * 1000)} ago` : (entry ? `Last post ${age(entry.message.sent_at_ms)} ago` : "Earlier"));
-      let modelNode = null;
-      if (agent.model && agent.model !== "human") {
-        modelNode = element("span", "agent-model-inline", agent.model);
-        modelNode.title = agent.model;
+  // findParticipant builds the live or historical participant record for handle
+  // from state.view.agents and retained message entries.
+  function findParticipant(handle, state, entries) {
+    const reg = (state.view?.agents || []).find((a) => a.handle === handle);
+    let latest = null;
+    let latestModel = reg?.model || "";
+    const seenChannels = new Set(reg?.channels || []);
+    for (const entry of entries) {
+      if (entry.message.sender === handle) {
+        latest = entry;
+        if (entry.message.model) latestModel = entry.message.model;
+        if (entry.target.startsWith("#")) seenChannels.add(entry.target);
       }
-      const headerRow = element("span", "agent-card-top",
-        avatarNode(agent.handle, state, agent.registered ? agent.model || "" : "", human),
-        element("strong", `agent-name ${colorClass}`.trim(), `@${agent.handle}`),
-        ...(human ? [element("span", "human-pill", "Human")] : []),
-        ...(modelNode ? [modelNode] : []),
-        statusNode);
-
-      if (!human && pos && pos.behind > 0) {
-        const gapLabel = `Position gap ${pos.behind} · Read through #${pos.read_seq}${pos.mentioned ? " · @mentioned" : ""}`;
-        const pill = element("span", "agent-behind-pill", `${pos.behind} behind`);
-        pill.title = gapLabel;
-        pill.setAttribute("aria-label", gapLabel);
-        headerRow.append(pill);
-        if (pos.mentioned) {
-          const atDot = element("span", "agent-mention-dot", "@ mention");
-          atDot.title = `@mentioned after #${pos.read_seq}`;
-          atDot.setAttribute("aria-label", `@mentioned after #${pos.read_seq}`);
-          headerRow.append(atDot);
-        }
-      } else if (!human && inbox && inbox.behind > 0) {
-        const dmGapLabel = `DM position gap ${inbox.behind} · Read through #${inbox.read_seq}`;
-        const pill = element("span", "agent-behind-pill", `DM ${inbox.behind} behind`);
-        pill.title = dmGapLabel;
-        pill.setAttribute("aria-label", dmGapLabel);
-        headerRow.append(pill);
-      } else if (!human && pos && pos.read_seq > 0) {
-        const readLabel = `Read through #${pos.read_seq}`;
-        const pill = element("span", "agent-caught-up-pill", `read #${pos.read_seq}`);
-        pill.title = readLabel;
-        pill.setAttribute("aria-label", readLabel);
-        headerRow.append(pill);
-      }
-
-      const cardChildren = [headerRow];
-      if (agent.role && agent.role !== "human") cardChildren.push(element("span", "agent-role-inline", agent.role));
-      cardChildren.push(element("span", "agent-latest",
-        ...(entry ? [`${entry.target}#${entry.message.seq} (${age(entry.message.sent_at_ms)} ago): `, formattedPreview(entry.message.text)] : ["No messages available"])));
-      const button = element("button",
-        `agent-summary${agent.registered ? "" : " is-historical"}${human ? " is-human-agent" : ""}${state.filterAgent === agent.handle ? " is-selected" : ""}`,
-        ...cardChildren);
-      button.type = "button";
-      button.dataset.focusKey = `agent:${agent.handle}`;
-      button.setAttribute("aria-label", `Inspect @${agent.handle}`);
-      button.addEventListener("click", () => {
-        if (els.detailsEl.dataset.agent === agent.handle) {
-          delete els.detailsEl.dataset.agent;
-          els.detailsEl.replaceChildren();
-          window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-          return;
-        }
-        els.detailsEl.dataset.agent = agent.handle;
-        showAgent(els.detailsEl, agent, state, actions, entry);
-        window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-      });
-      return button;
-    });
-
-    if (nodes.length === 0) {
-      nodes.push(element("p", "empty-inline", "No active agents in the last 5 minutes. Historical messages remain visible below."));
     }
-    replaceKeepingFocus(els.agentStripEl, nodes);
-    const inspected = els.detailsEl.dataset.agent;
-    if (inspected) {
-      const agent = participantByHandle.get(inspected);
-      if (agent) showAgent(els.detailsEl, agent, state, actions, latest.get(inspected));
-      else {
-        delete els.detailsEl.dataset.agent;
-        els.detailsEl.replaceChildren();
-      }
+    if (reg) {
+      return {
+        agent: { ...reg, model: reg.model || latestModel, registered: true },
+        latest,
+      };
+    }
+    if (!latest && !(state.view?.inboxes || []).some((ib) => ib.recipient === handle)) {
+      return null;
+    }
+    return {
+      agent: {
+        handle,
+        role: "",
+        model: latestModel,
+        last_seen_unix: 0,
+        last_message_ms: latest ? latest.message.sent_at_ms : 0,
+        channels: [...seenChannels],
+        watching_on_this_server: false,
+        registered: false,
+      },
+      latest,
+    };
+  }
+
+  // inspectAgent toggles the #agent-details drawer for handle when the reader
+  // clicks an agent lane in the timeline or an Inspect action in the stream.
+  function inspectAgent(detailsEl, handle, state, actions) {
+    if (!detailsEl || !state?.view) return;
+    const clean = String(handle || "").replace(/^@/, "");
+    if (!clean) return;
+    if (detailsEl.dataset.agent === clean) {
+      delete detailsEl.dataset.agent;
+      detailsEl.replaceChildren();
+      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
+      return;
+    }
+    const found = findParticipant(clean, state, retainedMessages(state.view));
+    if (!found) return;
+    detailsEl.dataset.agent = clean;
+    showAgent(detailsEl, found.agent, state, actions, found.latest);
+    detailsEl.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    detailsEl.querySelector?.('[data-focus-key="close-agent"]')?.focus?.({ preventScroll: true });
+    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
+  }
+
+  // renderInspectedAgent refreshes #agent-details on live polls while an agent
+  // is being inspected, or closes it if the handle is no longer present.
+  function renderInspectedAgent(detailsEl, state, actions, entries) {
+    const inspected = detailsEl?.dataset.agent;
+    if (!inspected) return;
+    const found = findParticipant(inspected, state, entries);
+    if (found) showAgent(detailsEl, found.agent, state, actions, found.latest);
+    else {
+      delete detailsEl.dataset.agent;
+      detailsEl.replaceChildren();
     }
   }
 
@@ -255,11 +233,18 @@
   // declared model, per-channel and DM sequence-position gaps and read watermarks,
   // and 1-click actions to message, filter, or copy the chorus watch command.
   function showAgent(root, agent, state, actions, latest) {
-    const close = iconButton("close", "Close", "close-agent", () => {
+    const closeDrawer = () => {
       delete root.dataset.agent;
       root.replaceChildren();
       window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-    });
+    };
+    root.onkeydown = (ev) => {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeDrawer();
+      }
+    };
+    const close = iconButton("close", "Close", "close-agent", closeDrawer);
 
     const posSummaries = [];
     for (const ch of state.view.channels || []) {
@@ -307,20 +292,25 @@
     });
     copyWatchBtn.setAttribute("aria-live", "polite");
 
-    const isHuman = Boolean(agent.registered && agent.model === "human");
+    const isHuman = agent.model === "human" || Boolean(latest && isFromHumanMessage(latest.message));
+    const modelHint = agent.model || "";
     const nodes = [
       element("div", "details-heading",
         element("h3", "details-agent-title",
-          avatarNode(agent.handle, state, agent.registered !== false ? agent.model || "" : "", isHuman),
+          avatarNode(agent.handle, state, modelHint, isHuman),
           `@${agent.handle}`),
         close),
     ];
-    if (agent.role) nodes.push(element("p", "agent-role", agent.role));
+    if (agent.role) {
+      const roleP = element("p", "agent-role");
+      appendTextWithMentions(roleP, agent.role);
+      nodes.push(roleP);
+    }
     nodes.push(facts);
     if (latest) nodes.push(element("p", "agent-last-message", `Latest message (${latest.target}#${latest.message.seq}): `, formattedPreview(latest.message.text)));
     nodes.push(element("div", "detail-actions",
-      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
-      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
+      actionButton(["Direct message ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `dm:${agent.handle}`, () => actions.composeDM(agent.handle)),
+      actionButton(state.filterAgent === agent.handle ? "Clear agent filter" : ["Filter by ", handleBadgeNode(agent.handle, state, "", isHuman, modelHint)], `filter-agent:${agent.handle}`, () => actions.setFilterAgent(agent.handle)),
       copyWatchBtn));
     replaceKeepingFocus(root, nodes);
   }
@@ -364,14 +354,14 @@
     const summary = element("summary", "pin-summary",
       svgIcon("pin", "icon icon-sm pin-icon"),
       element("strong", "pin-title", `Pin #${pin.seq} · ${cleanPinHeadline(pin.text)}`),
-      element("span", "pin-meta", "by ", handleBadgeNode(pin.sender, state, "", pinFromHuman), ` · ${newer} newer`));
+      element("span", "pin-meta", "by ", handleBadgeNode(pin.sender, state, "", pinFromHuman, pin.model), ` · ${newer} newer`));
     summary.dataset.focusKey = `pin:${key}`;
     if (updated) summary.append(element("span", "pin-updated", "Updated"));
     disclosure.append(summary);
 
     const clauses = pinClauses(pin.text);
     const raw = element("pre", "pin-raw-text", pin.text);
-    const structured = renderPinStructured(clauses);
+    const structured = renderPinStructured(clauses, key);
     const rawMode = sameChannel && root.dataset.pinMode === "raw";
     raw.hidden = clauses.length > 0 && !rawMode;
     structured.hidden = clauses.length === 0 || rawMode;
@@ -413,18 +403,18 @@
   // renderPinStructured separates the documented fields for reading. Owners
   // remain authored text: known handles receive badges without inferred work
   // assignments, removed punctuation, or a new ownership grammar.
-  function renderPinStructured(clauses) {
+  function renderPinStructured(clauses, pinKey = "pin") {
     const container = element("div", "pin-structured");
     for (const clause of clauses) {
       const kind = clause.key.toLowerCase();
       if (kind === "goal") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Goal"),
-          element("div", "pin-goal-block", formattedText(clause.value))));
+          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal`))));
       } else if (kind === "owners") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Owners"),
-          element("div", "pin-owner-text", formattedText(clause.value))));
+          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners`))));
       } else if (kind === "verify") {
         const copyBtn = actionButton("Copy command", `copy-verify:${clause.value}`, async (ev) => {
           const btn = ev.currentTarget;
@@ -855,7 +845,7 @@
     const senderColor = senderColorClass(last.message.sender, state, lastFromHuman);
     const metaRow = element("span", "message-meta",
       element("strong", `message-sender ${senderColor}`.trim(), `@${last.message.sender}`),
-      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman), ")")] : []),
+      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman, first.message.model), ")")] : []),
       ...(latestReplyToHuman ? [element("span", "human-response-pill", latestReplyToHuman)] : []),
       element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
       element("span", "thread-count-pill", `${entries.length} messages`),
@@ -864,9 +854,9 @@
     const contentCol = element("span", "row-main",
       metaRow,
       element("strong", "thread-title", formattedPreview(first.message.text)),
-      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman), ` #${last.message.seq}): `, formattedPreview(last.message.text)));
+      element("span", "thread-latest", "Latest (", handleBadgeNode(last.message.sender, state, "", lastFromHuman, last.message.model), ` #${last.message.seq}): `, formattedPreview(last.message.text)));
 
-    const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, "", lastFromHuman), contentCol);
+    const summary = element("summary", "thread-summary", avatarNode(last.message.sender, state, last.message.model || "", lastFromHuman), contentCol);
     summary.dataset.focusKey = key;
     preparePreviewCue(summary, first, last);
     details.append(summary);
@@ -895,7 +885,7 @@
         const btn = element("button", "message-parent-quote",
           svgIcon("reply", "icon icon-xs"),
           element("span", "message-parent-label", "In reply to"),
-          handleBadgeNode(parent.message.sender, state, "", parentFromHuman),
+          handleBadgeNode(parent.message.sender, state, "", parentFromHuman, parent.message.model),
           element("span", "message-coordinate", `#${parent.message.seq}`),
           element("span", "message-parent-excerpt", formattedPreview(parent.message.text)));
         btn.type = "button";
@@ -964,7 +954,7 @@
       element("span", "message-headline", formattedPreview(message.text, 0)),
       ...(secondPreview.hasChildNodes() ? [element("span", "message-supporting", secondPreview)] : []));
 
-    const summary = element("summary", "message-summary", avatarNode(message.sender, state, "", fromHuman), contentCol);
+    const summary = element("summary", "message-summary", avatarNode(message.sender, state, message.model || "", fromHuman), contentCol);
     summary.dataset.focusKey = `message:${key}`;
     preparePreviewCue(summary, entry);
     details.append(summary);
@@ -975,7 +965,7 @@
     const detailPane = element("div", "message-detail-pane");
     const parentQuote = renderParentContext(entry, state, actions, byTarget, key);
     if (parentQuote) detailPane.append(parentQuote);
-    detailPane.append(element("div", "message-body", formattedText(message.text)));
+    detailPane.append(element("div", "message-body", formattedText(message.text, `msg:${key}`)));
 
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
@@ -983,10 +973,13 @@
         actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman);
       }));
     } else {
-      controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman)], `dm-reply:${key}`, () => {
+      controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `dm-reply:${key}`, () => {
         actions.composeDM(message.sender);
       }));
     }
+    controls.append(actionButton(["Inspect ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `inspect:${key}`, () => {
+      actions.inspectAgent(message.sender);
+    }));
     controls.append(copyTextButton(message.text, `copy:${key}`));
     detailPane.append(controls);
     details.append(detailPane);
@@ -1014,8 +1007,7 @@
     const label = String(handle || "?").slice(0, 2);
     const node = element("span", `agent-avatar ${colorClass}`.trim());
     node.setAttribute("aria-hidden", "true");
-    const modelHint = model || (state?.view?.agents || []).find((a) => a.handle === handle)?.model || "";
-    const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle, modelHint, isHuman) : null;
+    const identity = window.ChorusUI?.resolveIdentity ? window.ChorusUI.resolveIdentity(handle, model, isHuman) : null;
     if (identity?.model && identity.model !== "human") node.title = `@${handle} · ${identity.model}`;
     if ((identity?.iconUrl || identity?.avatarUrl) && !isHuman) {
       node.dataset.provider = identity.provider || "";
@@ -1032,10 +1024,9 @@
     return node;
   }
 
-  function handleBadgeNode(handle, state, extraClass = "", isHuman = false) {
-    const modelHint = (state?.view?.agents || []).find((a) => a.handle === handle)?.model || "";
+  function handleBadgeNode(handle, state, extraClass = "", isHuman = false, model = "") {
     return window.ChorusUI?.handleBadge
-      ? window.ChorusUI.handleBadge(handle, modelHint, extraClass, isHuman)
+      ? window.ChorusUI.handleBadge(handle, model, extraClass, isHuman)
       : element("span", extraClass, `@${handle}`);
   }
 
@@ -1047,42 +1038,35 @@
     return [...result.values()];
   }
 
-  // markdownEngine returns a configured Marked lexer instance with GFM tables,
-  // strikethrough, autolinks, and line breaks enabled, and raw HTML/XML tag
-  // tokenizers disabled so raw tags (<script>, <details>, <agent>) remain
-  // inert plain text tokens.
-  function markdownEngine() {
-    if (cachedMdEngine) return cachedMdEngine;
-    const MarkedClass = (window.marked || globalThis.marked)?.Marked;
-    if (!MarkedClass) return null;
-    cachedMdEngine = new MarkedClass({
-      gfm: true,
-      breaks: true,
-      tokenizer: {
-        html() { return undefined; },
-        tag() { return undefined; },
-      },
-    });
-    return cachedMdEngine;
+  // decodeEntities resolves decimal, hexadecimal, and standard named HTML
+  // character references in non-code Markdown text, link URLs, and link titles.
+  function decodeEntities(str) {
+    return String(str || "").replace(
+      /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/g,
+      (match, dec, hex, named) => {
+        if (dec !== undefined || hex !== undefined) {
+          const cp = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex, 16);
+          if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "\uFFFD";
+          return String.fromCodePoint(cp);
+        }
+        const key = named.toLowerCase();
+        return Object.hasOwn(NAMED_ENTITIES, key) ? NAMED_ENTITIES[key] : match;
+      }
+    );
   }
 
   // lexMarkdownBlocks tokenizes text into CommonMark/GFM block and inline
-  // tokens using markdownEngine(), falling back to a single plain-text
-  // paragraph if the Marked bundle is not loaded in a minimal test harness.
+  // tokens using the configured Marked lexer instance.
   function lexMarkdownBlocks(text) {
     const str = String(text || "").replace(/\r\n|\r/g, "\n");
     if (!str.trim()) return [];
-    const engine = markdownEngine();
-    if (!engine) {
-      return [{ type: "paragraph", raw: str, text: str, tokens: [{ type: "text", raw: str, text: str }] }];
-    }
-    return engine.lexer(str);
+    return mdEngine.lexer(str);
   }
 
   // formattedText renders a full message body with CommonMark/GFM blocks,
-  // clickable http/https links, and @handle mention badges.
-  function formattedText(text) {
-    return renderMessageText(text, { allowLinks: true });
+  // clickable http/https links with stable focus keys, and @handle mention badges.
+  function formattedText(text, focusPrefix = "md") {
+    return renderMessageText(text, { allowLinks: true, focusPrefix });
   }
 
   // renderMessageText renders CommonMark/GFM Markdown into a DocumentFragment
@@ -1090,8 +1074,9 @@
   // innerHTML. Raw HTML in messages stays inert text.
   function renderMessageText(text, opts = {}) {
     const allowLinks = opts.allowLinks !== false;
+    const linkCtx = { prefix: opts.focusPrefix || "md", count: 0 };
     const fragment = document.createDocumentFragment();
-    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks);
+    renderBlockTokens(fragment, lexMarkdownBlocks(text), allowLinks, linkCtx);
     return fragment;
   }
 
@@ -1116,14 +1101,14 @@
     if (entry.kind === "code") {
       fragment.append(document.createTextNode(entry.text));
     } else {
-      renderInlineTokens(fragment, entry.tokens, false);
+      renderInlineTokens(fragment, entry.tokens, false, null);
     }
     return fragment;
   }
 
   // renderBlockTokens walks CommonMark/GFM block tokens and appends DOM nodes
   // to target.
-  function renderBlockTokens(target, tokens, allowLinks) {
+  function renderBlockTokens(target, tokens, allowLinks, linkCtx) {
     for (const tok of tokens || []) {
       if (tok.type === "space" || tok.type === "def") continue;
       switch (tok.type) {
@@ -1133,7 +1118,7 @@
         case "heading": {
           const level = Math.min(4, Math.max(1, tok.depth || 1));
           const h = element("h4", `md-heading md-h${level}`);
-          renderInlineTokens(h, tok.tokens || [], allowLinks);
+          renderInlineTokens(h, tok.tokens || [], allowLinks, linkCtx);
           target.append(h);
           break;
         }
@@ -1145,7 +1130,7 @@
         }
         case "blockquote": {
           const bq = element("blockquote", "md-quote");
-          renderBlockTokens(bq, tok.tokens || [], allowLinks);
+          renderBlockTokens(bq, tok.tokens || [], allowLinks, linkCtx);
           target.append(bq);
           break;
         }
@@ -1153,7 +1138,7 @@
           const listEl = element(tok.ordered ? "ol" : "ul", "md-list");
           if (tok.ordered && tok.start && tok.start !== 1) listEl.start = Number(tok.start);
           for (const item of tok.items || []) {
-            listEl.append(renderListItem(item, allowLinks));
+            listEl.append(renderListItem(item, allowLinks, linkCtx));
           }
           target.append(listEl);
           break;
@@ -1167,7 +1152,7 @@
             for (const cell of tok.header) {
               const th = document.createElement("th");
               if (cell.align) th.style.textAlign = cell.align;
-              renderInlineTokens(th, cell.tokens || [], allowLinks);
+              renderInlineTokens(th, cell.tokens || [], allowLinks, linkCtx);
               tr.append(th);
             }
             thead.append(tr);
@@ -1180,7 +1165,7 @@
               for (const cell of row) {
                 const td = document.createElement("td");
                 if (cell.align) td.style.textAlign = cell.align;
-                renderInlineTokens(td, cell.tokens || [], allowLinks);
+                renderInlineTokens(td, cell.tokens || [], allowLinks, linkCtx);
                 tr.append(td);
               }
               tbody.append(tr);
@@ -1196,9 +1181,9 @@
         default: {
           const p = element("p", "md-p");
           if (Array.isArray(tok.tokens)) {
-            renderInlineTokens(p, tok.tokens, allowLinks);
+            renderInlineTokens(p, tok.tokens, allowLinks, linkCtx);
           } else {
-            appendTextWithMentions(p, tok.raw ?? tok.text ?? "");
+            appendTextWithMentions(p, decodeEntities(tok.raw ?? tok.text ?? ""));
           }
           target.append(p);
           break;
@@ -1210,7 +1195,7 @@
   // renderListItem builds a <li class="md-list-item"> from a Marked list_item
   // token, grouping tight inline text and task checkboxes into .md-li-text
   // while appending nested lists, code blocks, and loose paragraphs as blocks.
-  function renderListItem(item, allowLinks) {
+  function renderListItem(item, allowLinks, linkCtx) {
     const li = element("li", `md-list-item${item.task ? " is-task-item" : ""}`);
     let inlineSpan = null;
     for (const child of item.tokens || []) {
@@ -1229,13 +1214,13 @@
           inlineSpan.append(document.createElement("br"));
         }
         if (Array.isArray(child.tokens)) {
-          renderInlineTokens(inlineSpan, child.tokens, allowLinks);
+          renderInlineTokens(inlineSpan, child.tokens, allowLinks, linkCtx);
         } else {
-          appendTextWithMentions(inlineSpan, child.raw ?? child.text ?? "");
+          appendTextWithMentions(inlineSpan, decodeEntities(child.raw ?? child.text ?? ""));
         }
       } else {
         inlineSpan = null;
-        renderBlockTokens(li, [child], allowLinks);
+        renderBlockTokens(li, [child], allowLinks, linkCtx);
       }
     }
     return li;
@@ -1253,9 +1238,9 @@
   }
 
   // renderInlineTokens walks CommonMark/GFM inline tokens and appends DOM
-  // elements and text nodes to target. Leaf text tokens use tok.raw so
-  // numeric character references or ampersands are never HTML-entity-encoded.
-  function renderInlineTokens(target, tokens, allowLinks) {
+  // elements and text nodes to target. Non-code text, link URLs, and titles
+  // decode HTML character references before URL validation and text-node creation.
+  function renderInlineTokens(target, tokens, allowLinks, linkCtx) {
     for (const tok of tokens || []) {
       switch (tok.type) {
         case "codespan":
@@ -1263,19 +1248,19 @@
           break;
         case "strong": {
           const strong = document.createElement("strong");
-          renderInlineTokens(strong, tok.tokens || [], allowLinks);
+          renderInlineTokens(strong, tok.tokens || [], allowLinks, linkCtx);
           target.append(strong);
           break;
         }
         case "em": {
           const em = document.createElement("em");
-          renderInlineTokens(em, tok.tokens || [], allowLinks);
+          renderInlineTokens(em, tok.tokens || [], allowLinks, linkCtx);
           target.append(em);
           break;
         }
         case "del": {
           const del = document.createElement("del");
-          renderInlineTokens(del, tok.tokens || [], allowLinks);
+          renderInlineTokens(del, tok.tokens || [], allowLinks, linkCtx);
           target.append(del);
           break;
         }
@@ -1289,37 +1274,40 @@
           target.append(document.createTextNode(tok.text ?? ""));
           break;
         case "link": {
-          const href = allowLinks ? safeHttpUrl(tok.href) : "";
+          const rawHref = tok.autolink ? (tok.href ?? "") : decodeEntities(tok.href ?? "");
+          const href = allowLinks ? safeHttpUrl(rawHref) : "";
           if (href) {
+            const idx = linkCtx ? linkCtx.count++ : 0;
             const a = element("a", "md-link");
             a.href = href;
             a.target = "_blank";
             a.rel = "noopener noreferrer";
-            if (tok.title) a.title = tok.title;
+            a.dataset.focusKey = `${linkCtx?.prefix || "md"}:link:${idx}`;
+            if (tok.title) a.title = decodeEntities(tok.title);
             if (tok.autolink) {
               a.append(document.createTextNode(tok.text ?? href));
             } else {
-              renderInlineTokens(a, tok.tokens || [], false);
+              renderInlineTokens(a, tok.tokens || [], false, linkCtx);
             }
             target.append(a);
           } else if (tok.autolink) {
             target.append(document.createTextNode(tok.raw ?? tok.text ?? ""));
           } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
-            renderInlineTokens(target, tok.tokens, false);
+            renderInlineTokens(target, tok.tokens, false, linkCtx);
           } else {
-            appendTextWithMentions(target, tok.text ?? "");
+            appendTextWithMentions(target, decodeEntities(tok.text ?? ""));
           }
           break;
         }
         case "image":
-          appendTextWithMentions(target, tok.text || tok.raw || "");
+          appendTextWithMentions(target, decodeEntities(tok.text || tok.raw || ""));
           break;
         case "text":
         default:
           if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
-            renderInlineTokens(target, tok.tokens, allowLinks);
+            renderInlineTokens(target, tok.tokens, allowLinks, linkCtx);
           } else {
-            appendTextWithMentions(target, tok.raw ?? tok.text ?? "");
+            appendTextWithMentions(target, decodeEntities(tok.raw ?? tok.text ?? ""));
           }
           break;
       }
@@ -1442,14 +1430,16 @@
   function inlineTokensToPlainText(tokens) {
     let out = "";
     for (const tok of tokens || []) {
-      if (tok.type === "codespan" || tok.type === "escape" || tok.type === "image") {
+      if (tok.type === "codespan" || tok.type === "escape") {
         out += tok.text ?? "";
+      } else if (tok.type === "image") {
+        out += decodeEntities(tok.text ?? "");
       } else if (tok.type === "br") {
         out += " ";
       } else if (Array.isArray(tok.tokens) && tok.tokens.length > 0) {
         out += inlineTokensToPlainText(tok.tokens);
       } else if (tok.type !== "checkbox") {
-        out += tok.raw ?? tok.text ?? "";
+        out += decodeEntities(tok.raw ?? tok.text ?? "");
       }
     }
     return out;

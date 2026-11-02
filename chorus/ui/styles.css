@@ -722,137 +722,7 @@ body[data-theme="light"] .provider-openai {
   gap: 12px;
 }
 
-/* 2. Participants Strip */
-.agent-strip-section {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-}
-
-.agent-summary {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  text-align: left;
-  cursor: pointer;
-  min-width: 0;
-  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
-}
-
-.agent-summary.is-historical {
-  border-style: dashed;
-  background: var(--bg-canvas);
-}
-
-.agent-summary.is-human-agent {
-  border-left: 3px solid var(--brand-coral);
-}
-
-.agent-summary:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-elevated);
-}
-
-.agent-summary.is-selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.agent-card-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.agent-name {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--agent-color, var(--text-primary));
-}
-
-.agent-model-inline {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--text-muted);
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-status-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.agent-status-inline.is-watching {
-  color: var(--teal);
-  font-weight: 600;
-}
-
-.presence-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--teal);
-  flex-shrink: 0;
-}
-
-.agent-behind-pill {
-  margin-left: auto;
-  background: var(--amber-soft);
-  color: var(--amber);
-  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 999px;
-}
-
-.agent-mention-dot {
-  background: var(--coral-soft);
-  color: var(--coral);
-  border: 1px solid color-mix(in srgb, var(--coral) 35%, transparent);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-
-.agent-caught-up-pill {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-
-.agent-role-inline {
-  font-size: 12.5px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  width: 100%;
-}
-
-.agent-latest,
+/* 2. Agent Inspection Drawer */
 .agent-last-message {
   font-size: 13.5px;
   line-height: 19px;
@@ -1103,6 +973,11 @@ body[data-theme="light"] .provider-openai {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+.tl-lane-label:hover {
+  text-decoration: underline;
 }
 
 .tl-avatar-plate {
@@ -1232,6 +1107,7 @@ body[data-theme="light"] .provider-openai {
   z-index: 10;
   max-width: min(460px, calc(100% - 24px));
   min-width: 240px;
+  max-height: 340px;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
@@ -1240,7 +1116,8 @@ body[data-theme="light"] .provider-openai {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13.5px;
@@ -1352,12 +1229,6 @@ body[data-theme="light"] .provider-openai {
 
 .tl-card-body {
   margin: 0;
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: 240px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 4px;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
@@ -2260,13 +2131,6 @@ body[data-theme="light"] .provider-openai {
   text-align: center;
   padding: 24px;
   color: var(--text-muted);
-}
-
-.empty-inline {
-  font-size: 14px;
-  color: var(--text-muted);
-  padding: 6px 0;
-  margin: 0;
 }
 
 /* 5. Floating Composer Dock */

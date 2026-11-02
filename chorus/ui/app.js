@@ -87,27 +87,58 @@
     return palette[Math.abs(hash) % palette.length];
   }
 
+  // declaredModel returns the explicit model hint, or the participant's live
+  // registration model, or the model recorded on their newest retained message
+  // or channel pin.
+  function declaredModel(handle, model) {
+    if (model != null && model !== "") return String(model);
+    const reg = (state.view?.agents || []).find((a) => a.handle === handle);
+    if (reg?.model) return reg.model;
+    let latestMs = -1;
+    let latestModel = "";
+    for (const ch of state.view?.channels || []) {
+      for (const m of ch.messages || []) {
+        if (m.sender === handle && m.model && m.sent_at_ms >= latestMs) {
+          latestMs = m.sent_at_ms;
+          latestModel = m.model;
+        }
+      }
+      if (!latestModel && ch.pin?.sender === handle && ch.pin.model) {
+        latestModel = ch.pin.model;
+      }
+    }
+    for (const ib of state.view?.inboxes || []) {
+      for (const m of ib.messages || []) {
+        if (m.sender === handle && m.model && m.sent_at_ms >= latestMs) {
+          latestMs = m.sent_at_ms;
+          latestModel = m.model;
+        }
+      }
+    }
+    return latestModel;
+  }
+
   // resolveIdentity maps a participant's declared model (or saved send-time
   // human provenance) to the official brand mark under /ui/brands/. It matches
-  // supported model identifier forms (including Bedrock ARNs and Vertex/provider
-  // paths) and never guesses from handle prefixes, roles, or arbitrary substrings.
+  // supported model identifier forms (including Bedrock ARNs, Vertex/provider
+  // paths, space-separated model names, and OpenAI sol-* codenames) and never
+  // guesses from handle prefixes, roles, or arbitrary substrings.
   function resolveIdentity(handle, model, isHuman = false) {
     const raw = String(handle || "");
     if (isHuman) {
       return { handle: raw, label: `@${raw}`, model: "human", provider: "human", iconUrl: null, avatarUrl: null };
     }
-    const reg = (state.view?.agents || []).find((a) => a.handle === raw);
-    const mod = String(model !== undefined && model !== "" ? model : reg?.model || "");
+    const mod = declaredModel(raw, model);
     const m = mod.trim().toLowerCase();
     if (m === "human") {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
-    const leaf = m.replace(cloudPrefix, "");
+    const leaf = m.replace(cloudPrefix, "").replace(/\s+/g, "-");
     if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg" };
     }
-    if (/^(?:gpt-[a-z0-9._:@-]+|chatgpt-[a-z0-9._:@-]+|codex(?:$|-[a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
+    if (/^(?:gpt(?:$|[-._:@][a-z0-9._:@-]+)|chatgpt-[a-z0-9._:@-]+|codex(?:$|[-._:@][a-z0-9._:@-]+)|sol(?:$|[-._:@][a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
       return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg" };
     }
     if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
@@ -466,6 +497,13 @@
       document.getElementById("send-text")?.focus();
     },
 
+    // inspectAgent opens or closes the #agent-details inspection drawer for handle.
+    inspectAgent(handle) {
+      const clean = String(handle || "").replace(/^@/, "");
+      if (!clean) return;
+      window.ChorusStream?.inspectAgent?.(document.getElementById("agent-details"), clean, state, actions);
+    },
+
     // updatePin sends the editor's exact text to its original channel. It
     // never reads or resets the main message draft, target, or reply fields.
     async updatePin(swarm, channelName, text) {
@@ -646,7 +684,6 @@
       window.ChorusStream.render(
         {
           scrollEl: stageEl,
-          agentStripEl: document.getElementById("agent-strip"),
           detailsEl: document.getElementById("agent-details"),
           pinEl: document.getElementById("pin-container"),
           mentionsEl: document.getElementById("mentions-container"),
