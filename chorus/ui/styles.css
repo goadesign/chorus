@@ -980,14 +980,20 @@ body[data-theme="light"] .provider-openai {
   text-decoration: underline;
 }
 
+.tl-lane-label:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tl-lane-inspect {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .tl-avatar-plate {
   fill: #171717;
   stroke: #2e2e2e;
   stroke-width: 1px;
-}
-
-.tl-avatar-icon {
-  pointer-events: none;
 }
 
 .tl-avatar-initial {
@@ -996,7 +1002,6 @@ body[data-theme="light"] .provider-openai {
   font-weight: 700;
   text-anchor: middle;
   dominant-baseline: central;
-  pointer-events: none;
 }
 
 .tl-lane-label.is-left {

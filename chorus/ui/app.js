@@ -25,7 +25,7 @@
     filterAgent: "",
     searchQuery: "",
     // A pending reply retains only its destination and original author facts.
-    replyTo: null, // null | { target, seq, sender, human }
+    replyTo: null, // null | { target, seq, sender, human, model }
     pollAbort: null,
   };
 
@@ -475,8 +475,8 @@
 
     // setReplyTo preserves the clicked message's saved author facts even after
     // that message leaves the retained snapshot or its handle changes models.
-    setReplyTo(channelName, seq, sender, human) {
-      state.replyTo = { target: channelName, seq, sender, human };
+    setReplyTo(channelName, seq, sender, human = false, model = "") {
+      state.replyTo = { target: channelName, seq, sender, human: Boolean(human), model: String(model || "") };
       if (channelName) {
         const sendTarget = document.getElementById("send-target");
         if (sendTarget) sendTarget.value = channelName;
@@ -525,7 +525,7 @@
     container.replaceChildren(
       el("span", { className: "context-pill" },
         svgIcon("reply", "icon icon-sm"), `#${reply.seq}`,
-        " (", handleBadge(reply.sender, "", "", reply.human), ")",
+        " (", handleBadge(reply.sender, reply.model || "", "", reply.human), ")",
         el("button", {
           type: "button", className: "icon-btn icon-btn-sm", "aria-label": "Cancel reply", title: "Cancel reply",
           onClick: () => {

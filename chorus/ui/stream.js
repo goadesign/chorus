@@ -24,15 +24,25 @@
     },
   });
 
-  // Standard named HTML character references decoded in non-code Markdown text,
-  // link URLs, and link titles.
-  const NAMED_ENTITIES = Object.freeze({
+  // Single detached <textarea> used by decodeEntities to resolve standard
+  // case-sensitive HTML5 named character references without parsing tags.
+  const entityDecoder = document.createElement("textarea");
+  entityDecoder.innerHTML = "&amp;";
+  const hasNativeEntityDecoder = entityDecoder.value === "&";
+  const FALLBACK_ENTITIES = Object.freeze({
     amp: "&",
     lt: "<",
     gt: ">",
     quot: '"',
     apos: "'",
     nbsp: "\u00a0",
+    copy: "\u00a9",
+    eacute: "\u00e9",
+    Lt: "\u226a",
+    Gt: "\u226b",
+    ndash: "\u2013",
+    mdash: "\u2014",
+    hellip: "\u2026",
   });
 
   // Displayed previews belong only to this page visit and the retained messages
@@ -54,11 +64,9 @@
       previewSwarm = state.activeSwarm;
     }
     if (state.view === null) {
-      for (const root of [els.mentionsEl, els.detailsEl]) {
-        root?.replaceChildren();
-      }
+      els.mentionsEl?.replaceChildren();
+      if (els.detailsEl) closeAgentDrawer(els.detailsEl, false);
       renderPin(els.pinEl, state, actions);
-      if (els.detailsEl) delete els.detailsEl.dataset.agent;
       els.titleEl.textContent = "Messages";
       els.subtitleEl.textContent = "Loading swarm…";
       els.streamEl.replaceChildren(empty("Loading messages", "Connecting to the swarm…"));
@@ -167,7 +175,7 @@
     for (const entry of entries) {
       if (entry.message.sender === handle) {
         latest = entry;
-        if (entry.message.model) latestModel = entry.message.model;
+        if (!reg?.model && entry.message.model) latestModel = entry.message.model;
         if (entry.target.startsWith("#")) seenChannels.add(entry.target);
       }
     }
@@ -195,6 +203,37 @@
     };
   }
 
+  // closeAgentDrawer clears #agent-details, repositions any open timeline
+  // preview card, and restores keyboard focus to the control that opened the
+  // drawer when focus was inside or on the invoking control.
+  function closeAgentDrawer(detailsEl, restoreFocus = true) {
+    const returnKey = detailsEl.dataset.returnFocusKey || "";
+    const returnLane = detailsEl.dataset.returnLane || detailsEl.dataset.agent || "";
+    delete detailsEl.dataset.agent;
+    delete detailsEl.dataset.returnFocusKey;
+    delete detailsEl.dataset.returnLane;
+    detailsEl.replaceChildren();
+    window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
+    if (!restoreFocus) return;
+    if (returnKey) {
+      const target = [...document.querySelectorAll("[data-focus-key]")]
+        .find((node) => node.dataset.focusKey === returnKey);
+      if (target) {
+        target.focus?.({ preventScroll: true });
+        return;
+      }
+    }
+    if (returnLane) {
+      const laneNode = [...document.querySelectorAll("[data-tl-lane]")]
+        .find((node) => node.dataset.tlLane === returnLane);
+      if (laneNode) {
+        laneNode.focus?.({ preventScroll: true });
+        return;
+      }
+    }
+    document.querySelector("svg.tl")?.focus?.({ preventScroll: true });
+  }
+
   // inspectAgent toggles the #agent-details drawer for handle when the reader
   // clicks an agent lane in the timeline or an Inspect action in the stream.
   function inspectAgent(detailsEl, handle, state, actions) {
@@ -202,13 +241,19 @@
     const clean = String(handle || "").replace(/^@/, "");
     if (!clean) return;
     if (detailsEl.dataset.agent === clean) {
-      delete detailsEl.dataset.agent;
-      detailsEl.replaceChildren();
-      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
+      closeAgentDrawer(detailsEl, true);
       return;
     }
     const found = findParticipant(clean, state, retainedMessages(state.view));
     if (!found) return;
+    const active = document.activeElement;
+    if (active && !detailsEl.contains(active) && active.dataset?.focusKey) {
+      detailsEl.dataset.returnFocusKey = active.dataset.focusKey;
+      delete detailsEl.dataset.returnLane;
+    } else {
+      detailsEl.dataset.returnLane = clean;
+      delete detailsEl.dataset.returnFocusKey;
+    }
     detailsEl.dataset.agent = clean;
     showAgent(detailsEl, found.agent, state, actions, found.latest);
     detailsEl.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -223,21 +268,14 @@
     if (!inspected) return;
     const found = findParticipant(inspected, state, entries);
     if (found) showAgent(detailsEl, found.agent, state, actions, found.latest);
-    else {
-      delete detailsEl.dataset.agent;
-      detailsEl.replaceChildren();
-    }
+    else closeAgentDrawer(detailsEl, detailsEl.contains(document.activeElement));
   }
 
   // showAgent describes current registration or historical message facts,
   // declared model, per-channel and DM sequence-position gaps and read watermarks,
   // and 1-click actions to message, filter, or copy the chorus watch command.
   function showAgent(root, agent, state, actions, latest) {
-    const closeDrawer = () => {
-      delete root.dataset.agent;
-      root.replaceChildren();
-      window.ChorusTimeline?.placePreview?.(document.getElementById("timeline-root"));
-    };
+    const closeDrawer = () => closeAgentDrawer(root, true);
     root.onkeydown = (ev) => {
       if (ev.key === "Escape") {
         ev.stopPropagation();
@@ -292,7 +330,9 @@
     });
     copyWatchBtn.setAttribute("aria-live", "polite");
 
-    const isHuman = agent.model === "human" || Boolean(latest && isFromHumanMessage(latest.message));
+    const isHuman = agent.registered !== false
+      ? agent.model === "human"
+      : (agent.model === "human" || Boolean(latest && isFromHumanMessage(latest.message)));
     const modelHint = agent.model || "";
     const nodes = [
       element("div", "details-heading",
@@ -405,18 +445,18 @@
   // assignments, removed punctuation, or a new ownership grammar.
   function renderPinStructured(clauses, pinKey = "pin") {
     const container = element("div", "pin-structured");
-    for (const clause of clauses) {
+    clauses.forEach((clause, idx) => {
       const kind = clause.key.toLowerCase();
       if (kind === "goal") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Goal"),
-          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal`))));
+          element("div", "pin-goal-block", formattedText(clause.value, `pin:${pinKey}:goal:${idx}`))));
       } else if (kind === "owners") {
         container.append(element("div", "pin-section",
           element("h3", "pin-section-label", "Owners"),
-          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners`))));
+          element("div", "pin-owner-text", formattedText(clause.value, `pin:${pinKey}:owners:${idx}`))));
       } else if (kind === "verify") {
-        const copyBtn = actionButton("Copy command", `copy-verify:${clause.value}`, async (ev) => {
+        const copyBtn = actionButton("Copy command", `copy-verify:${idx}:${clause.value}`, async (ev) => {
           const btn = ev.currentTarget;
           try {
             await navigator.clipboard.writeText(clause.value);
@@ -430,7 +470,7 @@
           element("h3", "pin-section-label", "Verify"),
           element("div", "pin-verify-row", element("code", "pin-verify-code", clause.value), copyBtn)));
       }
-    }
+    });
     return container;
   }
 
@@ -558,7 +598,7 @@
     const last = mentions.at(-1);
     const mentionsSummary = element("summary", "mentions-summary",
       ...(last
-        ? ["Recent mentions: ", handleBadgeNode(last.entry.message.sender, state, "", isFromHumanMessage(last.entry.message)), " → ", handleBadgeNode(last.handle, state), ` (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`]
+        ? ["Recent mentions: ", handleBadgeNode(last.entry.message.sender, state, "", isFromHumanMessage(last.entry.message), last.entry.message.model), " → ", handleBadgeNode(last.handle, state), ` (${age(last.entry.message.sent_at_ms)} ago) · ${mentions.length} total`]
         : ["No mentions in this view"]));
     mentionsSummary.dataset.focusKey = "mentions-summary";
     disclosure.append(mentionsSummary);
@@ -566,14 +606,14 @@
     for (const { entry, handle } of mentions.toReversed()) {
       const row = element("li", "mention-row",
         actionButton(
-          [handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message)), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
+          [handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message), entry.message.model), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
           `mention:${coordinate(entry)}:${handle}`,
           () => actions.selectMessage(entry.target, entry.message.seq)
         ),
         element("span", "message-time", `${age(entry.message.sent_at_ms)} ago`));
       if (entry.target.startsWith("#")) {
         const reply = entries.find((item) => item.target === entry.target && item.message.reply_to === entry.message.seq);
-        if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state, "", isFromHumanMessage(reply.message))], `mention-reply:${coordinate(reply)}`,
+        if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state, "", isFromHumanMessage(reply.message), reply.message.model)], `mention-reply:${coordinate(reply)}`,
           () => actions.selectMessage(reply.target, reply.message.seq)));
       }
       list.append(row);
@@ -970,7 +1010,7 @@
     const controls = element("div", "message-actions");
     if (entry.target.startsWith("#")) {
       controls.append(actionButton([svgIcon("reply", "icon icon-xs"), "Reply"], `reply:${key}`, () => {
-        actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman);
+        actions.setReplyTo(entry.target, message.seq, message.sender, fromHuman, message.model);
       }));
     } else {
       controls.append(actionButton(["Message ", handleBadgeNode(message.sender, state, "", fromHuman, message.model)], `dm-reply:${key}`, () => {
@@ -1038,8 +1078,9 @@
     return [...result.values()];
   }
 
-  // decodeEntities resolves decimal, hexadecimal, and standard named HTML
-  // character references in non-code Markdown text, link URLs, and link titles.
+  // decodeEntities resolves decimal, hexadecimal, and standard case-sensitive
+  // HTML5 named character references in non-code Markdown text, link URLs, and
+  // link titles.
   function decodeEntities(str) {
     return String(str || "").replace(
       /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/g,
@@ -1049,8 +1090,12 @@
           if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "\uFFFD";
           return String.fromCodePoint(cp);
         }
-        const key = named.toLowerCase();
-        return Object.hasOwn(NAMED_ENTITIES, key) ? NAMED_ENTITIES[key] : match;
+        if (hasNativeEntityDecoder) {
+          entityDecoder.innerHTML = match;
+          const val = entityDecoder.value;
+          return val === match || (named !== "semi" && val.endsWith(";")) ? match : val;
+        }
+        return Object.hasOwn(FALLBACK_ENTITIES, named) ? FALLBACK_ENTITIES[named] : match;
       }
     );
   }
