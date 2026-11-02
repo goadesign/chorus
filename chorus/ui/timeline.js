@@ -121,6 +121,15 @@
   const hoverState = new WeakMap();
   // Per-mark builders of rich hover label content (see hoverable).
   const hoverBuilders = new WeakMap();
+  // Popovers placed by placeAnchored and the control each is anchored to.
+  // A popover is forgotten once it leaves the page.
+  const anchors = new WeakMap();
+  const anchored = new Set();
+  // Whether the shared scroll and resize listeners for anchored popovers are
+  // installed, and the function that places every open popover again (also
+  // run by placePreview after the dashboard's final layout).
+  let anchoredInstalled = false;
+  let repositionAnchored = () => {};
   // Per-root work that must wait until the whole page has finished updating
   // after a render (placing the preview card and restoring the hover label).
   // It runs once, in the next animation frame, which comes after app.js has
@@ -569,31 +578,39 @@
   // card always stays inside that visible area. The card floats above the
   // page, so placing it never moves layout.
   function placeCard(rootEl, svg, card, x, y, width) {
-    // Placing again (after the message area scrolled) measures the card at
-    // its natural height, then restores how far it was scrolled.
-    const inner = card.scrollTop;
-    card.style.visibility = "hidden";
-    card.style.maxHeight = "";
     if (!card.isConnected) rootEl.appendChild(card);
-    const rootBox = rootEl.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
-    const area = (rootEl.closest("#stage-container") || document.documentElement).getBoundingClientRect();
     // The browser scales the chart to the section's width, so chart
     // coordinates are converted to the pixels actually on screen.
     const scale = svgBox.width / width;
     const ax = svgBox.left + x * scale;
     const ay = svgBox.top + y * scale;
+    fitInArea(card, { left: ax, right: ax, top: ay, bottom: ay }, (DOT_R_SELECTED + 6) * scale,
+      svgBox.left, svgBox.right, "center");
+  }
+
+  // fitInArea positions card (absolutely, in its offset parent) next to the
+  // anchor box, given in viewport pixels, inside the visible part of the
+  // scrolling message area (between the page header and the composer). It
+  // opens below the anchor when it fits there, else above; otherwise it uses
+  // the whole visible area, covering the anchor if it must, centred on it as
+  // far as the area allows, and scrolls inside, so it is never squeezed into
+  // a thin strip. Horizontally it stays within [minX, maxX], centred on the
+  // anchor or aligned with its left edge. The card always stays wholly inside
+  // the visible area, even when the anchor has scrolled out of view, and it
+  // keeps how far it was scrolled. The card floats above the page, so placing
+  // it never moves layout.
+  function fitInArea(card, box, gap, minX, maxX, align) {
+    const inner = card.scrollTop;
+    card.style.visibility = "hidden";
+    card.style.maxHeight = "";
+    const area = (document.getElementById("stage-container") || document.documentElement).getBoundingClientRect();
     const cw = card.offsetWidth;
     const ch = card.offsetHeight;
-    const gap = (DOT_R_SELECTED + 6) * scale;
     // Room counts only the visible part of the area on each side of the
-    // point, so a point scrolled out of view never claims space nobody sees.
-    const roomBelow = area.bottom - PAD - Math.max(ay + gap, area.top + PAD);
-    const roomAbove = Math.min(ay - gap, area.bottom - PAD) - (area.top + PAD);
-    // The card opens beside its point when it fits below, else above.
-    // Otherwise it uses the whole visible area, covering its point if it
-    // must, centred on the point as far as the area allows, and scrolls
-    // inside; it is never squeezed into the thin strip beside the point.
+    // anchor, so an anchor scrolled out of view never claims space nobody sees.
+    const roomBelow = area.bottom - PAD - Math.max(box.bottom + gap, area.top + PAD);
+    const roomAbove = Math.min(box.top - gap, area.bottom - PAD) - (area.top + PAD);
     const whole = area.bottom - area.top - 2 * PAD;
     const side = ch <= roomBelow ? "below" : ch <= roomAbove ? "above" : "";
     const shown = side ? ch : Math.max(0, Math.min(ch, whole));
@@ -606,16 +623,83 @@
           parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
       card.style.maxHeight = `${Math.max(0, Math.floor(shown - frame))}px`;
     }
-    const left = Math.max(svgBox.left + PAD, Math.min(ax - cw / 2, svgBox.right - cw - PAD));
-    // The card always stays wholly inside the visible area, including when
-    // the point itself has scrolled out of view.
-    const wanted = side === "below" ? ay + gap : side === "above" ? ay - gap - shown : ay - shown / 2;
+    const lo = Math.max(minX, area.left) + PAD;
+    const hi = Math.min(maxX, area.right) - PAD;
+    const preferred = align === "center" ? (box.left + box.right) / 2 - cw / 2 : box.left;
+    const left = Math.max(lo, Math.min(preferred, hi - cw));
+    const mid = (box.top + box.bottom) / 2;
+    const wanted = side === "below" ? box.bottom + gap : side === "above" ? box.top - gap - shown : mid - shown / 2;
     const top = Math.max(area.top + PAD, Math.min(wanted, area.bottom - PAD - shown));
-    // Absolute positions are measured from the section's padding edge.
-    card.style.left = `${Math.round(left - rootBox.left - rootEl.clientLeft)}px`;
-    card.style.top = `${Math.round(top - rootBox.top - rootEl.clientTop)}px`;
+    // Absolute positions are measured from the offset parent's padding edge,
+    // plus its own scroll when that parent is itself a scrolling area.
+    const parent = card.offsetParent || document.documentElement;
+    const pbox = parent.getBoundingClientRect();
+    card.style.left = `${Math.round(left - pbox.left - parent.clientLeft + parent.scrollLeft)}px`;
+    card.style.top = `${Math.round(top - pbox.top - parent.clientTop + parent.scrollTop)}px`;
     card.style.visibility = "";
     card.scrollTop = inner;
+  }
+
+  // placeAnchored positions card (an absolutely positioned popover, such as
+  // the agent details) next to anchorEl, the control that opened it, with
+  // the same rules as the timeline's preview card (see fitInArea), left
+  // aligned with the anchor. It keeps the card placed while the message area
+  // scrolls or changes size and after redraws replace the anchor (found again
+  // by its data-tl-lane or data-focus-key), until the card leaves the page.
+  // On a narrow screen (under 600px) it clears its own placement, so the
+  // stylesheet can present the card as a bottom sheet instead.
+  function placeAnchored(card, anchorEl) {
+    anchors.set(card, anchorEl);
+    trackAnchored(card);
+    applyAnchored(card);
+  }
+
+  // applyAnchored places one tracked popover against its anchor's current
+  // position, or clears its placement on a narrow screen.
+  function applyAnchored(card) {
+    if (window.matchMedia("(max-width: 599px)").matches) {
+      card.style.left = card.style.top = card.style.maxHeight = "";
+      return;
+    }
+    let anchor = anchors.get(card);
+    if (!anchor.isConnected) {
+      anchor = findAnchor(anchor) || anchor;
+      anchors.set(card, anchor);
+    }
+    const area = (document.getElementById("stage-container") || document.documentElement).getBoundingClientRect();
+    fitInArea(card, anchor.getBoundingClientRect(), 6, area.left, area.right, "start");
+  }
+
+  // findAnchor finds the control that replaced a removed anchor after a
+  // redraw, by the stable identity both kinds of anchor carry.
+  function findAnchor(old) {
+    const lane = old.dataset ? old.dataset.tlLane : "";
+    if (lane) return [...document.querySelectorAll("[data-tl-lane]")].find((n) => n.dataset.tlLane === lane) || null;
+    const key = old.dataset ? old.dataset.focusKey : "";
+    if (key) return [...document.querySelectorAll("[data-focus-key]")].find((n) => n.dataset.focusKey === key) || null;
+    return null;
+  }
+
+  // trackAnchored keeps an open popover placed: it is placed again whenever
+  // the message area scrolls or resizes, the window resizes, or the page
+  // redraws, and forgotten once it leaves the page.
+  function trackAnchored(card) {
+    anchored.add(card);
+    if (anchoredInstalled) return;
+    anchoredInstalled = true;
+    const again = () => {
+      for (const c of anchored) {
+        if (c.isConnected && !c.hidden) applyAnchored(c);
+        else anchored.delete(c);
+      }
+    };
+    const area = document.getElementById("stage-container");
+    if (area) {
+      area.addEventListener("scroll", again, { passive: true });
+      if (typeof ResizeObserver === "function") new ResizeObserver(again).observe(area);
+    }
+    window.addEventListener("resize", again);
+    repositionAnchored = again;
   }
 
   // fitQuietLabels sizes the quiet labels by their rendered width, left to
@@ -1475,8 +1559,10 @@
   // as it is now. A render already schedules this for the next animation
   // frame, after app.js has drawn every surface and restored scroll; app.js
   // calls placePreview directly after a change that moves the chart without
-  // a render (opening or closing an agent's details above it).
+  // a render. It also places any open anchored popover (see placeAnchored)
+  // again, since the final layout may have moved its anchor.
   function placePreview(rootEl) {
+    repositionAnchored();
     if (finishers.has(rootEl)) {
       runFinish(rootEl);
       return;
@@ -1493,6 +1579,7 @@
   window.ChorusTimeline = {
     render,
     placePreview,
+    placeAnchored,
     isDragging: (rootEl) => drags.has(rootEl),
   };
 })();
