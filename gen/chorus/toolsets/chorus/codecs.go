@@ -166,7 +166,7 @@ var joinPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
 		JSONType:    "string",
-		Description: "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+		Description: "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("tail")},
@@ -281,7 +281,7 @@ var whoPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
 		JSONType:    "string",
-		Description: "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+		Description: "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.",
 	},
 }
 
@@ -1039,7 +1039,7 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 		case "model":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+				typed[key], "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.",
 			); err != nil {
 				return err
 			}
@@ -1122,7 +1122,7 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 		case "model":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.",
+				typed[key], "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.",
 			); err != nil {
 				return err
 			}

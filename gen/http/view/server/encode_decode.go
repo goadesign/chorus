@@ -236,6 +236,7 @@ func marshalViewPinToPinResponseBody(v *view.Pin) *PinResponseBody {
 		Sender: v.Sender,
 		Text:   v.Text,
 		Human:  v.Human,
+		Model:  v.Model,
 	}
 
 	return res
@@ -264,6 +265,7 @@ func marshalViewMessageToMessageResponseBody(v *view.Message) *MessageResponseBo
 		ReplyTo:  v.ReplyTo,
 		SentAtMs: v.SentAtMs,
 		Human:    v.Human,
+		Model:    v.Model,
 	}
 
 	return res

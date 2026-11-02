@@ -436,6 +436,10 @@ func (v *viewService) channel(
 				human := true
 				ch.Pin.Human = &human
 			}
+			if pin.Model != "" {
+				model := pin.Model
+				ch.Pin.Model = &model
+			}
 		}
 	}
 	mentionAll := parseSeq(snap[mentionMapKey("all", name)])
@@ -494,6 +498,10 @@ func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target stri
 		if m.Human {
 			human := true
 			msg.Human = &human
+		}
+		if m.Model != "" {
+			model := m.Model
+			msg.Model = &model
 		}
 		msgs = append(msgs, msg)
 	}
