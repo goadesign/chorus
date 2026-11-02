@@ -31,6 +31,12 @@ type (
 		// recomputed, so a later registration under the same handle cannot
 		// change it.
 		Human bool `json:"human,omitempty"`
+		// Model is the model the sender had declared when the message was
+		// published. Like Human it is saved with the message and never
+		// recomputed, so the message keeps its sender's identity after the
+		// sender leaves, expires, or the handle is reused. Empty for messages
+		// published before senders' models were recorded.
+		Model string `json:"model,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`
 		// ReplyTo is the optional sequence number in the same target stream

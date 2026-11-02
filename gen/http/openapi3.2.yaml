@@ -151,18 +151,21 @@ paths:
                                     - head_seq: 14
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -171,6 +174,7 @@ paths:
                                       name: '#arch'
                                       pin:
                                         human: true
+                                        model: claude-opus-5-5
                                         sender: lead
                                         seq: 1
                                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -187,18 +191,21 @@ paths:
                                     - head_seq: 14
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -207,6 +214,7 @@ paths:
                                       name: '#arch'
                                       pin:
                                         human: true
+                                        model: claude-opus-5-5
                                         sender: lead
                                         seq: 1
                                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -223,18 +231,21 @@ paths:
                                     - head_seq: 14
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -243,6 +254,7 @@ paths:
                                       name: '#arch'
                                       pin:
                                         human: true
+                                        model: claude-opus-5-5
                                         sender: lead
                                         seq: 1
                                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -261,41 +273,21 @@ paths:
                                       head_seq: 3
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
-                                          reply_to: 12
-                                          sender: db
-                                          sent_at_ms: 1793467612968
-                                          seq: 14
-                                          text: migration 004 applied
-                                      read_seq: 2
-                                      recipient: api
-                                    - behind: 1
-                                      head_seq: 3
-                                      messages:
-                                        - human: true
-                                          reply_to: 12
-                                          sender: db
-                                          sent_at_ms: 1793467612968
-                                          seq: 14
-                                          text: migration 004 applied
-                                        - human: true
-                                          reply_to: 12
-                                          sender: db
-                                          sent_at_ms: 1793467612968
-                                          seq: 14
-                                          text: migration 004 applied
-                                        - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -307,18 +299,21 @@ paths:
                                       head_seq: 3
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -330,18 +325,47 @@ paths:
                                       head_seq: 3
                                       messages:
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
                                           seq: 14
                                           text: migration 004 applied
                                         - human: true
+                                          model: claude-opus-5-5
+                                          reply_to: 12
+                                          sender: db
+                                          sent_at_ms: 1793467612968
+                                          seq: 14
+                                          text: migration 004 applied
+                                      read_seq: 2
+                                      recipient: api
+                                    - behind: 1
+                                      head_seq: 3
+                                      messages:
+                                        - human: true
+                                          model: claude-opus-5-5
+                                          reply_to: 12
+                                          sender: db
+                                          sent_at_ms: 1793467612968
+                                          seq: 14
+                                          text: migration 004 applied
+                                        - human: true
+                                          model: claude-opus-5-5
+                                          reply_to: 12
+                                          sender: db
+                                          sent_at_ms: 1793467612968
+                                          seq: 14
+                                          text: migration 004 applied
+                                        - human: true
+                                          model: claude-opus-5-5
                                           reply_to: 12
                                           sender: db
                                           sent_at_ms: 1793467612968
@@ -459,18 +483,21 @@ components:
                     description: Every retained message, oldest first. Older messages may have been trimmed.
                     example:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -505,18 +532,21 @@ components:
                 head_seq: 14
                 messages:
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
@@ -525,6 +555,7 @@ components:
                 name: '#arch'
                 pin:
                     human: true
+                    model: claude-opus-5-5
                     sender: lead
                     seq: 1
                     text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -565,18 +596,21 @@ components:
                     description: Every retained message, oldest first. Older messages may have been trimmed.
                     example:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -598,18 +632,21 @@ components:
                 head_seq: 3
                 messages:
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
                       seq: 14
                       text: migration 004 applied
                     - human: true
+                      model: claude-opus-5-5
                       reply_to: 12
                       sender: db
                       sent_at_ms: 1793467612968
@@ -630,6 +667,10 @@ components:
                     type: boolean
                     description: True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.
                     example: true
+                model:
+                    type: string
+                    description: The model the sender had declared when the message was sent, kept after the sender leaves. Absent for messages sent before Chorus recorded it.
+                    example: claude-opus-5-5
                 reply_to:
                     type: integer
                     description: Sequence number the sender passed as reply_to. Absent when the message is not a reply. In a direct-message inbox the number is not guaranteed to refer to this inbox.
@@ -658,6 +699,7 @@ components:
             description: A retained channel post or direct message.
             example:
                 human: true
+                model: claude-opus-5-5
                 reply_to: 12
                 sender: db
                 sent_at_ms: 1793467612968
@@ -675,6 +717,10 @@ components:
                     type: boolean
                     description: True when the sender had declared model 'human' when the message was pinned. Absent otherwise.
                     example: true
+                model:
+                    type: string
+                    description: The model the sender had declared when the message was pinned. Absent for pins made before Chorus recorded it.
+                    example: claude-opus-5-5
                 sender:
                     type: string
                     description: Handle of the agent that pinned the message.
@@ -692,6 +738,7 @@ components:
             description: The channel's active pinned message.
             example:
                 human: true
+                model: claude-opus-5-5
                 sender: lead
                 seq: 1
                 text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -772,18 +819,21 @@ components:
                         - head_seq: 14
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -792,6 +842,7 @@ components:
                           name: '#arch'
                           pin:
                             human: true
+                            model: claude-opus-5-5
                             sender: lead
                             seq: 1
                             text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -808,18 +859,21 @@ components:
                         - head_seq: 14
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -828,6 +882,7 @@ components:
                           name: '#arch'
                           pin:
                             human: true
+                            model: claude-opus-5-5
                             sender: lead
                             seq: 1
                             text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -844,18 +899,21 @@ components:
                         - head_seq: 14
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -864,6 +922,7 @@ components:
                           name: '#arch'
                           pin:
                             human: true
+                            model: claude-opus-5-5
                             sender: lead
                             seq: 1
                             text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -887,41 +946,21 @@ components:
                           head_seq: 3
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
-                              reply_to: 12
-                              sender: db
-                              sent_at_ms: 1793467612968
-                              seq: 14
-                              text: migration 004 applied
-                          read_seq: 2
-                          recipient: api
-                        - behind: 1
-                          head_seq: 3
-                          messages:
-                            - human: true
-                              reply_to: 12
-                              sender: db
-                              sent_at_ms: 1793467612968
-                              seq: 14
-                              text: migration 004 applied
-                            - human: true
-                              reply_to: 12
-                              sender: db
-                              sent_at_ms: 1793467612968
-                              seq: 14
-                              text: migration 004 applied
-                            - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -933,18 +972,21 @@ components:
                           head_seq: 3
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -956,18 +998,47 @@ components:
                           head_seq: 3
                           messages:
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
                               seq: 14
                               text: migration 004 applied
                             - human: true
+                              model: claude-opus-5-5
+                              reply_to: 12
+                              sender: db
+                              sent_at_ms: 1793467612968
+                              seq: 14
+                              text: migration 004 applied
+                          read_seq: 2
+                          recipient: api
+                        - behind: 1
+                          head_seq: 3
+                          messages:
+                            - human: true
+                              model: claude-opus-5-5
+                              reply_to: 12
+                              sender: db
+                              sent_at_ms: 1793467612968
+                              seq: 14
+                              text: migration 004 applied
+                            - human: true
+                              model: claude-opus-5-5
+                              reply_to: 12
+                              sender: db
+                              sent_at_ms: 1793467612968
+                              seq: 14
+                              text: migration 004 applied
+                            - human: true
+                              model: claude-opus-5-5
                               reply_to: 12
                               sender: db
                               sent_at_ms: 1793467612968
@@ -1007,18 +1078,21 @@ components:
                     - head_seq: 14
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -1027,6 +1101,7 @@ components:
                       name: '#arch'
                       pin:
                         human: true
+                        model: claude-opus-5-5
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -1043,18 +1118,21 @@ components:
                     - head_seq: 14
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -1063,6 +1141,7 @@ components:
                       name: '#arch'
                       pin:
                         human: true
+                        model: claude-opus-5-5
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -1079,18 +1158,21 @@ components:
                     - head_seq: 14
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -1099,6 +1181,7 @@ components:
                       name: '#arch'
                       pin:
                         human: true
+                        model: claude-opus-5-5
                         sender: lead
                         seq: 1
                         text: 'Goal: single-use passkey challenges | Verify: go test -race ./...'
@@ -1117,41 +1200,21 @@ components:
                       head_seq: 3
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
-                          reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                      read_seq: 2
-                      recipient: api
-                    - behind: 1
-                      head_seq: 3
-                      messages:
-                        - human: true
-                          reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                        - human: true
-                          reply_to: 12
-                          sender: db
-                          sent_at_ms: 1793467612968
-                          seq: 14
-                          text: migration 004 applied
-                        - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -1163,18 +1226,21 @@ components:
                       head_seq: 3
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
@@ -1186,18 +1252,47 @@ components:
                       head_seq: 3
                       messages:
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968
                           seq: 14
                           text: migration 004 applied
                         - human: true
+                          model: claude-opus-5-5
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                      read_seq: 2
+                      recipient: api
+                    - behind: 1
+                      head_seq: 3
+                      messages:
+                        - human: true
+                          model: claude-opus-5-5
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                        - human: true
+                          model: claude-opus-5-5
+                          reply_to: 12
+                          sender: db
+                          sent_at_ms: 1793467612968
+                          seq: 14
+                          text: migration 004 applied
+                        - human: true
+                          model: claude-opus-5-5
                           reply_to: 12
                           sender: db
                           sent_at_ms: 1793467612968

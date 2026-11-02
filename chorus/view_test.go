@@ -37,9 +37,10 @@ type (
 			Name    string `json:"name"`
 			HeadSeq int    `json:"head_seq"`
 			Pin     *struct {
-				Seq   int    `json:"seq"`
-				Text  string `json:"text"`
-				Human *bool  `json:"human"`
+				Seq   int     `json:"seq"`
+				Text  string  `json:"text"`
+				Human *bool   `json:"human"`
+				Model *string `json:"model"`
 			} `json:"pin"`
 			Positions []struct {
 				Handle    string `json:"handle"`
@@ -73,6 +74,8 @@ type (
 		SentAtMs int64 `json:"sent_at_ms"`
 		// Human is true when the sender had declared model "human" when the message was sent.
 		Human *bool `json:"human"`
+		// Model is the model the sender had declared when the message was sent.
+		Model *string `json:"model"`
 	}
 )
 
@@ -308,6 +311,34 @@ func TestSwarmListReadsLatestPresenceWithoutKeepingSwarmsOpen(t *testing.T) {
 	require.NoError(t, cluster.rdb.HDel(ctx, hashKey, "agent:remote").Err())
 	require.NoError(t, cluster.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err())
 	assert.Equal(t, []string{}, listSwarms(t, listing), "a registration gone from Redis is not live")
+}
+
+// TestMessagesKeepSenderModelAfterSenderLeaves verifies that a message and a
+// pin record the model their sender had declared when they were sent, and
+// that the dashboard still reports it after the sender leaves, so a departed
+// agent keeps its identity in the message list and timeline.
+func TestMessagesKeepSenderModelAfterSenderLeaves(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	base := cluster.replicas[0].httpServer.URL
+	stayer := cluster.newAgent(0, "model-swarm", "stayer")
+	stayer.call("join", map[string]any{"channels": []string{"#m"}})
+	leaver := cluster.newAgent(0, "model-swarm", "leaver")
+	leaver.call("join", map[string]any{"channels": []string{"#m"}, "model": "sol-6.1"})
+	leaver.call("send", map[string]any{"to": "#m", "text": "Plan: ship it", "pin": true})
+	leaver.call("leave", map[string]any{"channels": []string{"#m"}})
+
+	doc, _ := getView(t, base, "model-swarm", "", 0, http.StatusOK)
+	require.Len(t, doc.Channels, 1)
+	ch := doc.Channels[0]
+	require.Len(t, ch.Messages, 1)
+	require.NotNil(t, ch.Messages[0].Model)
+	assert.Equal(t, "sol-6.1", *ch.Messages[0].Model)
+	require.NotNil(t, ch.Pin)
+	require.NotNil(t, ch.Pin.Model)
+	assert.Equal(t, "sol-6.1", *ch.Pin.Model)
+	for _, a := range doc.Agents {
+		assert.NotEqual(t, "leaver", a.Handle, "the sender has left")
+	}
 }
 
 // listSwarms returns the swarm names that GET /swarms reports.

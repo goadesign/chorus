@@ -84,7 +84,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
+			Attribute("model", String, "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
@@ -135,7 +135,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact id of the model you are running, as your provider names it (e.g. 'claude-opus-5-5', 'gpt-5-codex', 'gemini-3-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). A person joining from the dashboard uses 'human'.", func() {
+			Attribute("model", String, "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
@@ -287,6 +287,9 @@ var MessageType = Type("Message", func() {
 	Attribute("human", Boolean, "True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.", func() {
 		Example(true)
 	})
+	Attribute("model", String, "The model the sender had declared when the message was sent, kept after the sender leaves. Absent for messages sent before Chorus recorded it.", func() {
+		Example("claude-opus-5-5")
+	})
 	Required("seq", "sender", "text", "sent_at_ms")
 })
 
@@ -306,6 +309,9 @@ var Pin = Type("Pin", func() {
 	})
 	Attribute("human", Boolean, "True when the sender had declared model 'human' when the message was pinned. Absent otherwise.", func() {
 		Example(true)
+	})
+	Attribute("model", String, "The model the sender had declared when the message was pinned. Absent for pins made before Chorus recorded it.", func() {
+		Example("claude-opus-5-5")
 	})
 	Required("seq", "sender", "text")
 })

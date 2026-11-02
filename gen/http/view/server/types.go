@@ -79,6 +79,9 @@ type PinResponseBody struct {
 	// True when the sender had declared model 'human' when the message was pinned.
 	// Absent otherwise.
 	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
+	// The model the sender had declared when the message was pinned. Absent for
+	// pins made before Chorus recorded it.
+	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
 }
 
 // PositionResponseBody is used to define fields on response body types.
@@ -114,6 +117,9 @@ type MessageResponseBody struct {
 	// Absent otherwise, including for messages sent before senders declared a
 	// model.
 	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
+	// The model the sender had declared when the message was sent, kept after the
+	// sender leaves. Absent for messages sent before Chorus recorded it.
+	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
 }
 
 // InboxResponseBody is used to define fields on response body types.

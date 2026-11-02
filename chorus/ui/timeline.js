@@ -386,7 +386,7 @@
   // (Chorus handles are case-sensitive, so @API and @api are different
   // agents), sorted, joined by ↔.
   function toEvent(target, m) {
-    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true };
+    const e = { target, seq: m.seq, sender: m.sender, text: m.text, t: m.sent_at_ms, replyTo: m.reply_to, human: m.human === true, model: m.model || "" };
     if (target.startsWith("@")) {
       const [a, b] = [m.sender, target.slice(1)].sort();
       e.pair = { a, b, pairKey: a + "↔" + b };
@@ -485,12 +485,14 @@
   }
 
   // senderMark returns who sent message e: the provider logo, titled with
-  // the handle, when the sender's model has one, else the handle badge. It
-  // follows the message's own human flag: the sender's current model only
-  // picks the logo for a message not sent as a person, and never marks such
-  // a message as a person's when the sender has since declared "human".
+  // the handle, when the sender's model has one, else the handle badge. A
+  // message that saved its sender's model uses that, so it keeps its logo
+  // after the sender leaves. An older message follows its own human flag:
+  // the sender's current model only picks the logo for a message not sent as
+  // a person, and never marks such a message as a person's when the sender
+  // has since declared "human".
   function senderMark(e, lane) {
-    const ui = window.ChorusUI;
+    if (e.model) return agentMark(e.sender, e.model, e.human);
     const current = lane ? lane.model : "";
     const nowHuman = current.trim().toLowerCase() === "human";
     if (!e.human && nowHuman) return html("span", "", "@" + e.sender);
@@ -891,13 +893,23 @@
       const a = live.get(h);
       return {
         handle: h,
-        model: a ? a.model || "" : "",
+        model: a ? a.model || "" : lastModel(events, h),
         human: !!(a && a.model === "human"),
         unregistered: !a,
       };
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
+  }
+
+  // lastModel returns the model saved on handle's most recent message, or ""
+  // when none of its messages recorded one. It names a sender that is no
+  // longer registered.
+  function lastModel(events, handle) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].sender === handle && events[i].model) return events[i].model;
+    }
+    return "";
   }
 
   // colorMap gives every registered agent and every retained sender a color
