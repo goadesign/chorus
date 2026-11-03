@@ -103,3 +103,52 @@ func TestMergeCodexConfigFile(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeMCPConfigFile verifies that registering Chorus in a JSON MCP
+// configuration keeps unrelated keys and servers, starts missing or empty
+// files from an empty object, and refuses, without writing, files whose root
+// or mcpServers is not a JSON object.
+func TestMergeMCPConfigFile(t *testing.T) {
+	const url = "http://localhost:9440/mcp"
+	cases := []struct {
+		name    string
+		before  string
+		want    string
+		wantErr string
+	}{
+		{name: "missing file", want: "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    }\n  }\n}\n"},
+		{name: "empty file", before: " \n", want: "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    }\n  }\n}\n"},
+		{
+			name:   "keeps other keys and servers",
+			before: `{"theme":"dark","mcpServers":{"other":{"type":"http","url":"http://other/mcp"}}}`,
+			want:   "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    },\n    \"other\": {\n      \"type\": \"http\",\n      \"url\": \"http://other/mcp\"\n    }\n  },\n  \"theme\": \"dark\"\n}\n",
+		},
+		{name: "null root", before: "null", wantErr: "must contain a JSON object"},
+		{name: "array root", before: "[]", wantErr: "parse JSON"},
+		{name: "null mcpServers", before: `{"mcpServers":null}`, wantErr: "mcpServers must be a JSON object"},
+		{name: "array mcpServers", before: `{"mcpServers":[]}`, wantErr: "mcpServers must be a JSON object"},
+		{name: "string mcpServers", before: `{"mcpServers":"x"}`, wantErr: "mcpServers must be a JSON object"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mcp.json")
+			if tc.before != "" {
+				require.NoError(t, os.WriteFile(path, []byte(tc.before), 0o600))
+			}
+			err := mergeMCPConfigFile(path, url)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				assert.Contains(t, err.Error(), path)
+				raw, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				assert.Equal(t, tc.before, string(raw))
+				return
+			}
+			require.NoError(t, err)
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(raw))
+		})
+	}
+}

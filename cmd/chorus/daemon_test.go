@@ -64,6 +64,7 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 		{name: "setup then endpoints", wantSetup: true},
 		{name: "CHORUS_NO_SETUP skips setup", noSetup: true},
 		{name: "unreadable config stops up", claudeCfg: "{not json", wantErr: "CHORUS_NO_SETUP=1"},
+		{name: "null config stops up", claudeCfg: "null", wantErr: "CHORUS_NO_SETUP=1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
