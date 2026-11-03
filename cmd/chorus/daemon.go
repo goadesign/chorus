@@ -59,10 +59,14 @@ var (
 	errWatchToolError = errors.New("watch tool error")
 )
 
-// runUp starts Chorus in the background (installing a user service when
-// supported or spawning a detached background daemon) and waits until
-// GET /healthz responds with 200 OK for the current version.
-func runUp(args []string) error {
+// runUp is the one command a new user runs after installing Chorus. It
+// registers Chorus with the coding agents on this machine (the same global
+// setup as "chorus setup -global", skipped when CHORUS_NO_SETUP=1), starts
+// Chorus in the background (a user service when supported, otherwise a
+// detached daemon) unless the current version already answers, waits until
+// GET /healthz reports that version, and writes the dashboard and MCP
+// addresses to out. A setup error stops runUp before anything is started.
+func runUp(args []string, out io.Writer) error {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
 		return err
@@ -74,9 +78,15 @@ func runUp(args []string) error {
 	}
 
 	baseURL := localBaseURL(cfg.addr)
+	if os.Getenv("CHORUS_NO_SETUP") != "1" {
+		if err := setupForUp(homeDir, baseURL+"/mcp", out); err != nil {
+			return err
+		}
+	}
+
 	if ok, srvVer := probeServer(baseURL); ok {
 		if srvVer == genchorus.APIVersion {
-			fmt.Printf("Chorus v%s is running at %s/mcp\n", srvVer, baseURL)
+			writeEndpoints(out, srvVer, baseURL)
 			return nil
 		}
 		stopBackgroundService(homeDir)
@@ -106,7 +116,7 @@ func runUp(args []string) error {
 	deadline := time.Now().Add(daemonReadyTimeout)
 	for time.Now().Before(deadline) {
 		if ok, srvVer := probeServer(baseURL); ok && srvVer == genchorus.APIVersion {
-			fmt.Printf("Chorus v%s is running at %s/mcp\n", genchorus.APIVersion, baseURL)
+			writeEndpoints(out, genchorus.APIVersion, baseURL)
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -130,7 +140,8 @@ func runDown(args []string) error {
 }
 
 // runStatus checks whether Chorus is reachable at GET /healthz and writes the
-// running server's version to out.
+// running server's version and its dashboard and MCP addresses to out. It
+// returns an error naming the address when nothing answers there.
 func runStatus(args []string, out io.Writer) error {
 	var addr string
 	fs := flag.NewFlagSet("chorus status", flag.ContinueOnError)
@@ -140,14 +151,38 @@ func runStatus(args []string, out io.Writer) error {
 	}
 	baseURL := localBaseURL(addr)
 	if ok, srvVer := probeServer(baseURL); ok {
-		if srvVer != "" {
-			fmt.Fprintf(out, "running v%s (%s/mcp)\n", srvVer, baseURL)
-		} else {
-			fmt.Fprintf(out, "running (%s/mcp)\n", baseURL)
-		}
+		writeEndpoints(out, srvVer, baseURL)
 		return nil
 	}
 	return fmt.Errorf("chorus is not running at %s", baseURL)
+}
+
+// runUI opens the Chorus dashboard in the user's browser with open. It first
+// checks that Chorus answers at the address: when nothing answers, it opens
+// nothing and returns an error telling the user to run "chorus up". When
+// Chorus answers, it writes the dashboard address to out before opening it,
+// so the user can still open the address by hand if the browser cannot be
+// launched; that failure is returned with the address.
+func runUI(args []string, out io.Writer, open func(string) error) error {
+	var addr string
+	fs := flag.NewFlagSet("chorus ui", flag.ContinueOnError)
+	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	baseURL := localBaseURL(addr)
+	if ok, _ := probeServer(baseURL); !ok {
+		return fmt.Errorf("chorus is not running at %s; run 'chorus up' first", baseURL)
+	}
+	dashboard := baseURL + "/"
+	fmt.Fprintf(out, "Dashboard: %s\n", dashboard)
+	if err := open(dashboard); err != nil {
+		return fmt.Errorf("open the dashboard in your browser at %s (%w)", dashboard, err)
+	}
+	return nil
 }
 
 // runWatch blocks until unread Chorus messages arrive for the specified agent
@@ -680,4 +715,37 @@ func probeServer(baseURL string) (bool, string) {
 		return false, ""
 	}
 	return true, strings.TrimSpace(resp.Header.Get("X-Chorus-Version"))
+}
+
+// writeEndpoints writes the running Chorus version and the two addresses a
+// user needs: the dashboard to open in a browser and the MCP endpoint that
+// agents use. An unknown version (an older server without the version
+// header) is omitted.
+func writeEndpoints(out io.Writer, version, baseURL string) {
+	if version != "" {
+		fmt.Fprintf(out, "Chorus v%s is running\n", version)
+	} else {
+		fmt.Fprintln(out, "Chorus is running")
+	}
+	fmt.Fprintf(out, "  Dashboard: %s/\n", baseURL)
+	fmt.Fprintf(out, "  MCP:       %s/mcp\n", baseURL)
+}
+
+// openBrowser opens url in the default browser with the platform's own opener
+// ("open" on macOS, "xdg-open" on Linux). Other platforms return an error so
+// the caller can tell the user to open the printed address by hand.
+func openBrowser(url string) error {
+	var name string
+	switch runtime.GOOS {
+	case "darwin":
+		name = "open"
+	case "linux":
+		name = "xdg-open"
+	default:
+		return fmt.Errorf("no browser opener for %s", runtime.GOOS)
+	}
+	if out, err := exec.Command(name, url).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w (%s)", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

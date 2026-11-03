@@ -144,11 +144,15 @@ main() {
 	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
 		ensure_redis
 	fi
+	# Setup runs as its own step so every release this script can install
+	# registers Chorus with your agents, including releases whose "chorus up"
+	# does not set agents up yet. "chorus up" then skips the setup it would
+	# repeat (CHORUS_NO_SETUP=1; older releases ignore the variable).
 	if [ "${CHORUS_NO_SETUP:-0}" != "1" ]; then
 		"${dest_dir}/${BINARY}" setup -global || true
 	fi
 	if [ "${CHORUS_NO_START:-0}" != "1" ]; then
-		"${dest_dir}/${BINARY}" up || true
+		CHORUS_NO_SETUP=1 "${dest_dir}/${BINARY}" up || true
 	fi
 	case ":${PATH}:" in
 		*":${dest_dir}:"*) ;;
