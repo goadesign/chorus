@@ -80,7 +80,7 @@ class Chorus < Formula
         chorus up
       Then open the live dashboard with:
         chorus ui
-      Before `brew uninstall chorus`, run `chorus down`.
+      Before running brew uninstall chorus, run: chorus down
     EOS
   end
 
