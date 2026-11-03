@@ -914,4 +914,33 @@ func TestRunUI(t *testing.T) {
 
 	err = runUI([]string{"-addr", host, "extra"}, &bytes.Buffer{}, open)
 	require.Error(t, err)
+
+	opened = nil
+	err = runUI([]string{"-addr", "192.0.2.10:9440"}, &bytes.Buffer{}, open)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only accepts localhost")
+	assert.Empty(t, opened)
+}
+
+// TestWriteEndpoints verifies that the dashboard address is printed only for
+// hosts the dashboard accepts (localhost and loopback IPs, which is where a
+// wildcard listener such as ":9440" is reached) and reported unavailable for
+// any other host, while the MCP address is always printed.
+func TestWriteEndpoints(t *testing.T) {
+	cases := []struct {
+		addr, wantDashboard string
+	}{
+		{addr: ":9550", wantDashboard: "http://localhost:9550/"},
+		{addr: "0.0.0.0:9550", wantDashboard: "http://localhost:9550/"},
+		{addr: "127.0.0.2:9550", wantDashboard: "http://127.0.0.2:9550/"},
+		{addr: "192.0.2.10:9550", wantDashboard: "unavailable (the dashboard only accepts localhost; it is not reachable at 192.0.2.10:9550)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.addr, func(t *testing.T) {
+			var out bytes.Buffer
+			baseURL := localBaseURL(tc.addr)
+			writeEndpoints(&out, "1.2.3", baseURL)
+			assert.Equal(t, "Chorus v1.2.3 is running\n  Dashboard: "+tc.wantDashboard+"\n  MCP:       "+baseURL+"/mcp\n", out.String())
+		})
+	}
 }
