@@ -76,11 +76,9 @@ type JoinPayload struct {
 	Topic *string
 	// Optional role description to advertise for the calling agent.
 	Role *string
-	// The exact model id or codename your runtime exposes for the model you are
-	// running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro',
-	// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only
-	// a family name, pass that; never guess a version. A person joining from the
-	// dashboard uses 'human'.
+	// The model you are running (for example 'Claude Opus 5.5'; a person joining
+	// from the dashboard uses 'human'). Report your own model from your runtime or
+	// system prompt—never copy the example from this prompt or invent a version.
 	Model string
 	// Maximum recent messages to return per joined channel.
 	Tail int
@@ -151,11 +149,9 @@ type WhoPayload struct {
 	Swarm string
 	// Optional role description to advertise to peers in this swarm.
 	Role *string
-	// The exact model id or codename your runtime exposes for the model you are
-	// running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro',
-	// 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only
-	// a family name, pass that; never guess a version. A person joining from the
-	// dashboard uses 'human'.
+	// The model you are running (for example 'Claude Opus 5.5'; a person joining
+	// from the dashboard uses 'human'). Report your own model from your runtime or
+	// system prompt—never copy the example from this prompt or invent a version.
 	Model string
 }
 

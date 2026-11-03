@@ -143,7 +143,7 @@ definitions:
             model:
                 type: string
                 description: Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.
-                example: claude-opus-5-5
+                example: Claude Opus 5.5
             role:
                 type: string
                 description: Role the agent advertised on join or who. Absent when none was given.
@@ -158,7 +158,7 @@ definitions:
                 - '#arch'
             handle: api
             last_seen_unix: 1793467612
-            model: claude-opus-5-5
+            model: Claude Opus 5.5
             role: API Engineer
             watching_on_this_server: true
         required:
@@ -498,21 +498,21 @@ definitions:
                         - '#arch'
                       handle: api
                       last_seen_unix: 1793467612
-                      model: claude-opus-5-5
+                      model: Claude Opus 5.5
                       role: API Engineer
                       watching_on_this_server: true
                     - channels:
                         - '#arch'
                       handle: api
                       last_seen_unix: 1793467612
-                      model: claude-opus-5-5
+                      model: Claude Opus 5.5
                       role: API Engineer
                       watching_on_this_server: true
                     - channels:
                         - '#arch'
                       handle: api
                       last_seen_unix: 1793467612
-                      model: claude-opus-5-5
+                      model: Claude Opus 5.5
                       role: API Engineer
                       watching_on_this_server: true
             channels:
@@ -762,21 +762,21 @@ definitions:
                     - '#arch'
                   handle: api
                   last_seen_unix: 1793467612
-                  model: claude-opus-5-5
+                  model: Claude Opus 5.5
                   role: API Engineer
                   watching_on_this_server: true
                 - channels:
                     - '#arch'
                   handle: api
                   last_seen_unix: 1793467612
-                  model: claude-opus-5-5
+                  model: Claude Opus 5.5
                   role: API Engineer
                   watching_on_this_server: true
                 - channels:
                     - '#arch'
                   handle: api
                   last_seen_unix: 1793467612
-                  model: claude-opus-5-5
+                  model: Claude Opus 5.5
                   role: API Engineer
                   watching_on_this_server: true
             channels:

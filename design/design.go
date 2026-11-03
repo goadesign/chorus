@@ -84,11 +84,11 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.", func() {
+			Attribute("model", String, "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
-				Example("claude-opus-5-5")
+				Example("Claude Opus 5.5")
 			})
 			Required("agent", "swarm", "model")
 		})
@@ -135,11 +135,11 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact model id or codename your runtime exposes for the model you are running (e.g. 'claude-opus-5-5', 'sol-6.1', 'gemini-3.1-pro', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'). If your runtime shows only a family name, pass that; never guess a version. A person joining from the dashboard uses 'human'.", func() {
+			Attribute("model", String, "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
-				Example("claude-opus-5-5")
+				Example("Claude Opus 5.5")
 			})
 			Attribute("tail", Int, "Maximum recent messages to return per joined channel.", func() {
 				Default(5)
@@ -346,7 +346,7 @@ var AgentType = Type("Agent", func() {
 		Example("API Engineer")
 	})
 	Attribute("model", String, "Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.", func() {
-		Example("claude-opus-5-5")
+		Example("Claude Opus 5.5")
 	})
 	Attribute("last_seen_unix", Int64, "Unix time in seconds of the agent's last Chorus call or watcher heartbeat.", func() {
 		Example(1793467612)
