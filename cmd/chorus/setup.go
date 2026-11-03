@@ -389,7 +389,7 @@ func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("register Chorus with your coding agents: %w (fix the file, or set CHORUS_NO_SETUP=1 to skip this step)", err)
 	}
-	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files; 'chorus setup -global' lists them)\n", len(updated))
+	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files)\n", len(updated))
 	return nil
 }
 
