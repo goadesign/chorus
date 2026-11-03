@@ -18,8 +18,8 @@
 //     activity stay readable;
 //   - for the selected channel only: the current pin (Chorus stores only the
 //     current pin, so there is one landmark, placed at the pinned message
-//     when it is still retained), each member's read position, and
-//     reply_to curves between messages of that channel;
+//     when it is still retained) and each member's read position;
+//   - reply_to curves within the selected channel, or every channel in All Activity;
 //   - highlights for messages matching the search or agent filter.
 // Direct-message reply_to values are ambiguous across the two inboxes, so
 // no reply curves are drawn for DMs.
@@ -38,7 +38,7 @@
 // Escape dismisses it without moving the pointer or focus.
 //
 // Inspecting: clicking a message dot, the pin landmark, or a member's read
-// mark selects it in place (actions.selectMessage with reveal: false) and
+// mark selects it in place (actions.inspectMessage) and
 // shows one preview card next to it; the tab, filters, and page scroll stay
 // as they are. Only the card's "Show in conversation" button (or Enter)
 // opens the message in the conversation. The card is rebuilt from
@@ -154,12 +154,11 @@
    * (null while showing the latest messages), filterAgent, searchQuery.
    * selectedTarget is {kind: "channel", name: "#x"} or
    * {kind: "dm", pairKey: "a↔b", a, b} with a and b sorted.
-   * selectedMessage is null or {target: "#channel" | "@recipient", seq,
-   * reader?} where reader is set when a member's read mark was picked.
-   * actions used: selectMessage(target, seq, opts) where target is
-   * "#channel" or the recipient inbox "@handle" and opts.reveal === false
-   * inspects in place (opts.reader names a picked read mark) while the default
-   * shows the message in the conversation; setReplyTo(channel, seq, sender,
+   * selectedMessage is null or {kind: "conversation" | "message" | "read",
+   * target: "#channel" | "@recipient", seq, reader?}; only read has a reader.
+   * actions used: inspectMessage(target, seq, reader?) opens a chart preview,
+   * revealMessage(target, seq) opens the conversation without a preview,
+   * clearMessage() removes either highlight; setReplyTo(channel, seq, sender,
    * human) and composeDM(handle) for the card's Reply button;
    * setTimeWindow({startMs, endMs} | null); and jumpToLatest(), which returns
    * both the timeline and the message list to the newest messages.
@@ -251,17 +250,17 @@
     const w1 = Math.max(w0 + 1, axis.pos(win.endMs));
     const mx = (t) => PLOT_X0 + ((axis.pos(t) - w0) / (w1 - w0)) * plotW;
 
-    const match = matcher(state);
+    const match = (target, message) => window.ChorusUI.matchesMessage(target, message, state.filterAgent, state.searchQuery);
     const isSelected = (e) => picked != null && picked.target === e.target && picked.seq === e.seq;
 
     const pan = (next) => actions.setTimeWindow(next);
     // inspect selects a message, pin, or read mark in place; picking the
     // one already shown closes its preview.
     const inspect = (target, seq, reader) => {
-      const same = picked != null && picked.target === target && picked.seq === seq &&
+      const same = picked != null && picked.kind !== "conversation" && picked.target === target && picked.seq === seq &&
         (picked.reader || "") === (reader || "");
-      if (same) actions.selectMessage(null, 0, { reveal: false });
-      else actions.selectMessage(target, seq, reader ? { reveal: false, reader } : { reveal: false });
+      if (same) actions.clearMessage();
+      else actions.inspectMessage(target, seq, reader);
     };
     installDrag(rootEl);
     installCardScroll(rootEl);
@@ -288,9 +287,13 @@
 
     if (channel) {
       drawPin(svg, rootEl, channel, mx, inWindow, laneTop, lanes.length, inspect);
-      drawReplies(svg, channel, mx, inWindow, laneY, colors);
       drawReadPositions(svg, rootEl, channel, mx, inWindow, laneY, picked, inspect);
     }
+
+    // Channel reply numbers identify a parent in that same channel. In All
+    // Activity, retain each channel's own numbering rather than joining inboxes.
+    const replyChannels = channel ? [channel] : sel?.kind === "all" ? view.channels || [] : [];
+    for (const source of replyChannels) drawReplies(svg, source, mx, inWindow, laneY, colors, match);
 
     const order = events;
     for (const e of order) {
@@ -298,7 +301,7 @@
       const y = laneY.get(e.sender);
       if (y == null) continue;
       const isSel = isSelected(e);
-      const dim = match && !match(e);
+      const dim = !match(e.target, e);
       const dot = el("circle", {
         class: "tl-dot" + (isSel ? " is-selected" : "") + (dim ? " is-dim" : "") + (sel && sameTarget(sel, e) ? " is-target" : ""),
         cx: mx(e.t).toFixed(1),
@@ -324,14 +327,14 @@
     }
 
     const chosen = order.find(isSelected);
-    if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors);
+    if (chosen && inWindow(chosen.t)) drawMentions(svg, chosen, view, mx, laneY, colors, match);
 
     svg.addEventListener("keydown", (ev) => onKey(ev, order, isSelected, picked, actions, axis, win, pan));
     // A click on empty plot space (below the overview strip, not on a dot or
     // mark, whose handlers stop the click) closes the preview.
     svg.addEventListener("click", (ev) => {
       if (!picked || ev.clientY - svg.getBoundingClientRect().top < OVERVIEW_H + PAD) return;
-      actions.selectMessage(null, 0, { reveal: false });
+      actions.clearMessage();
     });
     rootEl.appendChild(svg);
     fitQuietLabels(svg, PLOT_X0 + plotW);
@@ -343,7 +346,7 @@
       // The picked reader moved on: close the preview once this render ends,
       // unless something else replaced the selection first.
       queueMicrotask(() => {
-        if (state.selectedMessage === picked) actions.selectMessage(null, 0, { reveal: false });
+        if (state.selectedMessage === picked) actions.clearMessage();
       });
     } else if (found) {
       const y = laneY.get(found.reader ? found.reader.handle : found.e.sender);
@@ -438,7 +441,7 @@
   // message, {stale: true} when the picked reader's position has moved or is
   // gone, or null when nothing is picked or the message is outside the view.
   function cardAnchor(picked, order, channel, inWindow) {
-    if (!picked) return null;
+    if (!picked || picked.kind === "conversation") return null;
     let reader = null;
     if (picked.reader) {
       reader = channel && channel.name === picked.target
@@ -462,7 +465,7 @@
   function buildCard(found, lane, channel, axis, sel, order, actions, svg) {
     const e = found.e;
     const close = () => {
-      actions.selectMessage(null, 0, { reveal: false });
+      actions.clearMessage();
       svg.focus({ preventScroll: true });
     };
     const card = html("div", "tl-card");
@@ -501,7 +504,7 @@
     card.appendChild(body);
 
     const row = html("div", "tl-card-actions");
-    const jump = button("", "Jump", "show", () => actions.selectMessage(e.target, e.seq));
+    const jump = button("", "Jump", "show", () => actions.revealMessage(e.target, e.seq));
     jump.setAttribute("aria-label", "Jump to message in conversation");
     jump.prepend(window.ChorusUI.svgIcon("jump", "icon"));
     row.appendChild(jump);
@@ -1164,17 +1167,6 @@
     return placeWindow(axis, win, t - (win.endMs - win.startMs) / 2);
   }
 
-  // matcher returns a predicate for the active search and agent filters, or
-  // null when neither is set.
-  function matcher(state) {
-    const q = (state.searchQuery || "").trim().toLowerCase();
-    const agent = state.filterAgent || "";
-    if (!q && !agent) return null;
-    return (e) =>
-      (!q || e.text.toLowerCase().includes(q) || e.sender.toLowerCase().includes(q)) &&
-      (!agent || e.sender === agent);
-  }
-
   // drawOverview draws the whole-history strip and the draggable window.
   function drawOverview(svg, rootEl, events, axis, ox, win, colors, plotW, actions, pan, state) {
     const y0 = PAD;
@@ -1441,7 +1433,7 @@
 
   // drawReplies draws a curve from each replied-to message to its reply,
   // using channel reply_to only (both ends in the same channel).
-  function drawReplies(svg, channel, mx, inWindow, laneY, colors) {
+  function drawReplies(svg, channel, mx, inWindow, laneY, colors, match) {
     const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
     for (const m of channel.messages || []) {
       if (!m.reply_to) continue;
@@ -1454,7 +1446,7 @@
       const xb = mx(m.sent_at_ms);
       const bend = Math.min(40, Math.abs(xb - xa) / 2 + 10);
       svg.appendChild(el("path", {
-        class: "tl-reply",
+        class: "tl-reply" + (!match(channel.name, parent) || !match(channel.name, m) ? " is-dim" : ""),
         d: `M${xa.toFixed(1)},${ya} C${xa.toFixed(1)},${(ya - bend).toFixed(1)} ${xb.toFixed(1)},${(yb - bend).toFixed(1)} ${xb.toFixed(1)},${yb}`,
         stroke: colors.get(m.sender),
       }));
@@ -1505,13 +1497,14 @@
   // a channel message reaches every member of that channel, as the server
   // treats it. It shows the text's mentions, not a claim that anyone owes a
   // reply.
-  function drawMentions(svg, e, view, mx, laneY, colors) {
+  function drawMentions(svg, e, view, mx, laneY, colors, match) {
+    const dim = !match(e.target, e) ? " is-dim" : "";
     const x = mx(e.t).toFixed(1);
     const y0 = laneY.get(e.sender);
     for (const handle of mentionTargets(e, view, laneY.keys())) {
       const y1 = laneY.get(handle);
-      svg.appendChild(el("line", { class: "tl-mention", x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
-      svg.appendChild(el("circle", { class: "tl-mention-end", cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
+      svg.appendChild(el("line", { class: "tl-mention" + dim, x1: x, x2: x, y1: String(y0), y2: String(y1), stroke: colors.get(e.sender) }));
+      svg.appendChild(el("circle", { class: "tl-mention-end" + dim, cx: x, cy: String(y1), r: "3", stroke: colors.get(e.sender) }));
     }
   }
 
@@ -1552,7 +1545,7 @@
     if (ev.key === "Escape") {
       if (!picked) return;
       ev.preventDefault();
-      actions.selectMessage(null, 0, { reveal: false });
+      actions.clearMessage();
       return;
     }
     if (ev.key === "PageUp" || ev.key === "PageDown") {
@@ -1569,13 +1562,13 @@
     else if (ev.key === "End") i = order.length - 1;
     else if (ev.key === "Enter" && i >= 0) {
       ev.preventDefault();
-      actions.selectMessage(order[i].target, order[i].seq);
+      actions.revealMessage(order[i].target, order[i].seq);
       return;
     } else return;
     ev.preventDefault();
     const e = order[i];
     if (e.t < win.startMs || e.t > win.endMs) pan(centerWindow(axis, win, e.t));
-    actions.selectMessage(e.target, e.seq, { reveal: false });
+    actions.inspectMessage(e.target, e.seq);
   }
 
   // duration writes a length of time as "45m", "2h", or "2h 15m".
