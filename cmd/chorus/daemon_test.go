@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -93,8 +94,7 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 			require.NoError(t, err)
 			skill := filepath.Join(home, ".claude", "skills", "chorus", "SKILL.md")
 			if tc.wantSetup {
-				assert.True(t, strings.HasPrefix(out.String(), "Registered Chorus with your coding agents ("))
-				assert.True(t, strings.HasSuffix(out.String(), endpoints), out.String())
+				assert.Regexp(t, `^Registered Chorus with your coding agents \(\d+ files\)\n`+regexp.QuoteMeta(endpoints)+`$`, out.String())
 				raw, readErr := os.ReadFile(skill)
 				require.NoError(t, readErr)
 				assert.Equal(t, skills.ChorusSkillMD, raw)
