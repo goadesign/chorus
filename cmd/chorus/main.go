@@ -389,15 +389,21 @@ func startRedisDocker(dockerBin, port, dataDir string) error {
 
 // loopbackOrigins returns the browser Origin values of a page served by this
 // server on the port in addr: http://localhost:<port>, http://127.0.0.1:<port>,
-// and http://[::1]:<port>. It returns nil when addr has no port.
+// and http://[::1]:<port>, plus the listen host's own origin when it is
+// another loopback IP (such as 127.0.0.2), which is where the dashboard is
+// reached when Chorus listens only there. It returns nil when addr has no port.
 func loopbackOrigins(addr string) []string {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
 		return nil
 	}
-	return []string{
+	origins := []string{
 		"http://localhost:" + port,
 		"http://127.0.0.1:" + port,
 		"http://[::1]:" + port,
 	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() && !ip.Equal(net.IPv4(127, 0, 0, 1)) && !ip.Equal(net.IPv6loopback) {
+		origins = append(origins, "http://"+net.JoinHostPort(host, port))
+	}
+	return origins
 }

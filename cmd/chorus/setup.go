@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
 
 	"github.com/goadesign/chorus/skills"
@@ -235,7 +236,8 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 // It returns an error, writing nothing, when the file is not valid TOML or
 // defines the Chorus entry in a form it cannot edit in place (an inline table,
 // an array of tables, dotted keys without a url, or a non-string url); the
-// message names the setting to add by hand.
+// message names the setting to add by hand. Tables nested under the entry,
+// such as [mcp_servers.chorus.http_headers], are kept as they are.
 func mergeCodexConfigFile(path, mcpURL string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config directory for %s: %w", path, err)
@@ -288,6 +290,15 @@ func mergeCodexConfigFile(path, mcpURL string) error {
 // means the document does not define the Chorus entry yet. It returns an
 // error for invalid TOML and for Chorus entries it cannot edit in place.
 func locateCodexChorusURL(doc []byte) (codexURLEdit, error) {
+	// The position-aware parser checks syntax only, so decode the whole
+	// document first: Codex rejects duplicate keys, redefined tables, and
+	// type conflicts, and editing such a file would report a registration
+	// Codex never loads. The decoded value is discarded.
+	var discard map[string]any
+	if err := toml.Unmarshal(doc, &discard); err != nil {
+		return codexURLEdit{}, fmt.Errorf("not valid TOML: %w", err)
+	}
+
 	var (
 		edit    codexURLEdit
 		dotted  bool
@@ -303,11 +314,11 @@ func locateCodexChorusURL(doc []byte) (codexURLEdit, error) {
 		case unstable.Table, unstable.ArrayTable:
 			var last *unstable.Node
 			table, last = tomlKeyPath(nil, expr.Key())
-			if !slices.Equal(table[:min(2, len(table))], chorus) {
-				continue
+			if !slices.Equal(table, chorus) {
+				continue // other tables, including ones nested under the entry
 			}
-			if expr.Kind == unstable.ArrayTable || len(table) > 2 {
-				return edit, errors.New("mcp_servers.chorus is defined as an array of tables or has sub-tables")
+			if expr.Kind == unstable.ArrayTable {
+				return edit, errors.New("mcp_servers.chorus is defined as an array of tables")
 			}
 			end := int(last.Raw.Offset + last.Raw.Length)
 			if nl := bytes.IndexByte(doc[end:], '\n'); nl >= 0 {
