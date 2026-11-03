@@ -77,8 +77,9 @@ class Chorus < Formula
   def caveats
     <<~EOS
       To register Chorus with your coding agents and start it in the background, run:
-        chorus setup -global && chorus up
-      The live dashboard is then at http://localhost:9440/
+        chorus up
+      Then open the live dashboard with:
+        chorus ui
     EOS
   end
 

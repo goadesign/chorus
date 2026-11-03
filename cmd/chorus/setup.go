@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -280,5 +281,19 @@ func mergeCodexConfigFile(path, mcpURL string) error {
 	if err := os.WriteFile(path, []byte(rendered), perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	return nil
+}
+
+// setupForUp runs the global setup for "chorus up": it registers mcpURL in the
+// detected coding agents' global MCP configuration and installs the Chorus
+// skill next to them, then writes a one-line summary to out. Hand-edited
+// installed skill files are replaced by the embedded version. The error names
+// how to skip this step when a configuration file cannot be updated.
+func setupForUp(homeDir, mcpURL string, out io.Writer) error {
+	updated, err := setupMCPConfigs("", homeDir, mcpURL, true)
+	if err != nil {
+		return fmt.Errorf("register Chorus with your coding agents: %w (fix the file, or set CHORUS_NO_SETUP=1 to skip this step)", err)
+	}
+	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files; 'chorus setup -global' lists them)\n", len(updated))
 	return nil
 }

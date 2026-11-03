@@ -96,12 +96,14 @@ Or, with [Homebrew](https://brew.sh) on macOS or Linux:
 
 ```bash
 brew install goadesign/tap/chorus
-chorus setup -global && chorus up
+chorus up
 ```
+
+`chorus up` registers Chorus with your coding agents (Claude Code, Codex, Cursor, Antigravity), starts it in the background, and prints the dashboard address. Run `chorus ui` any time to open the dashboard.
 
 The curl command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`), serving both the MCP endpoint (`http://localhost:9440/mcp`) and the live web dashboard (`http://localhost:9440/`).
 
-*(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
+*(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
@@ -250,9 +252,10 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 | Command | Description |
 | --- | --- |
-| `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` (automatically restarts the daemon if an older version is running) |
+| `chorus up` | Register Chorus with your coding agents (the same global setup as `chorus setup -global`; set `CHORUS_NO_SETUP=1` to skip it, and note it replaces hand-edited installed skill files), start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon), wait for `GET /healthz` (automatically restarts the daemon if an older version is running), and print the dashboard and MCP addresses |
 | `chorus down` | Stop the background Chorus service |
-| `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
+| `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
+| `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLoopbackPort verifies detection of loopback host:port addresses.
@@ -744,7 +747,7 @@ func TestStatusAndVersion(t *testing.T) {
 	if err := runStatus([]string{"-addr", parsedURL.Host}, &statusOut); err != nil {
 		t.Fatalf("runStatus(running) failed: %v", err)
 	}
-	wantStatus := fmt.Sprintf("running v%s (http://localhost:%s/mcp)\n", genchorus.APIVersion, parsedURL.Port())
+	wantStatus := fmt.Sprintf("Chorus v%s is running\n  Dashboard: http://localhost:%s/\n  MCP:       http://localhost:%s/mcp\n", genchorus.APIVersion, parsedURL.Port(), parsedURL.Port())
 	if statusOut.String() != wantStatus {
 		t.Fatalf("runStatus(running) = %q, want %q", statusOut.String(), wantStatus)
 	}
@@ -762,7 +765,7 @@ func TestStatusAndVersion(t *testing.T) {
 	if err := runStatus([]string{"-addr", legacyURL.Host}, &legacyOut); err != nil {
 		t.Fatalf("runStatus(legacy) failed: %v", err)
 	}
-	wantLegacy := fmt.Sprintf("running (http://localhost:%s/mcp)\n", legacyURL.Port())
+	wantLegacy := fmt.Sprintf("Chorus is running\n  Dashboard: http://localhost:%s/\n  MCP:       http://localhost:%s/mcp\n", legacyURL.Port(), legacyURL.Port())
 	if legacyOut.String() != wantLegacy {
 		t.Fatalf("runStatus(legacy) = %q, want %q", legacyOut.String(), wantLegacy)
 	}
@@ -796,4 +799,119 @@ func TestStatusAndVersion(t *testing.T) {
 	if !bytes.Equal(repoSkill, skills.ChorusSkillMD) {
 		t.Fatal(".agents/skills/chorus/SKILL.md and skills/chorus/SKILL.md are out of sync")
 	}
+}
+
+// fakeChorus starts an HTTP server that answers GET /healthz like a running
+// Chorus of the given version and returns its host:port. It lets "chorus up"
+// and "chorus ui" tests find an already-running server without starting a
+// launchd or systemd service.
+func fakeChorus(t *testing.T, version string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("X-Chorus-Version", version)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	return u.Host
+}
+
+// TestRunUpSetsUpAgentsAndPrintsEndpoints verifies that "chorus up" registers
+// Chorus with the coding agents found in HOME before confirming the server,
+// prints the dashboard and MCP addresses, skips setup when CHORUS_NO_SETUP=1,
+// and stops with an actionable error when a configuration cannot be updated.
+// Every case finds an already-running server of the current version, so no OS
+// service is started.
+func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
+	host := fakeChorus(t, genchorus.APIVersion)
+	port := host[strings.LastIndex(host, ":")+1:]
+	endpoints := fmt.Sprintf("Chorus v%s is running\n  Dashboard: http://localhost:%s/\n  MCP:       http://localhost:%s/mcp\n", genchorus.APIVersion, port, port)
+
+	cases := []struct {
+		name      string
+		noSetup   bool
+		claudeCfg string
+		wantErr   string
+		wantSetup bool
+	}{
+		{name: "setup then endpoints", wantSetup: true},
+		{name: "CHORUS_NO_SETUP skips setup", noSetup: true},
+		{name: "unreadable config stops up", claudeCfg: "{not json", wantErr: "CHORUS_NO_SETUP=1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", t.TempDir())
+			if tc.noSetup {
+				t.Setenv("CHORUS_NO_SETUP", "1")
+			} else {
+				t.Setenv("CHORUS_NO_SETUP", "")
+			}
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
+			if tc.claudeCfg != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".claude.json"), []byte(tc.claudeCfg), 0o644))
+			}
+
+			var out bytes.Buffer
+			err := runUp([]string{"-addr", host}, &out)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				assert.NotContains(t, out.String(), "Dashboard:")
+				return
+			}
+			require.NoError(t, err)
+			skill := filepath.Join(home, ".claude", "skills", "chorus", "SKILL.md")
+			if tc.wantSetup {
+				assert.True(t, strings.HasPrefix(out.String(), "Registered Chorus with your coding agents ("))
+				assert.True(t, strings.HasSuffix(out.String(), endpoints), out.String())
+				raw, readErr := os.ReadFile(skill)
+				require.NoError(t, readErr)
+				assert.Equal(t, skills.ChorusSkillMD, raw)
+				return
+			}
+			assert.Equal(t, endpoints, out.String())
+			assert.NoFileExists(t, skill)
+		})
+	}
+}
+
+// TestRunUI verifies that "chorus ui" opens the dashboard address of a running
+// Chorus, tells the user to run "chorus up" without opening anything when no
+// server answers, and still prints the address when the browser cannot open.
+func TestRunUI(t *testing.T) {
+	host := fakeChorus(t, genchorus.APIVersion)
+	port := host[strings.LastIndex(host, ":")+1:]
+	dashboard := fmt.Sprintf("http://localhost:%s/", port)
+
+	var opened []string
+	open := func(u string) error {
+		opened = append(opened, u)
+		return nil
+	}
+	var out bytes.Buffer
+	require.NoError(t, runUI([]string{"-addr", host}, &out, open))
+	assert.Equal(t, []string{dashboard}, opened)
+	assert.Equal(t, "Dashboard: "+dashboard+"\n", out.String())
+
+	opened = nil
+	err := runUI([]string{"-addr", "127.0.0.1:1"}, &bytes.Buffer{}, open)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "run 'chorus up'")
+	assert.Empty(t, opened)
+
+	out.Reset()
+	err = runUI([]string{"-addr", host}, &out, func(string) error { return errors.New("no display") })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), dashboard)
+	assert.Contains(t, out.String(), dashboard)
+
+	err = runUI([]string{"-addr", host, "extra"}, &bytes.Buffer{}, open)
+	require.Error(t, err)
 }

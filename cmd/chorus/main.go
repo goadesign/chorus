@@ -83,7 +83,7 @@ func main() {
 	}
 }
 
-// dispatch routes CLI subcommands ("up", "down", "status", "setup", "watch",
+// dispatch routes CLI subcommands ("up", "down", "status", "ui", "setup", "watch",
 // "version", "serve") or defaults to running the foreground server when invoked
 // with server flags or no arguments.
 func dispatch(args []string, out io.Writer) error {
@@ -95,11 +95,13 @@ func dispatch(args []string, out io.Writer) error {
 		if !strings.HasPrefix(args[0], "-") {
 			switch args[0] {
 			case "up":
-				return runUp(args[1:])
+				return runUp(args[1:], out)
 			case "down":
 				return runDown(args[1:])
 			case "status":
 				return runStatus(args[1:], out)
+			case "ui":
+				return runUI(args[1:], out, openBrowser)
 			case "setup":
 				return runSetup(args[1:])
 			case "watch":
@@ -109,7 +111,7 @@ func dispatch(args []string, out io.Writer) error {
 			case "who", "join", "leave", "send", "read":
 				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
-				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, watch, version, serve)", args[0])
+				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, version, serve)", args[0])
 			}
 		}
 	}
