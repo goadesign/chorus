@@ -115,12 +115,19 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 				skillTargets = append(skillTargets, c.skill)
 			}
 		}
-		claudeConfig := filepath.Join(homeDir, ".claude.json")
-		if _, err := os.Stat(claudeConfig); err == nil {
-			jsonTargets = append(jsonTargets, claudeConfig)
-		}
+		// Claude Code keeps user MCP servers in .claude.json and skills in
+		// skills/ under ~/.claude, or both under CLAUDE_CONFIG_DIR when set.
+		// It counts as installed when either location exists or, for the
+		// real home, the claude executable is on PATH, so a Claude Code that
+		// has never been started is registered too.
 		claudeDir := filepath.Join(homeDir, ".claude")
-		if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
+		claudeConfig := filepath.Join(homeDir, ".claude.json")
+		if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+			claudeDir = dir
+			claudeConfig = filepath.Join(dir, ".claude.json")
+		}
+		if claudeInstalled(homeDir, claudeDir, claudeConfig) {
+			jsonTargets = append(jsonTargets, claudeConfig)
 			skillTargets = append(skillTargets, filepath.Join(claudeDir, "skills", "chorus", "SKILL.md"))
 		}
 		codexDir := filepath.Join(homeDir, ".codex")
@@ -384,4 +391,24 @@ func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files; 'chorus setup -global' lists them)\n", len(updated))
 	return nil
+}
+
+// claudeInstalled reports whether Claude Code is set up for setupMCPConfigs:
+// its configuration directory or file already exists, or homeDir is the real
+// home directory and the claude executable is on PATH. The PATH check is
+// limited to the real home so a setup run against another directory (such as
+// a test's) never registers clients found on the machine.
+func claudeInstalled(homeDir, claudeDir, claudeConfig string) bool {
+	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
+		return true
+	}
+	if _, err := os.Stat(claudeConfig); err == nil {
+		return true
+	}
+	realHome, err := os.UserHomeDir()
+	if err != nil || realHome != homeDir {
+		return false
+	}
+	_, err = exec.LookPath("claude")
+	return err == nil
 }
