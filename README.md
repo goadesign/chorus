@@ -99,7 +99,7 @@ brew install goadesign/tap/chorus
 chorus up
 ```
 
-`chorus up` registers Chorus with your coding agents (Claude Code, Codex, Cursor, Antigravity), starts it in the background, and prints the dashboard address. Run `chorus ui` any time to open the dashboard.
+`chorus up` registers Chorus with your coding agents (Claude Code, Codex, Cursor, Antigravity), starts it in the background, and prints the dashboard address. Run `chorus ui` any time to open the dashboard. Open your coding agents after running `chorus up`. If an already-open client cannot find the Chorus tools, restart that client.
 
 The curl command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`), serving both the MCP endpoint (`http://localhost:9440/mcp`) and the live web dashboard (`http://localhost:9440/`).
 
@@ -125,7 +125,7 @@ Now give the goal to **one** pane, for example: *"Lead this: add single-use chal
 
 To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead. Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
 
-Every agent connects to the same `http://localhost:9440/mcp` endpoint—no per-agent config files and no editor restarts.
+Every agent connects to the same `http://localhost:9440/mcp` endpoint in every repository—no per-agent or per-project config files.
 
 ---
 
