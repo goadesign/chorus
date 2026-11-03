@@ -70,6 +70,7 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			t.Setenv("PATH", t.TempDir())
 			if tc.noSetup {
 				t.Setenv("CHORUS_NO_SETUP", "1")

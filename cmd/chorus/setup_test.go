@@ -152,3 +152,69 @@ func TestMergeMCPConfigFile(t *testing.T) {
 		})
 	}
 }
+
+// TestSetupRegistersClaudeCode verifies when global setup registers Claude
+// Code: an installed claude executable alone (a Claude Code never started),
+// an existing ~/.claude directory without .claude.json, and a custom
+// CLAUDE_CONFIG_DIR all get the MCP entry and skill in the right place; a
+// second run with a new URL updates the same entry; and with no executable
+// and no Claude Code files nothing is written for it.
+func TestSetupRegistersClaudeCode(t *testing.T) {
+	cases := []struct {
+		name       string
+		executable bool
+		claudeDir  bool
+		customDir  bool
+		want       bool
+	}{
+		{name: "executable only", executable: true, want: true},
+		{name: "directory without config", claudeDir: true, want: true},
+		{name: "custom config dir", customDir: true, want: true},
+		{name: "absent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			if tc.executable {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
+			}
+			root := filepath.Join(home, ".claude")
+			config := filepath.Join(home, ".claude.json")
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			if tc.customDir {
+				root = filepath.Join(t.TempDir(), "claude-config")
+				require.NoError(t, os.MkdirAll(root, 0o755))
+				config = filepath.Join(root, ".claude.json")
+				t.Setenv("CLAUDE_CONFIG_DIR", root)
+			}
+			if tc.claudeDir {
+				require.NoError(t, os.MkdirAll(root, 0o755))
+			}
+			skill := filepath.Join(root, "skills", "chorus", "SKILL.md")
+
+			for _, url := range []string{"http://localhost:9440/mcp", "http://localhost:9550/mcp"} {
+				updated, err := setupMCPConfigs("", home, url, true)
+				require.NoError(t, err)
+				if !tc.want {
+					assert.NotContains(t, updated, config)
+					assert.NoFileExists(t, config)
+					assert.NoFileExists(t, skill)
+					return
+				}
+				assert.Contains(t, updated, config)
+				assert.Contains(t, updated, skill)
+				raw, err := os.ReadFile(config)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"mcpServers":{"chorus":{"type":"http","url":"`+url+`"}}}`, string(raw))
+				assert.FileExists(t, skill)
+			}
+			if tc.customDir {
+				assert.NoFileExists(t, filepath.Join(home, ".claude.json"))
+				assert.NoDirExists(t, filepath.Join(home, ".claude"))
+			}
+		})
+	}
+}

@@ -118,6 +118,9 @@ func stopTestRedis(t *testing.T, rdb *redis.Client, port int) {
 func TestSetupMCPConfigs(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("PATH", t.TempDir())
 
 	// Pre-populate ~/.cursor/mcp.json with an existing server entry and top-level setting.
 	cursorDir := filepath.Join(home, ".cursor")
