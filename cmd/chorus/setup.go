@@ -174,7 +174,10 @@ func writeSkillFile(path string) error {
 
 // mergeMCPConfigFile idempotently inserts or updates "mcpServers.chorus" in a
 // JSON configuration file while preserving all existing top-level keys and peer
-// MCP server entries.
+// MCP server entries. A missing or empty file starts from an empty object. It
+// returns an error, writing nothing, when the file is not a JSON object (for
+// example "null" or an array) or its mcpServers is present but not an object,
+// so a malformed setting is reported instead of silently replaced.
 func mergeMCPConfigFile(path, mcpURL string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config directory for %s: %w", path, err)
@@ -192,12 +195,18 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 			if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
 				return fmt.Errorf("parse JSON in %s: %w", path, unmarshalErr)
 			}
+			if root == nil {
+				return fmt.Errorf("%s must contain a JSON object, not null", path)
+			}
 		}
 	}
 
-	servers, ok := root["mcpServers"].(map[string]any)
-	if !ok || servers == nil {
-		servers = make(map[string]any)
+	servers := make(map[string]any)
+	if existing, present := root["mcpServers"]; present {
+		var ok bool
+		if servers, ok = existing.(map[string]any); !ok || servers == nil {
+			return fmt.Errorf("%s: mcpServers must be a JSON object", path)
+		}
 	}
 	if filepath.Base(path) == "mcp_config.json" {
 		servers["chorus"] = map[string]any{
