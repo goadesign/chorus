@@ -5,17 +5,34 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2/unstable"
 
 	"github.com/goadesign/chorus/skills"
 )
+
+// codexURLEdit says where mergeCodexConfigFile writes mcp_servers.chorus.url
+// in a Codex config.toml document. At most one field is set; neither set means
+// the document has no Chorus entry and a new table is appended.
+type codexURLEdit struct {
+	// value is the byte range of the existing url string, quotes included.
+	value unstable.Range
+	// afterHeader is the byte offset just past the [mcp_servers.chorus]
+	// header line, used when that table has no url yet.
+	afterHeader int
+}
 
 // runSetup registers the Chorus MCP server URL in project and/or global MCP
 // configuration files and installs the Chorus Agent Skill (SKILL.md).
@@ -204,84 +221,135 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 	return nil
 }
 
-// mergeCodexConfigFile idempotently inserts or updates the
-// "[mcp_servers.chorus]" section in an OpenAI Codex TOML configuration file
-// while preserving all existing tables, keys, and comments.
+// mergeCodexConfigFile sets mcp_servers.chorus.url to mcpURL in an OpenAI
+// Codex TOML configuration file and leaves every other byte unchanged, so
+// comments, formatting, and other servers survive. It parses the file with a
+// full TOML parser to find where the setting lives:
+//   - an existing url (under [mcp_servers.chorus] in any key spelling, or as a
+//     dotted key such as chorus.url under [mcp_servers]) has only its string
+//     value replaced;
+//   - an existing [mcp_servers.chorus] table without a url gets a url line
+//     right after its header;
+//   - otherwise a new [mcp_servers.chorus] table is appended.
+//
+// It returns an error, writing nothing, when the file is not valid TOML or
+// defines the Chorus entry in a form it cannot edit in place (an inline table,
+// an array of tables, dotted keys without a url, or a non-string url); the
+// message names the setting to add by hand.
 func mergeCodexConfigFile(path, mcpURL string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config directory for %s: %w", path, err)
 	}
 
 	perm := os.FileMode(0o600)
-	var content string
+	var content []byte
 	if info, err := os.Stat(path); err == nil {
 		perm = info.Mode().Perm()
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return fmt.Errorf("read %s: %w", path, readErr)
+		if content, err = os.ReadFile(path); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
 		}
-		content = string(raw)
 	}
 
-	urlLine := fmt.Sprintf("url = %q", mcpURL)
-	if strings.TrimSpace(content) == "" {
-		out := fmt.Sprintf("[mcp_servers.chorus]\n%s\n", urlLine)
-		if err := os.WriteFile(path, []byte(out), perm); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-		return nil
+	urlValue := strconv.Quote(mcpURL)
+	edit, err := locateCodexChorusURL(content)
+	if err != nil {
+		return fmt.Errorf("%s: %w; set mcp_servers.chorus.url = %s by hand", path, err, urlValue)
 	}
 
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	var (
-		out         []string
-		inChorusSec bool
-		foundSec    bool
-		wroteURL    bool
-	)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			if inChorusSec && !wroteURL {
-				out = append(out, urlLine)
-				wroteURL = true
-			}
-			inChorusSec = trimmed == "[mcp_servers.chorus]"
-			if inChorusSec {
-				foundSec = true
-			}
-			out = append(out, line)
-			continue
+	var out []byte
+	switch {
+	case edit.value.Length > 0:
+		at := int(edit.value.Offset)
+		out = append(out, content[:at]...)
+		out = append(out, urlValue...)
+		out = append(out, content[at+int(edit.value.Length):]...)
+	case edit.afterHeader > 0:
+		out = append(out, content[:edit.afterHeader]...)
+		if out[len(out)-1] != '\n' {
+			out = append(out, '\n')
 		}
-		if inChorusSec {
-			if key, _, ok := strings.Cut(trimmed, "="); ok && strings.TrimSpace(key) == "url" {
-				if !wroteURL {
-					out = append(out, urlLine)
-					wroteURL = true
-				}
-				continue
-			}
+		out = append(out, "url = "+urlValue+"\n"...)
+		out = append(out, content[edit.afterHeader:]...)
+	default:
+		out = append(out, bytes.TrimRight(content, " \t\r\n")...)
+		if len(out) > 0 {
+			out = append(out, "\n\n"...)
 		}
-		out = append(out, line)
+		out = append(out, "[mcp_servers.chorus]\nurl = "+urlValue+"\n"...)
 	}
-	if inChorusSec && !wroteURL {
-		out = append(out, urlLine)
-	}
-	if !foundSec {
-		for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
-			out = out[:len(out)-1]
-		}
-		out = append(out, "", "[mcp_servers.chorus]", urlLine, "")
-	}
-
-	rendered := strings.Join(out, "\n")
-	if !strings.HasSuffix(rendered, "\n") {
-		rendered += "\n"
-	}
-	if err := os.WriteFile(path, []byte(rendered), perm); err != nil {
+	if err := os.WriteFile(path, out, perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// locateCodexChorusURL parses a Codex config.toml document and reports where
+// mergeCodexConfigFile must write mcp_servers.chorus.url. An empty result
+// means the document does not define the Chorus entry yet. It returns an
+// error for invalid TOML and for Chorus entries it cannot edit in place.
+func locateCodexChorusURL(doc []byte) (codexURLEdit, error) {
+	var (
+		edit    codexURLEdit
+		dotted  bool
+		table   []string
+		parser  unstable.Parser
+		chorus  = []string{"mcp_servers", "chorus"}
+		fullURL = []string{"mcp_servers", "chorus", "url"}
+	)
+	parser.Reset(doc)
+	for parser.NextExpression() {
+		expr := parser.Expression()
+		switch expr.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			var last *unstable.Node
+			table, last = tomlKeyPath(nil, expr.Key())
+			if !slices.Equal(table[:min(2, len(table))], chorus) {
+				continue
+			}
+			if expr.Kind == unstable.ArrayTable || len(table) > 2 {
+				return edit, errors.New("mcp_servers.chorus is defined as an array of tables or has sub-tables")
+			}
+			end := int(last.Raw.Offset + last.Raw.Length)
+			if nl := bytes.IndexByte(doc[end:], '\n'); nl >= 0 {
+				edit.afterHeader = end + nl + 1
+			} else {
+				edit.afterHeader = len(doc)
+			}
+		case unstable.KeyValue:
+			key, _ := tomlKeyPath(slices.Clone(table), expr.Key())
+			switch {
+			case slices.Equal(key, fullURL):
+				value := expr.Value()
+				if value.Kind != unstable.String {
+					return edit, errors.New("mcp_servers.chorus.url is not a string")
+				}
+				edit.value = value.Raw
+			case slices.Equal(key, chorus) || slices.Equal(key, chorus[:1]):
+				return edit, errors.New("mcp_servers or mcp_servers.chorus is an inline table")
+			case len(key) > 2 && slices.Equal(key[:2], chorus) && len(table) < 2:
+				dotted = true
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return edit, fmt.Errorf("not valid TOML: %w", err)
+	}
+	if dotted && edit.value.Length == 0 {
+		return edit, errors.New("mcp_servers.chorus is defined with dotted keys and no url")
+	}
+	return edit, nil
+}
+
+// tomlKeyPath appends the decoded segments of a TOML key (bare, quoted, or
+// dotted, so [a."b"] and [ a . b ] both give a, b) to prefix and returns the
+// path with the last segment's node, whose Raw range ends the key in the input.
+func tomlKeyPath(prefix []string, it unstable.Iterator) ([]string, *unstable.Node) {
+	var last *unstable.Node
+	for it.Next() {
+		last = it.Node()
+		prefix = append(prefix, string(last.Data))
+	}
+	return prefix, last
 }
 
 // setupForUp runs the global setup for "chorus up": it registers mcpURL in the

@@ -98,7 +98,7 @@ func viewGuard(origins []string) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isLoopbackHost(r.Host) || !viewOriginAllowed(r, allowed) || !sameSiteFetch(r) {
+			if !IsLoopbackHost(r.Host) || !viewOriginAllowed(r, allowed) || !sameSiteFetch(r) {
 				http.Error(w, "forbidden: request must be addressed to this machine", http.StatusForbidden)
 				return
 			}
@@ -107,9 +107,11 @@ func viewGuard(origins []string) func(http.Handler) http.Handler {
 	}
 }
 
-// isLoopbackHost reports whether hostport (an HTTP Host header value, with or
-// without a port) names localhost or a loopback IP address.
-func isLoopbackHost(hostport string) bool {
+// IsLoopbackHost reports whether hostport (an HTTP Host header value, with or
+// without a port) names localhost or a loopback IP address. The dashboard and
+// its view API answer only requests addressed to such a host; the chorus CLI
+// uses the same rule to decide whether it can print or open a dashboard URL.
+func IsLoopbackHost(hostport string) bool {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h

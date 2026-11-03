@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goadesign/chorus/chorus"
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	genmcpchorusclient "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/client"
 	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
@@ -157,9 +158,11 @@ func runStatus(args []string, out io.Writer) error {
 	return fmt.Errorf("chorus is not running at %s", baseURL)
 }
 
-// runUI opens the Chorus dashboard in the user's browser with open. It first
-// checks that Chorus answers at the address: when nothing answers, it opens
-// nothing and returns an error telling the user to run "chorus up". When
+// runUI opens the Chorus dashboard in the user's browser with open. It refuses
+// an address whose host is not a loopback host, because the dashboard rejects
+// requests addressed to any other host. It then checks that Chorus answers:
+// when nothing answers, it opens nothing and returns an error telling the
+// user to run "chorus up". When
 // Chorus answers, it writes the dashboard address to out before opening it,
 // so the user can still open the address by hand if the browser cannot be
 // launched; that failure is returned with the address.
@@ -174,10 +177,13 @@ func runUI(args []string, out io.Writer, open func(string) error) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	baseURL := localBaseURL(addr)
+	dashboard, err := dashboardURL(baseURL)
+	if err != nil {
+		return err
+	}
 	if ok, _ := probeServer(baseURL); !ok {
 		return fmt.Errorf("chorus is not running at %s; run 'chorus up' first", baseURL)
 	}
-	dashboard := baseURL + "/"
 	fmt.Fprintf(out, "Dashboard: %s\n", dashboard)
 	if err := open(dashboard); err != nil {
 		return fmt.Errorf("open the dashboard in your browser at %s (%w)", dashboard, err)
@@ -720,15 +726,35 @@ func probeServer(baseURL string) (bool, string) {
 // writeEndpoints writes the running Chorus version and the two addresses a
 // user needs: the dashboard to open in a browser and the MCP endpoint that
 // agents use. An unknown version (an older server without the version
-// header) is omitted.
+// header) is omitted. The dashboard answers only requests addressed to a
+// loopback host, so for any other host it says the dashboard is unavailable
+// there instead of printing an address that would be rejected.
 func writeEndpoints(out io.Writer, version, baseURL string) {
 	if version != "" {
 		fmt.Fprintf(out, "Chorus v%s is running\n", version)
 	} else {
 		fmt.Fprintln(out, "Chorus is running")
 	}
-	fmt.Fprintf(out, "  Dashboard: %s/\n", baseURL)
+	if dashboard, err := dashboardURL(baseURL); err == nil {
+		fmt.Fprintf(out, "  Dashboard: %s\n", dashboard)
+	} else {
+		fmt.Fprintf(out, "  Dashboard: unavailable (%v)\n", err)
+	}
 	fmt.Fprintf(out, "  MCP:       %s/mcp\n", baseURL)
+}
+
+// dashboardURL returns the dashboard address for a Chorus base URL built by
+// localBaseURL. It returns an error when the host is not a loopback host,
+// because the dashboard rejects requests addressed to any other host.
+func dashboardURL(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", baseURL, err)
+	}
+	if !chorus.IsLoopbackHost(u.Host) {
+		return "", fmt.Errorf("the dashboard only accepts localhost; it is not reachable at %s", u.Host)
+	}
+	return baseURL + "/", nil
 }
 
 // openBrowser opens url in the default browser with the platform's own opener

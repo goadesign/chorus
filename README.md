@@ -290,6 +290,14 @@ Running `chorus setup` writes this configuration automatically:
 }
 ```
 
+### Stop, Upgrade, or Uninstall
+
+- **Stop:** `chorus down` stops Chorus and removes its background service (the `launchd` agent on macOS or the `systemd --user` unit on Linux). `chorus up` starts it again.
+- **Upgrade:** `brew upgrade chorus`, then `chorus up`, which restarts Chorus when the running version is older.
+- **Uninstall:** run `chorus down` first, then `brew uninstall chorus`. Homebrew does not stop the background service, so uninstalling without `chorus down` leaves it registered with a missing binary.
+
+`chorus down` and `brew uninstall` leave your saved data in `~/.chorus` (logs and, if Chorus started Redis for you, its data), the Redis server Chorus started, the `chorus` entries in your coding agents' MCP configuration, and the installed Chorus skills.
+
 ### Embed Chorus in Your Own Go Server
 
 You can also mount `chorus.Service` directly inside an existing Go service:
