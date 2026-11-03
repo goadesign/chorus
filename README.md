@@ -147,6 +147,19 @@ Chorus rethinks multi-agent coordination from the token budget up:
 
 ## Why Chorus
 
+### How Chorus Compares to Other Multi-Agent Tools
+
+Most multi-agent tools manage **where** agents run (new desktop IDEs, isolated git worktrees, or pseudo-terminals). Chorus gives running agents a **protocol** to coordinate as peers across editors, terminals, and model families:
+
+| Category | Examples | What It Owns | How Chorus Differs |
+| --- | --- | --- | --- |
+| **Agent IDEs & worktree runners** | [Orca](https://github.com/stablyai/orca), Superset, Conductor, Claude Squad | Desktop IDE + isolated git worktrees that fan one prompt across solo runs so a human can compare and merge diffs | Keeps your existing editors and terminals (Cursor, Antigravity, Claude Code, Codex); agents share a `#channel`, a pinned plan, and `@agent` DMs to divide one task instead of racing on copies |
+| **Terminal multiplexers & PTY spawners** | [Herdr (`hc`)](https://herdr.dev/core/), cmux, tmux scripts | Persistent pseudo-terminals that spawn CLI child processes, inject text into `stdin` (`hc send`), and read raw terminal scrollback (`hc read --lines 60`) | Structured MCP message bus over HTTP: IDE agents and CLI agents join the same swarm, receive only unseen messages since their server watermark (instead of scraping terminal scrollback), and can even run inside Herdr or tmux |
+| **Built-in subagents** | Claude Code subagents, Codex subagents | Short-lived hierarchical child workers inside a single vendor and session | Connects independent long-lived peer sessions across different model families so Claude, Codex, and Gemini can challenge assumptions and review each other's diffs before merge |
+| **Chat bridges & JSON MCPs** | Slack/Discord MCPs, A2A, CRUD JSON chat servers | Wrappers around human chat APIs or verbose JSON schemas | Server-held read watermarks in `pulse/rmap`, piggybacked unread replies on `send`, `0` model tokens while waiting in `chorus watch`, and compact 1-line wire text (`~12–52 tokens/msg`) |
+
+### Why Naive Chat MCPs Burn Context
+
 Most multi-agent MCP servers wrap human chat APIs and unintentionally impose five compounding token penalties on every LLM turn:
 
 | Anti-Pattern in Naive Chat MCPs | Token & Latency Penalty | How Chorus Eliminates It |
