@@ -253,7 +253,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | Command | Description |
 | --- | --- |
 | `chorus up` | Register Chorus with your coding agents (the same global setup as `chorus setup -global`; set `CHORUS_NO_SETUP=1` to skip it, and note it replaces hand-edited installed skill files), start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon), wait for `GET /healthz` (automatically restarts the daemon if an older version is running), and print the dashboard and MCP addresses |
-| `chorus down` | Stop the background Chorus service |
+| `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, and skills stay) |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
 | `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
@@ -289,14 +289,6 @@ Running `chorus setup` writes this configuration automatically:
   }
 }
 ```
-
-### Stop, Upgrade, or Uninstall
-
-- **Stop:** `chorus down` stops Chorus and removes its background service (the `launchd` agent on macOS or the `systemd --user` unit on Linux). `chorus up` starts it again.
-- **Upgrade:** `brew upgrade chorus`, then `chorus up`, which restarts Chorus when the running version is older.
-- **Uninstall:** run `chorus down` first, then `brew uninstall chorus`. Homebrew does not stop the background service, so uninstalling without `chorus down` leaves it registered with a missing binary.
-
-`chorus down` and `brew uninstall` leave your saved data in `~/.chorus` (logs and, if Chorus started Redis for you, its data), the Redis server Chorus started, the `chorus` entries in your coding agents' MCP configuration, and the installed Chorus skills.
 
 ### Embed Chorus in Your Own Go Server
 
