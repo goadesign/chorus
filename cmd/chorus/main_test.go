@@ -118,6 +118,9 @@ func stopTestRedis(t *testing.T, rdb *redis.Client, port int) {
 func TestSetupMCPConfigs(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("PATH", t.TempDir())
 
 	// Pre-populate ~/.cursor/mcp.json with an existing server entry and top-level setting.
 	cursorDir := filepath.Join(home, ".cursor")
@@ -289,6 +292,12 @@ func TestLoopbackOrigins(t *testing.T) {
 	}
 	if got := loopbackOrigins(":7000"); len(got) != 3 || got[0] != "http://localhost:7000" {
 		t.Fatalf("loopbackOrigins(:7000) = %v", got)
+	}
+	if got := loopbackOrigins("127.0.0.2:9440"); len(got) != 4 || got[3] != "http://127.0.0.2:9440" {
+		t.Fatalf("loopbackOrigins(127.0.0.2:9440) = %v, want the listen origin added", got)
+	}
+	if got := loopbackOrigins("192.0.2.10:9440"); len(got) != 3 {
+		t.Fatalf("loopbackOrigins(192.0.2.10:9440) = %v, want only the three loopback origins", got)
 	}
 	if got := loopbackOrigins("bad"); got != nil {
 		t.Fatalf("loopbackOrigins(bad) = %v, want nil", got)
@@ -744,7 +753,7 @@ func TestStatusAndVersion(t *testing.T) {
 	if err := runStatus([]string{"-addr", parsedURL.Host}, &statusOut); err != nil {
 		t.Fatalf("runStatus(running) failed: %v", err)
 	}
-	wantStatus := fmt.Sprintf("running v%s (http://localhost:%s/mcp)\n", genchorus.APIVersion, parsedURL.Port())
+	wantStatus := fmt.Sprintf("Chorus v%s is running\n  Dashboard: http://localhost:%s/\n  MCP:       http://localhost:%s/mcp\n", genchorus.APIVersion, parsedURL.Port(), parsedURL.Port())
 	if statusOut.String() != wantStatus {
 		t.Fatalf("runStatus(running) = %q, want %q", statusOut.String(), wantStatus)
 	}
@@ -762,7 +771,7 @@ func TestStatusAndVersion(t *testing.T) {
 	if err := runStatus([]string{"-addr", legacyURL.Host}, &legacyOut); err != nil {
 		t.Fatalf("runStatus(legacy) failed: %v", err)
 	}
-	wantLegacy := fmt.Sprintf("running (http://localhost:%s/mcp)\n", legacyURL.Port())
+	wantLegacy := fmt.Sprintf("Chorus is running\n  Dashboard: http://localhost:%s/\n  MCP:       http://localhost:%s/mcp\n", legacyURL.Port(), legacyURL.Port())
 	if legacyOut.String() != wantLegacy {
 		t.Fatalf("runStatus(legacy) = %q, want %q", legacyOut.String(), wantLegacy)
 	}

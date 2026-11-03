@@ -83,7 +83,7 @@ func main() {
 	}
 }
 
-// dispatch routes CLI subcommands ("up", "down", "status", "setup", "watch",
+// dispatch routes CLI subcommands ("up", "down", "status", "ui", "setup", "watch",
 // "version", "serve") or defaults to running the foreground server when invoked
 // with server flags or no arguments.
 func dispatch(args []string, out io.Writer) error {
@@ -95,11 +95,13 @@ func dispatch(args []string, out io.Writer) error {
 		if !strings.HasPrefix(args[0], "-") {
 			switch args[0] {
 			case "up":
-				return runUp(args[1:])
+				return runUp(args[1:], out)
 			case "down":
 				return runDown(args[1:])
 			case "status":
 				return runStatus(args[1:], out)
+			case "ui":
+				return runUI(args[1:], out, openBrowser)
 			case "setup":
 				return runSetup(args[1:])
 			case "watch":
@@ -109,7 +111,7 @@ func dispatch(args []string, out io.Writer) error {
 			case "who", "join", "leave", "send", "read":
 				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
-				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, setup, watch, version, serve)", args[0])
+				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, version, serve)", args[0])
 			}
 		}
 	}
@@ -387,15 +389,21 @@ func startRedisDocker(dockerBin, port, dataDir string) error {
 
 // loopbackOrigins returns the browser Origin values of a page served by this
 // server on the port in addr: http://localhost:<port>, http://127.0.0.1:<port>,
-// and http://[::1]:<port>. It returns nil when addr has no port.
+// and http://[::1]:<port>, plus the listen host's own origin when it is
+// another loopback IP (such as 127.0.0.2), which is where the dashboard is
+// reached when Chorus listens only there. It returns nil when addr has no port.
 func loopbackOrigins(addr string) []string {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
 		return nil
 	}
-	return []string{
+	origins := []string{
 		"http://localhost:" + port,
 		"http://127.0.0.1:" + port,
 		"http://[::1]:" + port,
 	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() && !ip.Equal(net.IPv4(127, 0, 0, 1)) && !ip.Equal(net.IPv6loopback) {
+		origins = append(origins, "http://"+net.JoinHostPort(host, port))
+	}
+	return origins
 }

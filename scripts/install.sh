@@ -144,11 +144,13 @@ main() {
 	if [ "${CHORUS_NO_REDIS:-0}" != "1" ]; then
 		ensure_redis
 	fi
-	if [ "${CHORUS_NO_SETUP:-0}" != "1" ]; then
-		"${dest_dir}/${BINARY}" setup -global || true
-	fi
+	# "chorus up" registers Chorus with your agents (unless CHORUS_NO_SETUP=1,
+	# which it reads from the environment) and starts it. Without a start,
+	# only the setup runs.
 	if [ "${CHORUS_NO_START:-0}" != "1" ]; then
 		"${dest_dir}/${BINARY}" up || true
+	elif [ "${CHORUS_NO_SETUP:-0}" != "1" ]; then
+		"${dest_dir}/${BINARY}" setup -global || true
 	fi
 	case ":${PATH}:" in
 		*":${dest_dir}:"*) ;;

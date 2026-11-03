@@ -39,8 +39,10 @@ type (
 		Model string `json:"model,omitempty"`
 		// Text is the raw message body authored by the sender.
 		Text string `json:"text"`
-		// ReplyTo is the optional sequence number in the same target stream
-		// that this message replies to. Zero means not a reply.
+		// ReplyTo is the optional sequence number supplied by the sender. A
+		// channel reply names a message in that channel; a direct-message
+		// number does not identify which inbox contains its parent. Zero
+		// means not a reply.
 		ReplyTo int `json:"reply_to,omitempty"`
 	}
 

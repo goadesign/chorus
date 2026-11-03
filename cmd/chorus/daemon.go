@@ -1,6 +1,7 @@
 // This file implements background service lifecycle management ("chorus up",
-// "chorus down", "chorus status"), automatic MCP client configuration
-// ("chorus setup"), and zero-token background message watching ("chorus watch").
+// "chorus down", "chorus status"), opening the dashboard ("chorus ui"), and
+// zero-token background message watching ("chorus watch"). MCP client
+// configuration ("chorus setup") lives in setup.go.
 package main
 
 import (
@@ -25,10 +26,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goadesign/chorus/chorus"
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	genmcpchorusclient "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/client"
 	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
-	"github.com/goadesign/chorus/skills"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -59,10 +60,14 @@ var (
 	errWatchToolError = errors.New("watch tool error")
 )
 
-// runUp starts Chorus in the background (installing a user service when
-// supported or spawning a detached background daemon) and waits until
-// GET /healthz responds with 200 OK for the current version.
-func runUp(args []string) error {
+// runUp is the one command a new user runs after installing Chorus. It
+// registers Chorus with the coding agents on this machine (the same global
+// setup as "chorus setup -global", skipped when CHORUS_NO_SETUP=1), starts
+// Chorus in the background (a user service when supported, otherwise a
+// detached daemon) unless the current version already answers, waits until
+// GET /healthz reports that version, and writes the dashboard and MCP
+// addresses to out. A setup error stops runUp before anything is started.
+func runUp(args []string, out io.Writer) error {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
 		return err
@@ -74,9 +79,15 @@ func runUp(args []string) error {
 	}
 
 	baseURL := localBaseURL(cfg.addr)
+	if os.Getenv("CHORUS_NO_SETUP") != "1" {
+		if err := setupForUp(homeDir, baseURL+"/mcp", out); err != nil {
+			return err
+		}
+	}
+
 	if ok, srvVer := probeServer(baseURL); ok {
 		if srvVer == genchorus.APIVersion {
-			fmt.Printf("Chorus v%s is running at %s/mcp\n", srvVer, baseURL)
+			writeEndpoints(out, srvVer, baseURL)
 			return nil
 		}
 		stopBackgroundService(homeDir)
@@ -106,7 +117,7 @@ func runUp(args []string) error {
 	deadline := time.Now().Add(daemonReadyTimeout)
 	for time.Now().Before(deadline) {
 		if ok, srvVer := probeServer(baseURL); ok && srvVer == genchorus.APIVersion {
-			fmt.Printf("Chorus v%s is running at %s/mcp\n", genchorus.APIVersion, baseURL)
+			writeEndpoints(out, genchorus.APIVersion, baseURL)
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -130,7 +141,8 @@ func runDown(args []string) error {
 }
 
 // runStatus checks whether Chorus is reachable at GET /healthz and writes the
-// running server's version to out.
+// running server's version and its dashboard and MCP addresses to out. It
+// returns an error naming the address when nothing answers there.
 func runStatus(args []string, out io.Writer) error {
 	var addr string
 	fs := flag.NewFlagSet("chorus status", flag.ContinueOnError)
@@ -140,50 +152,41 @@ func runStatus(args []string, out io.Writer) error {
 	}
 	baseURL := localBaseURL(addr)
 	if ok, srvVer := probeServer(baseURL); ok {
-		if srvVer != "" {
-			fmt.Fprintf(out, "running v%s (%s/mcp)\n", srvVer, baseURL)
-		} else {
-			fmt.Fprintf(out, "running (%s/mcp)\n", baseURL)
-		}
+		writeEndpoints(out, srvVer, baseURL)
 		return nil
 	}
 	return fmt.Errorf("chorus is not running at %s", baseURL)
 }
 
-// runSetup registers the Chorus MCP server URL in project and/or global MCP
-// configuration files and installs the Chorus Agent Skill (SKILL.md).
-func runSetup(args []string) error {
-	var (
-		addr   string
-		global bool
-	)
-	fs := flag.NewFlagSet("chorus setup", flag.ContinueOnError)
+// runUI opens the Chorus dashboard in the user's browser with open. It refuses
+// an address whose host is not a loopback host, because the dashboard rejects
+// requests addressed to any other host. It then checks that Chorus answers:
+// when nothing answers, it opens nothing and returns an error telling the
+// user to run "chorus up". When
+// Chorus answers, it writes the dashboard address to out before opening it,
+// so the user can still open the address by hand if the browser cannot be
+// launched; that failure is returned with the address.
+func runUI(args []string, out io.Writer, open func(string) error) error {
+	var addr string
+	fs := flag.NewFlagSet("chorus ui", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
-	fs.BoolVar(&global, "global", false, "Register Chorus in global coding-agent MCP configuration files")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	mcpURL := localBaseURL(addr) + "/mcp"
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("resolve working directory: %w", err)
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
-	}
-
-	updated, err := setupMCPConfigs(cwd, homeDir, mcpURL, global)
+	baseURL := localBaseURL(addr)
+	dashboard, err := dashboardURL(baseURL)
 	if err != nil {
 		return err
 	}
-	for _, p := range updated {
-		if strings.HasSuffix(p, ".md") {
-			fmt.Printf("Installed Chorus skill in %s\n", p)
-		} else {
-			fmt.Printf("Registered Chorus MCP (%s) in %s\n", mcpURL, p)
-		}
+	if ok, _ := probeServer(baseURL); !ok {
+		return fmt.Errorf("chorus is not running at %s; run 'chorus up' first", baseURL)
+	}
+	fmt.Fprintf(out, "Dashboard: %s\n", dashboard)
+	if err := open(dashboard); err != nil {
+		return fmt.Errorf("open the dashboard in your browser at %s (%w)", dashboard, err)
 	}
 	return nil
 }
@@ -340,235 +343,6 @@ func formatWatchRearmCommand(agent, from string, wait time.Duration, mentionsOnl
 		b.WriteString(waitStr)
 	}
 	return b.String()
-}
-
-// setupMCPConfigs merges the Chorus MCP server entry into the project's
-// .mcp.json (and .codex/config.toml if .codex exists) and installs
-// .agents/skills/chorus/SKILL.md when global is false, or updates detected
-// global agent MCP config files and skill directories under homeDir (Universal
-// .agents, Cursor, Antigravity, Claude Code, and OpenAI Codex) when global is
-// true.
-func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error) {
-	var (
-		jsonTargets  []string
-		tomlTargets  []string
-		skillTargets []string
-	)
-	if !global {
-		jsonTargets = append(jsonTargets, filepath.Join(cwd, ".mcp.json"))
-		if info, err := os.Stat(filepath.Join(cwd, ".codex")); err == nil && info.IsDir() {
-			tomlTargets = append(tomlTargets, filepath.Join(cwd, ".codex", "config.toml"))
-		}
-		skillTargets = append(skillTargets, filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md"))
-	} else {
-		skillTargets = append(skillTargets, filepath.Join(homeDir, ".agents", "skills", "chorus", "SKILL.md"))
-		candidates := []struct {
-			parentDir string
-			config    string
-			skill     string
-		}{
-			{
-				parentDir: filepath.Join(homeDir, ".cursor"),
-				config:    filepath.Join(homeDir, ".cursor", "mcp.json"),
-				skill:     filepath.Join(homeDir, ".cursor", "skills", "chorus", "SKILL.md"),
-			},
-			{
-				parentDir: filepath.Join(homeDir, ".gemini", "config"),
-				config:    filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"),
-				skill:     filepath.Join(homeDir, ".gemini", "config", "skills", "chorus", "SKILL.md"),
-			},
-		}
-		for _, c := range candidates {
-			if info, err := os.Stat(c.parentDir); err == nil && info.IsDir() {
-				jsonTargets = append(jsonTargets, c.config)
-				skillTargets = append(skillTargets, c.skill)
-			}
-		}
-		claudeConfig := filepath.Join(homeDir, ".claude.json")
-		if _, err := os.Stat(claudeConfig); err == nil {
-			jsonTargets = append(jsonTargets, claudeConfig)
-		}
-		claudeDir := filepath.Join(homeDir, ".claude")
-		if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
-			skillTargets = append(skillTargets, filepath.Join(claudeDir, "skills", "chorus", "SKILL.md"))
-		}
-		codexDir := filepath.Join(homeDir, ".codex")
-		if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
-			tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
-			skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
-		} else if realHome, homeErr := os.UserHomeDir(); homeErr == nil && realHome == homeDir {
-			if _, lookErr := exec.LookPath("codex"); lookErr == nil {
-				tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
-				skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
-			}
-		}
-		if len(jsonTargets) == 0 && len(tomlTargets) == 0 {
-			jsonTargets = append(jsonTargets, filepath.Join(homeDir, ".chorus", "mcp.json"))
-		}
-	}
-
-	updated := make([]string, 0, len(jsonTargets)+len(tomlTargets)+len(skillTargets))
-	for _, target := range jsonTargets {
-		if err := mergeMCPConfigFile(target, mcpURL); err != nil {
-			return nil, err
-		}
-		updated = append(updated, target)
-	}
-	for _, target := range tomlTargets {
-		if err := mergeCodexConfigFile(target, mcpURL); err != nil {
-			return nil, err
-		}
-		updated = append(updated, target)
-	}
-	for _, target := range skillTargets {
-		if err := writeSkillFile(target); err != nil {
-			return nil, err
-		}
-		updated = append(updated, target)
-	}
-	return updated, nil
-}
-
-// writeSkillFile writes the embedded Chorus SKILL.md to path, creating parent
-// directories as needed.
-func writeSkillFile(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create skill directory for %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, skills.ChorusSkillMD, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
-}
-
-// mergeMCPConfigFile idempotently inserts or updates "mcpServers.chorus" in a
-// JSON configuration file while preserving all existing top-level keys and peer
-// MCP server entries.
-func mergeMCPConfigFile(path, mcpURL string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create config directory for %s: %w", path, err)
-	}
-
-	root := make(map[string]any)
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return fmt.Errorf("read %s: %w", path, readErr)
-		}
-		if len(strings.TrimSpace(string(raw))) > 0 {
-			if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
-				return fmt.Errorf("parse JSON in %s: %w", path, unmarshalErr)
-			}
-		}
-	}
-
-	servers, ok := root["mcpServers"].(map[string]any)
-	if !ok || servers == nil {
-		servers = make(map[string]any)
-	}
-	if filepath.Base(path) == "mcp_config.json" {
-		servers["chorus"] = map[string]any{
-			"url": mcpURL,
-		}
-	} else {
-		servers["chorus"] = map[string]any{
-			"type": "http",
-			"url":  mcpURL,
-		}
-	}
-	root["mcpServers"] = servers
-
-	encoded, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode JSON for %s: %w", path, err)
-	}
-	encoded = append(encoded, '\n')
-	if err := os.WriteFile(path, encoded, perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
-}
-
-// mergeCodexConfigFile idempotently inserts or updates the
-// "[mcp_servers.chorus]" section in an OpenAI Codex TOML configuration file
-// while preserving all existing tables, keys, and comments.
-func mergeCodexConfigFile(path, mcpURL string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create config directory for %s: %w", path, err)
-	}
-
-	perm := os.FileMode(0o600)
-	var content string
-	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return fmt.Errorf("read %s: %w", path, readErr)
-		}
-		content = string(raw)
-	}
-
-	urlLine := fmt.Sprintf("url = %q", mcpURL)
-	if strings.TrimSpace(content) == "" {
-		out := fmt.Sprintf("[mcp_servers.chorus]\n%s\n", urlLine)
-		if err := os.WriteFile(path, []byte(out), perm); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-		return nil
-	}
-
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	var (
-		out         []string
-		inChorusSec bool
-		foundSec    bool
-		wroteURL    bool
-	)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			if inChorusSec && !wroteURL {
-				out = append(out, urlLine)
-				wroteURL = true
-			}
-			inChorusSec = trimmed == "[mcp_servers.chorus]"
-			if inChorusSec {
-				foundSec = true
-			}
-			out = append(out, line)
-			continue
-		}
-		if inChorusSec {
-			if key, _, ok := strings.Cut(trimmed, "="); ok && strings.TrimSpace(key) == "url" {
-				if !wroteURL {
-					out = append(out, urlLine)
-					wroteURL = true
-				}
-				continue
-			}
-		}
-		out = append(out, line)
-	}
-	if inChorusSec && !wroteURL {
-		out = append(out, urlLine)
-	}
-	if !foundSec {
-		for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
-			out = out[:len(out)-1]
-		}
-		out = append(out, "", "[mcp_servers.chorus]", urlLine, "")
-	}
-
-	rendered := strings.Join(out, "\n")
-	if !strings.HasSuffix(rendered, "\n") {
-		rendered += "\n"
-	}
-	if err := os.WriteFile(path, []byte(rendered), perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }
 
 // startBackgroundService attempts to start Chorus via the OS user service
@@ -947,4 +721,57 @@ func probeServer(baseURL string) (bool, string) {
 		return false, ""
 	}
 	return true, strings.TrimSpace(resp.Header.Get("X-Chorus-Version"))
+}
+
+// writeEndpoints writes the running Chorus version and the two addresses a
+// user needs: the dashboard to open in a browser and the MCP endpoint that
+// agents use. An unknown version (an older server without the version
+// header) is omitted. The dashboard answers only requests addressed to a
+// loopback host, so for any other host it says the dashboard is unavailable
+// there instead of printing an address that would be rejected.
+func writeEndpoints(out io.Writer, version, baseURL string) {
+	if version != "" {
+		fmt.Fprintf(out, "Chorus v%s is running\n", version)
+	} else {
+		fmt.Fprintln(out, "Chorus is running")
+	}
+	if dashboard, err := dashboardURL(baseURL); err == nil {
+		fmt.Fprintf(out, "  Dashboard: %s\n", dashboard)
+	} else {
+		fmt.Fprintf(out, "  Dashboard: unavailable (%v)\n", err)
+	}
+	fmt.Fprintf(out, "  MCP:       %s/mcp\n", baseURL)
+}
+
+// dashboardURL returns the dashboard address for a Chorus base URL built by
+// localBaseURL. It returns an error when the host is not a loopback host,
+// because the dashboard rejects requests addressed to any other host.
+func dashboardURL(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", baseURL, err)
+	}
+	if !chorus.IsLoopbackHost(u.Host) {
+		return "", fmt.Errorf("the dashboard only accepts localhost; it is not reachable at %s", u.Host)
+	}
+	return baseURL + "/", nil
+}
+
+// openBrowser opens url in the default browser with the platform's own opener
+// ("open" on macOS, "xdg-open" on Linux). Other platforms return an error so
+// the caller can tell the user to open the printed address by hand.
+func openBrowser(url string) error {
+	var name string
+	switch runtime.GOOS {
+	case "darwin":
+		name = "open"
+	case "linux":
+		name = "xdg-open"
+	default:
+		return fmt.Errorf("no browser opener for %s", runtime.GOOS)
+	}
+	if out, err := exec.Command(name, url).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w (%s)", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

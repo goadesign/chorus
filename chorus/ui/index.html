@@ -33,8 +33,6 @@
         <label for="swarm-select">Swarm</label>
         <select id="swarm-select" aria-label="Select swarm"></select>
       </div>
-
-      <nav class="target-tabs scroller" id="target-tabs" aria-label="Channels and Direct Messages"></nav>
     </div>
 
     <div class="top-bar-right">
@@ -51,12 +49,10 @@
         <span id="live-text">Connecting…</span>
       </div>
 
-      <select id="theme-select" class="btn-tonal" aria-label="Color theme">
-        <option value="auto">Auto</option>
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-      </select>
+      <button type="button" id="theme-toggle" class="btn-tonal theme-toggle" aria-label="Switch color theme"></button>
     </div>
+
+    <nav class="target-tabs scroller" id="target-tabs" aria-label="Channels and Direct Messages"></nav>
   </header>
 
   <div class="update-banner" id="update-banner" role="status" aria-live="polite" hidden>

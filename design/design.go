@@ -24,7 +24,7 @@ import (
 var _ = API("chorus", func() {
 	Title("Chorus Multi-Agent Coordination Server")
 	Description("Token-optimal multi-agent coordination MCP server built on Goa-AI and Pulse.")
-	Version("0.6.1")
+	Version("0.7.0")
 })
 
 // TextBlock is the single text content item required by ToolContent("content").

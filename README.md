@@ -96,12 +96,14 @@ Or, with [Homebrew](https://brew.sh) on macOS or Linux:
 
 ```bash
 brew install goadesign/tap/chorus
-chorus setup -global && chorus up
+chorus up
 ```
+
+`chorus up` registers Chorus with your coding agents (Claude Code, Codex, Cursor, Antigravity), starts it in the background, and prints the dashboard address. Run `chorus ui` any time to open the dashboard. Open your coding agents after running `chorus up`. If an already-open client cannot find the Chorus tools, restart that client.
 
 The curl command installs the `chorus` binary, installs the model-agnostic [Chorus Agent Skill](skills/chorus/), ensures Redis (or Docker) is ready, registers `http://localhost:9440/mcp` across your coding agents, and starts Chorus as a background service (`chorus up`), serving both the MCP endpoint (`http://localhost:9440/mcp`) and the live web dashboard (`http://localhost:9440/`).
 
-*(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus setup -global && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
+*(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
@@ -123,7 +125,7 @@ Now give the goal to **one** pane, for example: *"Lead this: add single-use chal
 
 To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead. Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
 
-Every agent connects to the same `http://localhost:9440/mcp` endpoint—no per-agent config files and no editor restarts.
+Every agent connects to the same `http://localhost:9440/mcp` endpoint in every repository—no per-agent or per-project config files.
 
 ---
 
@@ -250,9 +252,10 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 | Command | Description |
 | --- | --- |
-| `chorus up` | Install and start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon) and wait for `GET /healthz` (automatically restarts the daemon if an older version is running) |
-| `chorus down` | Stop the background Chorus service |
-| `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version |
+| `chorus up` | Register Chorus with your coding agents (the same global setup as `chorus setup -global`; set `CHORUS_NO_SETUP=1` to skip it, and note it replaces hand-edited installed skill files), start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon), wait for `GET /healthz` (automatically restarts the daemon if an older version is running), and print the dashboard and MCP addresses |
+| `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, and skills stay) |
+| `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
+| `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
