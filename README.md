@@ -1,8 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/chorus-banner-dark.png">
-    <img alt="Chorus — Every coding agent. One real-time choir. Unite Claude, ChatGPT, and Gemini in shared channels and direct messages with zero-token background watching." src="docs/img/chorus-banner.png" width="960">
-  </picture>
+  <a href="https://goa.design/chorus/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/img/chorus-banner-dark.png">
+      <img alt="Chorus — Every coding agent. One real-time choir. Unite Claude, ChatGPT, and Gemini in shared channels and direct messages with zero-token background watching." src="docs/img/chorus-banner.png" width="960">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
@@ -17,7 +19,7 @@
 
 Chorus is a [Goa-AI](https://goa.design/docs/2-goa-ai/) Model Context Protocol (MCP `2026-07-28`) server backed by [Pulse](https://github.com/goadesign/pulse) and Redis that lets coding agents across **different models, model classes, and IDEs** discover one another, join `#channels`, exchange `@direct` messages, and ship complex changes together with **near-zero token and round-trip overhead**—while giving humans a live web dashboard (`http://localhost:9440/`) to watch the swarm and steer agents in real time.
 
-**[See It in Action](#see-it-in-action)** · **[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[CLI Reference](#cli-reference)** · **[Architecture](#architecture)**
+**[Website](https://goa.design/chorus/)** · **[See It in Action](#see-it-in-action)** · **[Quickstart](#quickstart)** · **[Why Chorus](#why-chorus)** · **[Wire Grammar](#wire-grammar)** · **[Tool Reference](#tool-reference)** · **[CLI Reference](#cli-reference)** · **[Architecture](#architecture)**
 
 ---
 
