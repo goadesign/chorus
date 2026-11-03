@@ -191,33 +191,44 @@
     clear(rootEl);
     if (!view) {
       // app.js clears the view when it switches swarms, before loading the
-      // new one. The old chart is gone, so a drag on it ends here without
-      // applying or restoring anything, and its pointer capture is released.
+      // new one, or while waiting for the first swarm to appear. The old
+      // chart is gone, so a drag on it ends here without applying or
+      // restoring anything, and its pointer capture is released.
       const d = drags.get(rootEl);
       dropDrag(rootEl);
       if (d && rootEl.hasPointerCapture(d.pointerId)) rootEl.releasePointerCapture(d.pointerId);
-      rootEl.appendChild(note("Loading swarm…"));
+      rootEl.appendChild(note(
+        state.activeSwarm
+          ? "Loading swarm…"
+          : "No active swarm yet. Start /chorus in your coding agents to see them here."
+      ));
       return;
     }
     // Record which swarm this view belongs to before anything else, so an
     // empty swarm still drops a drag started on the previous one.
     noteSwarm(rootEl, view.swarm);
-    const events = collectEvents(view);
-    if (events.length === 0) {
-      rootEl.appendChild(note("No messages yet. Agents' messages will appear here as they arrive."));
-      return;
-    }
-
     const width = Math.max(320, rootEl.clientWidth || 960);
     const sel = state.selectedTarget || null;
     const picked = state.selectedMessage || null;
-    const axis = buildAxis(events);
-    const win = state.timeWindow || liveWindow(axis);
-    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
     const channel = sel && sel.kind === "channel"
       ? (view.channels || []).find((c) => c.name === sel.name)
       : null;
-    const lanes = laneList(view, events, inWindow, channel, picked);
+    const isLive = !state.timeWindow;
+    const events = collectEvents(view);
+    if (events.length === 0) {
+      const lanes = laneList(view, events, () => false, channel, null, sel, isLive);
+      if (lanes.length === 0) {
+        rootEl.appendChild(note("No messages yet. Agents' messages will appear here as they arrive."));
+        return;
+      }
+      drawWaitingLanes(rootEl, view, lanes, width, laneFocus, actions);
+      return;
+    }
+
+    const axis = buildAxis(events);
+    const win = state.timeWindow || liveWindow(axis);
+    const inWindow = (t) => t >= win.startMs && t <= win.endMs;
+    const lanes = laneList(view, events, inWindow, channel, picked, sel, isLive);
     const colors = colorMap(view, events);
     const plotW = width - PLOT_X0 - PLOT_PAD;
     // A range with no activity keeps one row for its "No activity" note.
@@ -969,18 +980,18 @@
     if (label) label.remove();
   }
 
-  // laneList returns the lanes to draw for the current range: each known
-  // handle (registered agents and senders of retained messages) that has
-  // something drawn there, namely a message in the range, its read mark in
-  // the selected channel, or a mention from the selected message. A range
-  // with no activity has no lanes (render shows a note instead). Lanes
-  // change as the range moves; the page keeps the chart itself still while
-  // that happens. Humans come first,
-  // then handles in order. A sender with no current registration keeps its
-  // messages but is drawn muted; the data cannot tell whether it left,
-  // expired, or disconnected, so the lane makes no claim about why. The human
-  // mark reflects the agent's current declared model only.
-  function laneList(view, events, inWindow, channel, picked) {
+  // laneList returns the lanes to draw for the current range: in the live
+  // view, every current participant in the selected target (each member of
+  // the selected channel, the two handles of a DM tab, or every live agent in
+  // the swarm for All Activity) plus any handle with activity in the range;
+  // in a fixed historical window, only handles that have something drawn
+  // there, namely a message in the range, a read mark in the selected channel,
+  // or a mention from the selected message. Humans come first, then handles in
+  // order. A sender with no current registration keeps its messages but is
+  // drawn muted; the data cannot tell whether it left, expired, or
+  // disconnected, so the lane makes no claim about why. The human mark
+  // reflects the agent's current declared model only.
+  function laneList(view, events, inWindow, channel, picked, sel, isLive) {
     const live = new Map((view.agents || []).map((a) => [a.handle, a]));
     const known = new Set([...live.keys(), ...events.map((e) => e.sender)]);
     const shown = new Set();
@@ -988,8 +999,19 @@
     if (channel) {
       const bySeq = new Map((channel.messages || []).map((m) => [m.seq, m]));
       for (const p of channel.positions || []) {
+        if (isLive) {
+          shown.add(p.handle);
+          continue;
+        }
         const m = bySeq.get(p.read_seq);
         if (m && inWindow(m.sent_at_ms)) shown.add(p.handle);
+      }
+    } else if (isLive) {
+      if (sel && sel.kind === "dm") {
+        if (known.has(sel.a)) shown.add(sel.a);
+        if (known.has(sel.b)) shown.add(sel.b);
+      } else {
+        for (const a of view.agents || []) shown.add(a.handle);
       }
     }
     const chosen = picked ? events.find((e) => e.target === picked.target && e.seq === picked.seq) : null;
@@ -1007,6 +1029,44 @@
     });
     lanes.sort((a, b) => (b.human - a.human) || a.handle.localeCompare(b.handle));
     return lanes;
+  }
+
+  // drawWaitingLanes draws the live participant lanes before any message has
+  // been sent in the swarm, so joined and watching agents are visible and
+  // inspectable immediately.
+  function drawWaitingLanes(rootEl, view, lanes, width, laneFocus, actions) {
+    const colors = colorMap(view, []);
+    const plotW = width - PLOT_X0 - PLOT_PAD;
+    const laneTop = PAD + AXIS_H;
+    const height = laneTop + lanes.length * LANE_H + PAD;
+    const svg = el("svg", {
+      class: "tl",
+      width: String(width),
+      height: String(height),
+      viewBox: `0 0 ${width} ${height}`,
+      role: "group",
+      "aria-label": `Swarm participants, ${lanes.length} joined. No messages yet.`,
+    });
+    installStageResize(rootEl);
+    svg.appendChild(gutterClip(LABEL_W - PAD));
+    const headerY = PAD + AXIS_ROW - 4;
+    const countLabel = el("text", { class: "tl-label", x: String(PAD), y: String(headerY) });
+    countLabel.textContent = lanes.length === 1 ? "1 participant" : `${lanes.length} participants`;
+    svg.appendChild(countLabel);
+    const emptyLabel = el("text", { class: "tl-axis", x: String(PLOT_X0), y: String(headerY) });
+    emptyLabel.textContent = plotW >= 360
+      ? "No messages yet · messages will appear here as agents post"
+      : "No messages yet";
+    svg.appendChild(emptyLabel);
+    lanes.forEach((lane, i) => {
+      const y = laneTop + i * LANE_H + LANE_H / 2;
+      drawLane(svg, lane, y, width, colors, actions);
+    });
+    rootEl.appendChild(svg);
+    const laneTarget = laneFocus
+      ? [...svg.querySelectorAll("[data-tl-lane]")].find((n) => n.dataset.tlLane === laneFocus) || null
+      : null;
+    if (laneTarget) laneTarget.focus({ preventScroll: true });
   }
 
   // lastModel returns the model saved on handle's most recent message, or ""

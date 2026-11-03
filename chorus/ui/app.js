@@ -580,13 +580,17 @@
     if (sendBtn) sendBtn.disabled = !state.activeSwarm;
     const allSwarms = new Set(state.swarms);
     if (state.activeSwarm) allSwarms.add(state.activeSwarm);
-    if (allSwarms.size === 0) allSwarms.add("default");
     const sortedSwarms = Array.from(allSwarms).sort();
-    const swarmListKey = sortedSwarms.join(",");
+    const swarmListKey = sortedSwarms.length > 0 ? sortedSwarms.join(",") : "__empty__";
     if (select) {
+      select.disabled = sortedSwarms.length === 0;
       if (select.dataset.swarmListKey !== swarmListKey) {
         select.dataset.swarmListKey = swarmListKey;
-        select.replaceChildren(...sortedSwarms.map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+        if (sortedSwarms.length === 0) {
+          select.replaceChildren(el("option", { value: "", selected: true }, "No active swarms"));
+        } else {
+          select.replaceChildren(...sortedSwarms.map((s) => el("option", { value: s, selected: s === state.activeSwarm }, s)));
+        }
       } else if (state.activeSwarm && select.value !== state.activeSwarm) {
         select.value = state.activeSwarm;
       }
@@ -750,6 +754,17 @@
         state,
         actions
       );
+      if (!state.activeSwarm) {
+        const titleEl = document.getElementById("active-title");
+        const subtitleEl = document.getElementById("active-subtitle");
+        if (titleEl) titleEl.textContent = "Waiting for agents";
+        if (subtitleEl) subtitleEl.textContent = "No active swarm yet";
+        streamEl?.replaceChildren(
+          el("div", { className: "empty-state" },
+            el("h3", {}, "No active swarm yet"),
+            el("p", {}, "Start /chorus in your coding agents to see them here."))
+        );
+      }
     }
     // Keep the timeline SVG at the exact same viewport Y (prevChartTop) during
     // time-window changes and active pointer drags. When narrowing the time
@@ -795,8 +810,8 @@
     }
   }
 
-  async function fetchSwarms() {
-    const res = await fetch("/swarms", { headers: { Accept: "application/json" } });
+  async function fetchSwarms(signal) {
+    const res = await fetch("/swarms", { headers: { Accept: "application/json" }, signal });
     checkUIBuild(res);
     if (!res.ok) throw new Error(`GET /swarms HTTP ${res.status}`);
     const data = await res.json();
@@ -805,20 +820,23 @@
   }
 
   // Long-poll loop for GET /swarms/{swarm}/view with single-source ETag header
-  // validation and bounded 1s -> 30s error backoff.
+  // validation and bounded 1s -> 30s error backoff. When swarmName is empty
+  // (no active swarm yet and no #swarm= deep-link), polls GET /swarms until the
+  // first live swarm appears and switches to it automatically.
   async function startSwarmLoop(swarmName) {
     if (state.pollAbort) {
       state.pollAbort.abort();
     }
     const abortCtrl = new AbortController();
     state.pollAbort = abortCtrl;
+    const nextSwarm = swarmName || "";
     const prevSwarm = state.activeSwarm;
-    const switchedSwarm = Boolean(prevSwarm) && prevSwarm !== swarmName;
-    state.activeSwarm = swarmName;
+    const switchedSwarm = Boolean(prevSwarm) && prevSwarm !== nextSwarm;
+    state.activeSwarm = nextSwarm;
     state.etag = "";
     state.connectionState = "connecting";
     state.retryCountdownSec = 0;
-    if (switchedSwarm) {
+    if (switchedSwarm || !nextSwarm) {
       state.replyTo = null;
       renderReplyChip();
       state.view = null;
@@ -832,12 +850,34 @@
     let retryDelaySec = 1;
     while (!abortCtrl.signal.aborted) {
       try {
-        const waitSec = state.etag ? 25 : 0;
+        if (!nextSwarm) {
+          const swarms = await fetchSwarms(abortCtrl.signal);
+          if (abortCtrl.signal.aborted) return;
+          state.lastSyncMs = Date.now();
+          state.connectionState = "live";
+          state.retryCountdownSec = 0;
+          retryDelaySec = 1;
+          renderLiveStatus();
+          const hashSwarm = readHashState().swarm;
+          if (hashSwarm || swarms.length > 0) {
+            startSwarmLoop(hashSwarm || swarms[0]);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
+        const isUnbound = Boolean(
+          state.view &&
+          !state.swarms.includes(nextSwarm) &&
+          !(state.view.agents?.length || state.view.channels?.length || state.view.inboxes?.length)
+        );
+        const waitSec = !state.etag ? 0 : (isUnbound ? 2 : 25);
         const headers = { Accept: "application/json" };
         if (state.etag) {
           headers["If-None-Match"] = state.etag;
         }
-        const url = `/swarms/${encodeURIComponent(swarmName)}/view?wait=${waitSec}`;
+        const url = `/swarms/${encodeURIComponent(nextSwarm)}/view?wait=${waitSec}`;
         const res = await fetch(url, { headers, signal: abortCtrl.signal });
         checkUIBuild(res);
 
@@ -849,9 +889,11 @@
           renderLiveStatus();
           const prevSwarms = state.swarms.join(",");
           try {
-            const next = await fetchSwarms();
+            const next = await fetchSwarms(abortCtrl.signal);
+            if (abortCtrl.signal.aborted) return;
             if (next.join(",") !== prevSwarms) renderAll();
           } catch {
+            if (abortCtrl.signal.aborted) return;
             // Ignore background list error when view poll succeeded
           }
           continue;
@@ -874,10 +916,11 @@
         retryDelaySec = 1;
 
         try {
-          await fetchSwarms();
+          await fetchSwarms(abortCtrl.signal);
         } catch {
           // Render view even if swarm list refresh fails
         }
+        if (abortCtrl.signal.aborted) return;
         renderAll();
       } catch (err) {
         if (abortCtrl.signal.aborted) return;
@@ -1024,7 +1067,7 @@
     } catch (err) {
       setComposerFeedback(err.message || "Failed to send message.", "error");
     } finally {
-      sendBtn.disabled = false;
+      sendBtn.disabled = !state.activeSwarm;
     }
   }
 
@@ -1156,11 +1199,12 @@
         document.getElementById("mode-stream")?.classList.toggle("active", nextMode === "stream");
         document.getElementById("mode-threaded")?.classList.toggle("active", nextMode !== "stream");
       }
-      if (h.swarm && h.swarm !== state.activeSwarm) {
+      const nextSwarm = h.swarm || (state.swarms.includes(state.activeSwarm) ? state.activeSwarm : (state.swarms[0] || ""));
+      if (nextSwarm !== state.activeSwarm) {
         state.selectedTarget = null;
         state.selectedMessage = null;
         state.timeWindow = null;
-        startSwarmLoop(h.swarm);
+        startSwarmLoop(nextSwarm);
         return;
       }
       if (state.view) {
@@ -1197,12 +1241,12 @@
       const swarms = await fetchSwarms();
       if (!state.pollAbort) {
         const currentHash = readHashState();
-        startSwarmLoop(currentHash.swarm || swarms[0] || "default");
+        startSwarmLoop(currentHash.swarm || swarms[0] || "");
       }
     } catch {
       if (!state.pollAbort) {
         const currentHash = readHashState();
-        startSwarmLoop(currentHash.swarm || "default");
+        startSwarmLoop(currentHash.swarm || "");
       }
     }
   }
