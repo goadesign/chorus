@@ -449,7 +449,8 @@ body[data-theme="light"] .provider-openai {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 6px 16px;
+  flex-wrap: wrap;
   flex-shrink: 0;
   z-index: 20;
 }
@@ -543,6 +544,7 @@ body[data-theme="light"] .provider-openai {
 
 /* Channel & DM Conversation Tabs in Header */
 .target-tabs {
+  flex: 0 0 100%;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -552,6 +554,7 @@ body[data-theme="light"] .provider-openai {
 }
 
 .target-tab {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1134,6 +1137,22 @@ body[data-theme="light"] .provider-openai {
 
 .tl-dot.is-dim {
   opacity: 0.15;
+}
+
+.tl-reply.is-dim,
+.tl-mention.is-dim,
+.tl-mention-end.is-dim {
+  opacity: 0.1;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 8px;
+  flex-shrink: 0;
 }
 
 .tl-jump {

@@ -163,15 +163,7 @@
     const message = entry.message;
     if (state.timeWindow && (message.sent_at_ms < state.timeWindow.startMs
       || message.sent_at_ms > state.timeWindow.endMs)) return false;
-    if (state.filterAgent) {
-      const handle = state.filterAgent;
-      if (message.sender !== handle
-        && entry.target !== `@${handle}`
-        && !mentionedHandles(message.text).some((mention) => mention.toLowerCase() === handle.toLowerCase())) return false;
-    }
-    const query = state.searchQuery.toLowerCase();
-    return !query || `${entry.target} ${message.sender} #${message.seq} ${message.text}`
-      .toLowerCase().includes(query);
+    return window.ChorusUI.matchesMessage(entry.target, message, state.filterAgent, state.searchQuery);
   }
 
   // findParticipant builds the live or historical participant record for handle
@@ -702,13 +694,13 @@
         actionButton(
           [handleBadgeNode(entry.message.sender, state, "", isFromHumanMessage(entry.message), entry.message.model), " mentioned ", handleBadgeNode(handle, state), ` (${entry.target}#${entry.message.seq})`],
           `mention:${coordinate(entry)}:${handle}`,
-          () => actions.selectMessage(entry.target, entry.message.seq)
+          () => actions.revealMessage(entry.target, entry.message.seq)
         ),
         element("span", "message-time", `${age(entry.message.sent_at_ms)} ago`));
       if (entry.target.startsWith("#")) {
         const reply = entries.find((item) => item.target === entry.target && item.message.reply_to === entry.message.seq);
         if (reply) row.append(actionButton(["Reply by ", handleBadgeNode(reply.message.sender, state, "", isFromHumanMessage(reply.message), reply.message.model)], `mention-reply:${coordinate(reply)}`,
-          () => actions.selectMessage(reply.target, reply.message.seq)));
+          () => actions.revealMessage(reply.target, reply.message.seq)));
       }
       list.append(row);
     }
@@ -999,7 +991,7 @@
     details.addEventListener("toggle", () => {
       if (!details.open) {
         for (const child of details.querySelectorAll("details[open]")) child.open = false;
-        if (entries.some((entry) => selected(entry, state))) actions.selectMessage(null, 0);
+        if (entries.some((entry) => selected(entry, state))) actions.clearMessage();
         const detailsEl = document.getElementById("agent-details");
         if (detailsEl?.dataset?.returnFocusKey
           && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {
@@ -1015,7 +1007,8 @@
   }
 
   // renderParentContext builds a clickable quoted-parent banner when a message
-  // replies to an earlier message in the same channel or DM stream.
+  // replies to a retained message in the same channel. DM reply numbers do
+  // not identify the parent inbox, so those remain unlinked.
   function renderParentContext(entry, state, actions, byTarget, keyPrefix) {
     const message = entry.message;
     if (!message.reply_to) return null;
@@ -1031,7 +1024,7 @@
           element("span", "message-parent-excerpt", formattedPreview(parent.message.text)));
         btn.type = "button";
         btn.dataset.focusKey = `parent:${keyPrefix}`;
-        btn.addEventListener("click", () => actions.selectMessage(entry.target, parent.message.seq));
+        btn.addEventListener("click", () => actions.revealMessage(entry.target, parent.message.seq));
         return btn;
       }
       return element("div", "message-parent-quote is-unretained",
@@ -1101,7 +1094,7 @@
     details.append(summary);
     details.addEventListener("toggle", () => {
       if (!details.open) {
-        if (selected(entry, state)) actions.selectMessage(null, 0);
+        if (selected(entry, state)) actions.clearMessage();
         const detailsEl = document.getElementById("agent-details");
         if (detailsEl?.dataset?.returnFocusKey
           && [...details.querySelectorAll("[data-focus-key]")].some((n) => n.dataset.focusKey === detailsEl.dataset.returnFocusKey)) {

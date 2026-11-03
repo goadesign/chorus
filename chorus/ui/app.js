@@ -16,7 +16,9 @@
     //   { kind: "dm", pairKey: "codex↔opus", a: "codex", b: "opus" }
     //   { kind: "all" }
     selectedTarget: null,
-    // selectedMessage: null | { target: "#chorus" | "@recipient", seq: number, reader?: string }
+    // One highlighted message, chosen in the conversation or inspected in the
+    // timeline. Only a read-mark inspection carries the reader handle.
+    // null | { kind: "conversation" | "message" | "read", target, seq, reader? }
     selectedMessage: null,
     // timeWindow: null | { startMs: number, endMs: number }
     timeWindow: null,
@@ -35,6 +37,8 @@
     reply: ["M9 17 4 12l5-5", "M20 18v-2a4 4 0 0 0-4-4H4"],
     jump: ["M5 12h14", "m12 5 7 7-7 7"],
     edit: ["M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z", "m15 5 4 4"],
+    sun: ["M12 3v2", "M12 19v2", "M3 12h2", "M19 12h2", "m5.6 5.6 1.4 1.4", "m17 17 1.4 1.4", "m5.6 18.4 1.4-1.4", "m17 7 1.4-1.4", "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0"],
+    moon: ["M20.9 13.3A9 9 0 0 1 10.7 3.1 9 9 0 1 0 20.9 13.3Z"],
     pin: ["M12 17v5", "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"],
     code: ["m16 18 6-6-6-6", "m8 6-6 6 6 6"],
     check: ["M20 6 9 17l-5-5"],
@@ -363,6 +367,17 @@
     return first <= last ? { first, last } : null;
   }
 
+  // matchesMessage applies the same search and agent choices to stream rows,
+  // timeline marks, and navigation. A direct message matches its recipient;
+  // a literal @mention matches case-insensitively, as the server does.
+  function matchesMessage(target, message, agent, query) {
+    if (agent && message.sender !== agent && target !== `@${agent}`
+      && ![...message.text.matchAll(/(^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?![A-Za-z0-9_-])/g)]
+        .some((m) => m[2].toLowerCase() === agent.toLowerCase())) return false;
+    return !query || `${target} ${message.sender} #${message.seq} ${message.text}`
+      .toLowerCase().includes(query.toLowerCase());
+  }
+
   const actions = {
     selectTarget(targetObj) {
       if (!targetObj) return false;
@@ -370,7 +385,10 @@
         (targetObj.kind === "channel" ? state.selectedTarget.name === targetObj.name
           : targetObj.kind === "dm" ? state.selectedTarget.pairKey === targetObj.pairKey : true);
       state.selectedTarget = targetObj;
-      if (sameAsCurrent) return false;
+      if (sameAsCurrent) {
+        revealActiveTab();
+        return false;
+      }
       state.selectedMessage = null;
       state.replyTo = null;
       renderReplyChip();
@@ -380,27 +398,26 @@
       return true;
     },
 
-    // selectMessage either inspects a timeline point or mark in place
-    // (opts.reveal === false: keeps active tab, filters, disclosures, and chart
-    // viewport position unchanged) or reveals the message in #message-stream
-    // (opts.reveal !== false: switches target tab if needed, moves an existing
-    // timeWindow while preserving its duration, clears excluding agent/search
-    // filters, and expands and scrolls the message disclosure into view).
-    selectMessage(target, seq, opts = {}) {
-      if (!target || !seq || seq <= 0) {
-        state.selectedMessage = null;
-        renderAll({ preserveChartPosition: opts?.reveal === false });
-        return;
-      }
-      state.selectedMessage = {
-        target,
-        seq,
-        ...(opts?.reader ? { reader: opts.reader } : {}),
-      };
-      if (opts?.reveal === false) {
-        renderAll({ revealSelection: false, preserveChartPosition: true });
-        return;
-      }
+    // inspectMessage opens a chart preview without changing tabs, filters,
+    // open conversation rows, or the chart's position on the page.
+    inspectMessage(target, seq, reader = "") {
+      state.selectedMessage = reader
+        ? { kind: "read", target, seq, reader }
+        : { kind: "message", target, seq };
+      renderAll({ preserveChartPosition: true });
+    },
+
+    // clearMessage removes the highlight and any chart preview in place.
+    clearMessage() {
+      state.selectedMessage = null;
+      renderAll({ preserveChartPosition: true });
+    },
+
+    // revealMessage opens and centers a retained conversation message. It
+    // moves to its channel or DM pair when needed, preserves historical-window
+    // duration, and clears only filters that would exclude the destination.
+    revealMessage(target, seq) {
+      state.selectedMessage = { kind: "conversation", target, seq };
       const msg = findViewMessage(state.view, target, seq);
       if (state.selectedTarget?.kind !== "all") {
         let nextTarget = null;
@@ -437,24 +454,14 @@
             state.timeWindow = { startMs: start, endMs: start + dur };
           }
         }
-        if (state.filterAgent) {
-          const handle = state.filterAgent;
-          const mentioned = [...String(msg.text || "").matchAll(/(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{0,31})(?![a-zA-Z0-9_-])/g)]
-            .some((m) => m[2].toLowerCase() === handle.toLowerCase());
-          if (msg.sender !== handle && target !== `@${handle}` && !mentioned) {
-            state.filterAgent = "";
-          }
-        }
-        if (state.searchQuery) {
-          const haystack = `${target} ${msg.sender} #${msg.seq} ${msg.text}`.toLowerCase();
-          if (!haystack.includes(state.searchQuery.toLowerCase())) {
-            state.searchQuery = "";
-            const searchInput = document.getElementById("search-input");
-            if (searchInput) searchInput.value = "";
-          }
+        if (!matchesMessage(target, msg, state.filterAgent, "")) state.filterAgent = "";
+        if (!matchesMessage(target, msg, "", state.searchQuery)) {
+          state.searchQuery = "";
+          document.getElementById("search-input").value = "";
         }
       }
       renderAll({ revealSelection: true });
+      revealActiveTab();
     },
 
     setTimeWindow(win) {
@@ -611,6 +618,7 @@
     const tabsEl = document.getElementById("target-tabs");
     if (!tabsEl) return;
     const prevScrollLeft = tabsEl.scrollLeft;
+    const previousActiveKey = tabsEl.querySelector(".active")?.dataset.tabKey;
     const focusedTabKey = tabsEl.contains(document.activeElement)
       ? (document.activeElement?.closest?.("[data-tab-key]")?.dataset?.tabKey
         || document.activeElement?.dataset?.tabKey
@@ -662,12 +670,29 @@
     );
     tabsEl.replaceChildren(...tabNodes);
     tabsEl.scrollLeft = prevScrollLeft;
+    // Explicit navigation reveals its tab horizontally. Passive refresh keeps
+    // the reader's manual scroll, and never scrolls the page or chart.
+    const activeTab = tabsEl.querySelector(".active");
+    if (activeTab && activeTab.dataset.tabKey !== previousActiveKey) revealActiveTab();
     if (focusedTabKey) {
       const nextTab = [...tabsEl.querySelectorAll("[data-tab-key]")].find((n) => n.dataset.tabKey === focusedTabKey);
       nextTab?.focus?.({ preventScroll: true });
     }
 
     renderActiveFiltersBar();
+  }
+
+  // revealActiveTab scrolls only the tab strip to expose the current target.
+  // Explicitly opening the same target also brings its tab back after a reader
+  // has scrolled the strip away; passive updates keep that manual position.
+  function revealActiveTab() {
+    const tabs = document.getElementById("target-tabs");
+    const active = tabs?.querySelector(".active");
+    if (!active) return;
+    const strip = tabs.getBoundingClientRect();
+    const tab = active.getBoundingClientRect();
+    if (tab.left < strip.left) tabs.scrollLeft += tab.left - strip.left;
+    else if (tab.right > strip.right) tabs.scrollLeft += Math.min(tab.left - strip.left, tab.right - strip.right);
   }
 
   // formatMessageCount labels a count using its channel or inbox sources.
@@ -1077,6 +1102,18 @@
     } else {
       delete document.documentElement.dataset.theme;
     }
+    renderThemeToggle();
+  }
+
+  // renderThemeToggle names the next appearance and shows its icon. Auto
+  // follows the operating system until the user explicitly chooses a theme.
+  function renderThemeToggle() {
+    const dark = isDarkThemeActive();
+    const button = document.getElementById("theme-toggle");
+    const label = `Switch to ${dark ? "light" : "dark"} theme`;
+    button.replaceChildren(svgIcon(dark ? "sun" : "moon", "icon"));
+    button.setAttribute("aria-label", label);
+    button.title = label;
   }
 
   function initEvents() {
@@ -1086,17 +1123,19 @@
     }
 
     const savedTheme = localStorage.getItem("chorus_theme") || "auto";
-    const themeSelect = document.getElementById("theme-select");
-    themeSelect.value = savedTheme;
     applyTheme(savedTheme);
-    themeSelect.addEventListener("change", () => {
-      applyTheme(themeSelect.value);
-      localStorage.setItem("chorus_theme", themeSelect.value);
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+      const theme = isDarkThemeActive() ? "light" : "dark";
+      applyTheme(theme);
+      localStorage.setItem("chorus_theme", theme);
       renderAll();
     });
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-        if (!document.documentElement.dataset.theme) renderAll();
+        if (!document.documentElement.dataset.theme) {
+          renderThemeToggle();
+          renderAll();
+        }
       });
     }
 
@@ -1227,6 +1266,7 @@
     handleBadge,
     svgIcon,
     formatMessageCount,
+    matchesMessage,
   };
 
   async function boot() {
