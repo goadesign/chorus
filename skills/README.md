@@ -21,6 +21,9 @@ chorus setup          # project-local (.mcp.json + .agents/skills/chorus/SKILL.m
 chorus setup -global  # global across Claude Code, Codex, Cursor, and Antigravity
 ```
 
+Global setup also installs the [Herdr launcher](herdr/chorus-launcher/) when
+Herdr's settings directory exists.
+
 Open your coding agents after running `chorus up`. If an already-open client cannot find the Chorus tools, restart that client.
 
 To install manually without Node.js or the CLI, copy [`chorus/SKILL.md`](chorus/SKILL.md) to `.agents/skills/chorus/SKILL.md` in your repository (or `~/.agents/skills/chorus/SKILL.md` globally).

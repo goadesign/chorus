@@ -1,11 +1,13 @@
 // This file implements "chorus setup": it registers the Chorus MCP endpoint
 // in project or global coding-agent configuration files and installs the
-// embedded Chorus Agent Skill (SKILL.md) next to them. "chorus up" runs the same
-// global setup before it starts the server.
+// embedded Chorus Agent Skill (SKILL.md) next to them. Global setup also installs
+// the bundled launcher when Herdr is detected. "chorus up" runs the same global
+// setup before it starts the server.
 package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -36,15 +38,16 @@ type codexURLEdit struct {
 }
 
 // runSetup registers the Chorus MCP server URL in project and/or global MCP
-// configuration files and installs the Chorus Agent Skill (SKILL.md).
-func runSetup(args []string) error {
+// configuration files and installs the Chorus Agent Skill (SKILL.md). Global
+// setup also installs the launcher when Herdr is detected.
+func runSetup(args []string, out io.Writer) error {
 	var (
 		addr   string
 		global bool
 	)
 	fs := flag.NewFlagSet("chorus setup", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
-	fs.BoolVar(&global, "global", false, "Register Chorus in global coding-agent MCP configuration files")
+	fs.BoolVar(&global, "global", false, "Register coding agents globally and install the Chorus launcher for Herdr")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -65,10 +68,17 @@ func runSetup(args []string) error {
 	}
 	for _, p := range updated {
 		if strings.HasSuffix(p, ".md") {
-			fmt.Printf("Installed Chorus skill in %s\n", p)
+			fmt.Fprintf(out, "Installed Chorus skill in %s\n", p)
 		} else {
-			fmt.Printf("Registered Chorus MCP (%s) in %s\n", mcpURL, p)
+			fmt.Fprintf(out, "Registered Chorus MCP (%s) in %s\n", mcpURL, p)
 		}
+	}
+	if global {
+		modDir, err := setupHerdrLauncher(homeDir)
+		if err != nil {
+			return fmt.Errorf("install Chorus launcher in Herdr: %w", err)
+		}
+		writeHerdrLauncherSummary(out, modDir)
 	}
 	return nil
 }
@@ -78,7 +88,8 @@ func runSetup(args []string) error {
 // .agents/skills/chorus/SKILL.md when global is false, or updates detected
 // global agent MCP config files and skill directories under homeDir (Universal
 // .agents, Cursor, Antigravity, Claude Code, and OpenAI Codex) when global is
-// true.
+// true. Herdr installation is a separate operation called by runSetup and
+// setupForUp, so these paths always describe MCP and skill files.
 func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error) {
 	var (
 		jsonTargets  []string
@@ -159,7 +170,7 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 		updated = append(updated, target)
 	}
 	for _, target := range skillTargets {
-		if err := writeSkillFile(target); err != nil {
+		if err := writeIntegrationFile(target, skills.ChorusSkillMD); err != nil {
 			return nil, err
 		}
 		updated = append(updated, target)
@@ -167,13 +178,55 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 	return updated, nil
 }
 
-// writeSkillFile writes the embedded Chorus SKILL.md to path, creating parent
-// directories as needed.
-func writeSkillFile(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create skill directory for %s: %w", path, err)
+// setupHerdrLauncher installs the bundled mod into Herdr's existing home
+// directory. Herdr creates that directory on its first launch. Only bundled
+// runtime files are replaced; saved preferences and shortcuts remain untouched.
+// It returns the installed mod directory, or an empty string when Herdr has
+// no existing home directory, and reports read or write failures with a path.
+func setupHerdrLauncher(homeDir string) (string, error) {
+	herdrHome := cmp.Or(os.Getenv("HERDR_APP_HOME"), filepath.Join(homeDir, ".config", "herdr-app"))
+	info, err := os.Stat(herdrHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
 	}
-	if err := os.WriteFile(path, skills.ChorusSkillMD, 0o644); err != nil {
+	if err != nil {
+		return "", fmt.Errorf("inspect Herdr configuration %s: %w", herdrHome, err)
+	}
+	if !info.IsDir() {
+		return "", nil
+	}
+
+	const source = "herdr/chorus-launcher"
+	modDir := filepath.Join(herdrHome, "mods", "chorus-launcher")
+	// The overlay manifest must exist before Herdr can load the new UI script.
+	for _, name := range []string{"mod.json", "launch.py", "main.js"} {
+		content, err := skills.HerdrLauncher.ReadFile(source + "/" + name)
+		if err != nil {
+			return "", fmt.Errorf("read bundled Herdr launcher %s: %w", name, err)
+		}
+		target := filepath.Join(modDir, name)
+		if err := writeIntegrationFile(target, content); err != nil {
+			return "", err
+		}
+	}
+	return modDir, nil
+}
+
+// writeIntegrationFile installs bundled skill or launcher content, creating
+// directories as needed. Identical files are left untouched: Herdr reloads
+// open dialogs when mod files are written, discarding unfinished choices.
+func writeIntegrationFile(path string, content []byte) error {
+	installed, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if err == nil && bytes.Equal(installed, content) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create directory for %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -381,8 +434,9 @@ func tomlKeyPath(prefix []string, it unstable.Iterator) ([]string, *unstable.Nod
 
 // setupForUp runs the global setup for "chorus up": it registers mcpURL in the
 // detected coding agents' global MCP configuration and installs the Chorus
-// skill next to them, then writes a one-line summary to out. Hand-edited
-// installed skill files are replaced by the embedded version. The error names
+// skill next to them, installs the launcher when Herdr is detected, then writes
+// a summary and the launcher command to out. Hand-edited installed skill and
+// launcher files are replaced by the embedded version. The error names
 // how to skip this step when a configuration file cannot be updated.
 func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 	updated, err := setupMCPConfigs("", homeDir, mcpURL, true)
@@ -390,7 +444,21 @@ func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 		return fmt.Errorf("register Chorus with your coding agents: %w (fix the file, or set CHORUS_NO_SETUP=1 to skip this step)", err)
 	}
 	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files)\n", len(updated))
+	modDir, err := setupHerdrLauncher(homeDir)
+	if err != nil {
+		return fmt.Errorf("install Chorus launcher in Herdr: %w (fix this path, then rerun chorus up; or set CHORUS_NO_SETUP=1 to skip setup)", err)
+	}
+	writeHerdrLauncherSummary(out, modDir)
 	return nil
+}
+
+// writeHerdrLauncherSummary names the installed mod directory once and gives
+// the person a command to open it without changing Herdr's keyboard settings.
+func writeHerdrLauncherSummary(out io.Writer, modDir string) {
+	if modDir != "" {
+		fmt.Fprintf(out, "Installed Chorus launcher in %s\n", modDir)
+		fmt.Fprintln(out, "Open it from a project terminal: herdr-app do mod.open --name chorus-launcher")
+	}
 }
 
 // claudeInstalled reports whether Claude Code is set up for setupMCPConfigs:

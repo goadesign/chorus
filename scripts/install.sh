@@ -8,7 +8,7 @@
 #   CHORUS_VERSION   Release tag to install (default: latest release)
 #   INSTALL_DIR      Destination directory (default: /usr/local/bin if writable, else ~/.local/bin)
 #   CHORUS_NO_REDIS  Set to 1 to skip checking/installing Redis
-#   CHORUS_NO_SETUP  Set to 1 to skip registering the Chorus MCP endpoint and agent skills
+#   CHORUS_NO_SETUP  Set to 1 to skip MCP registration, agent skills, and the Herdr launcher
 #   CHORUS_NO_START  Set to 1 to skip starting the Chorus background service
 
 set -eu

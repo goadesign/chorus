@@ -61,8 +61,14 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 		claudeCfg string
 		wantErr   string
 		wantSetup bool
+		// herdr detects a Herdr installation inside the temporary home.
+		herdr bool
+		// herdrBlocked makes the install destination a file to exercise recovery.
+		herdrBlocked bool
 	}{
 		{name: "setup then endpoints", wantSetup: true},
+		{name: "setup includes Herdr launcher", wantSetup: true, herdr: true},
+		{name: "Herdr install failure stops up", herdr: true, herdrBlocked: true, wantErr: "install Chorus launcher in Herdr"},
 		{name: "CHORUS_NO_SETUP skips setup", noSetup: true},
 		{name: "unreadable config stops up", claudeCfg: "{not json", wantErr: "CHORUS_NO_SETUP=1"},
 		{name: "null config stops up", claudeCfg: "null", wantErr: "CHORUS_NO_SETUP=1"},
@@ -72,6 +78,7 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("HERDR_APP_HOME", "")
 			t.Setenv("PATH", t.TempDir())
 			if tc.noSetup {
 				t.Setenv("CHORUS_NO_SETUP", "1")
@@ -79,6 +86,13 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 				t.Setenv("CHORUS_NO_SETUP", "")
 			}
 			require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
+			if tc.herdr {
+				require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "herdr-app"), 0o755))
+				if tc.herdrBlocked {
+					require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "herdr-app", "mods"), 0o755))
+					require.NoError(t, os.WriteFile(filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher"), []byte("blocked"), 0o600))
+				}
+			}
 			if tc.claudeCfg != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(home, ".claude.json"), []byte(tc.claudeCfg), 0o644))
 			}
@@ -89,12 +103,23 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
 				assert.NotContains(t, out.String(), "Dashboard:")
+				if tc.herdrBlocked {
+					assert.Contains(t, err.Error(), filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher"))
+					assert.Contains(t, err.Error(), "rerun chorus up")
+					assert.NotContains(t, err.Error(), "register Chorus with your coding agents:")
+				}
 				return
 			}
 			require.NoError(t, err)
 			skill := filepath.Join(home, ".claude", "skills", "chorus", "SKILL.md")
 			if tc.wantSetup {
-				assert.Regexp(t, `^Registered Chorus with your coding agents \(\d+ files\)\n`+regexp.QuoteMeta(endpoints)+`$`, out.String())
+				var launcherHint string
+				if tc.herdr {
+					launcherHint = fmt.Sprintf("Installed Chorus launcher in %s\nOpen it from a project terminal: herdr-app do mod.open --name chorus-launcher\n", filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher"))
+					assert.FileExists(t, filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher", "main.js"))
+					assert.NoFileExists(t, filepath.Join(home, ".config", "herdr-app", "keys.json"))
+				}
+				assert.Regexp(t, `^Registered Chorus with your coding agents \(\d+ files\)\n`+regexp.QuoteMeta(launcherHint+endpoints)+`$`, out.String())
 				raw, readErr := os.ReadFile(skill)
 				require.NoError(t, readErr)
 				assert.Equal(t, skills.ChorusSkillMD, raw)

@@ -1,0 +1,505 @@
+// Choose one team row per pane; Herdr's terminal labels own existing sessions.
+import { View, div } from "gpui-kit";
+import { Button, Checkbox, Input, InputState, Popup, Select, VirtualListScrollHandle, h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
+import { appHome, closeOverlay, exec, focused, knownAgents, notify, props, setShared, shared, spaces, theme } from "herdr";
+
+// The default channel and swarm must both accept the chosen name.
+const SWARM = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+
+// Per-checkout launch preferences live in Herdr shared state; live terminals remain truth.
+const REPO_PREFIX = "chorus-launcher.repo:";
+
+// Antigravity encodes effort suffixes directly into variant model IDs.
+const AGY_SUFFIX = /-(low|medium|high|xhigh|max)$/;
+
+// Requested everyday defaults; model lists and account access still belong to clients.
+const MODEL_DEFAULTS = {
+  claude: { id: "claude-opus-5-5", name: "Claude Opus 5.5", thinking: null },
+  codex: { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", thinking: null },
+  cursor: { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 High", thinking: null },
+  antigravity: { id: "gemini-4-argon", name: "Gemini 4 Argon", thinking: "high" },
+};
+
+// Display labels for client-advertised reasoning effort values.
+const THINKING_NAMES = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  "extra-high": "Extra high",
+  max: "Max",
+  ultra: "Ultra (delegates tasks)",
+};
+
+// Describe the actual client effect rather than promising identical restrictions.
+const YOLO_EFFECT = {
+  claude: "Bypasses tool permission checks.",
+  codex: "Disables approval prompts and sandboxing.",
+  antigravity: "Auto-approves tool permission requests.",
+  cursor: "Allows commands unless explicitly denied; keeps the sandbox setting.",
+  gemini: "Auto-approves tool actions; keeps the sandbox setting.",
+};
+
+export default class ChorusLauncher extends View {
+  // Capture the project before discovery or selecting another tab can change focus.
+  init(_props, cx) {
+    const target = focused();
+    this.space = spaces().find(s => s.id === target?.space);
+    this.folder = target?.cwd;
+    this.agents = [];
+    this.rows = [];
+    this.ordinal = 0;
+    this.root = "";
+    this.error = "";
+    this.busy = false;
+    this.loading = true;
+    this.swarm = "";
+    this.picker = null;
+    this.input = InputState.new({ placeholder: "Chorus name" });
+    this.input.on("change", (_event, cx) => {
+      const next = this.input.value();
+      if (next === this.swarm) return;
+      this.swarm = next;
+      this.saveRepo();
+      cx.notify();
+    });
+    this.input.on("submit", (_event, cx) => this.start(cx));
+    this.handle = cx.focus_handle();
+    this.handle.focus();
+    this.buttons = Object.fromEntries(["add", "all", "yolo-all", "reload", "close", "start"].map(key => [key, cx.focus_handle()]));
+    cx.spawn(async cx => {
+      try {
+        if (!this.space || !this.folder) throw new Error("Focus a terminal in your project, then open Start Chorus again.");
+        if (this.space.machine) throw new Error("This launcher supports local projects. Select a local terminal and try again.");
+        const [repo, agents, chorus] = await Promise.all([
+          exec("git", ["-C", this.folder, "rev-parse", "--show-toplevel"], { timeout: 10000 }),
+          knownAgents(),
+          exec("chorus", ["status"], { timeout: 10000 }),
+        ]);
+        if (repo.code !== 0) throw new Error("The focused terminal is outside a Git checkout. Open your project folder and try again.");
+        if (chorus.code !== 0 || !chorus.stdout.includes(" is running")) throw new Error("Chorus is not running. Start it with chorus up, then open this launcher again.");
+        this.root = repo.stdout.replace(/\r?\n$/, "");
+        this.agents = agents.filter(a => a.installed);
+        await this.loadTeam(cx);
+        if (!this.rows.length) this.restoreOrAddAll(cx);
+        if (!this.agents.length && !this.rows.length) throw new Error("Herdr found no installed agent CLIs. Install an agent from Herdr's New Agent menu, then reopen Start Chorus.");
+      } catch (error) { this.error = String(error.message ?? error); }
+      this.loading = false;
+      cx.notify();
+      // Each client supplies its own catalog; a failed lookup leaves an explicit notice.
+      await Promise.all(this.agents.map(agent => this.loadModels(agent, cx)));
+    });
+  }
+
+  // Keep the helper's output decoding and command failures at the process boundary.
+  async helper(action, request) {
+    const reply = await exec("python3", [`${appHome()}/mods/chorus-launcher/launch.py`, appHome(), action, JSON.stringify(request)], { cwd: this.root, timeout: 120000 });
+    if (reply.code !== 0) throw new Error(reply.stderr.trim() || reply.stdout.trim() || "The launcher could not finish. Reload the team and try again.");
+    return JSON.parse(reply.stdout);
+  }
+
+  // Use the current terminals as truth, keeping only rows that have not opened yet.
+  async loadTeam(cx) {
+    const team = await this.helper("inspect", { space: this.space.id, root: this.root });
+    this.session ??= team.session;
+    const pending = this.rows.filter(row => !row.terminal && !team.rows.some(saved => saved.id === row.id));
+    this.rows = [...team.rows.map(saved => this.newRow(saved.key, cx, saved)), ...pending];
+    this.teamExists = Boolean(team.tab);
+    this.swarm = team.swarm ?? (this.swarm || this.root.split("/").pop());
+    this.input.set_value(this.swarm);
+    cx.notify();
+  }
+
+  // Restore saved project preferences when no live team exists, falling back to installed defaults.
+  restoreOrAddAll(cx) {
+    const saved = shared(`${REPO_PREFIX}${this.root}`);
+    if (saved?.swarm && SWARM.test(saved.swarm)) {
+      this.swarm = saved.swarm;
+      this.input.set_value(this.swarm);
+    }
+    const valid = Array.isArray(saved?.rows)
+      ? saved.rows.filter(item => item && typeof item.key === "string" && this.agents.some(agent => agent.key === item.key))
+      : [];
+    if (valid.length) {
+      for (const item of valid) this.rows.push(this.newRow(item.key, cx, null, item));
+      cx.notify();
+      return;
+    }
+    for (const agent of this.agents) this.rows.push(this.newRow(agent.key, cx));
+    cx.notify();
+  }
+
+  // Persist only explicit user choices so failed or in-flight discovery never overwrites defaults.
+  saveRepo() {
+    if (!this.root) return;
+    const savable = this.rows.filter(row => !row.terminal || row.recorded);
+    if (this.rows.length > 0 && savable.length === 0) return;
+    setShared(`${REPO_PREFIX}${this.root}`, {
+      swarm: this.swarm,
+      rows: savable.map(row => {
+        const entry = { key: row.key, yolo: Boolean(row.yolo) };
+        if (row.terminal || row.modelChosen) entry.model = row.model ?? null;
+        if ((row.terminal || row.thinkingChosen) && row.key !== "cursor") entry.thinking = row.thinking ?? null;
+        return entry;
+      }),
+    });
+  }
+
+  // Retain input and focus state for exactly one row while the dialog is open.
+  newRow(key, cx, saved = null, persisted = null) {
+    const preset = MODEL_DEFAULTS[key];
+    const hasModel = Boolean(saved) || Boolean(persisted && "model" in persisted);
+    const hasThinking = Boolean(saved) || Boolean(persisted && "thinking" in persisted);
+    const row = {
+      id: saved?.id ?? `${this.session}-${++this.ordinal}`,
+      key,
+      terminal: saved?.terminal ?? null,
+      model: hasModel ? ((saved ?? persisted).model ?? null) : null,
+      thinking: key === "cursor" ? null : (hasThinking ? ((saved ?? persisted).thinking ?? null) : null),
+      yolo: saved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
+      recorded: saved ? saved.yolo !== null : true,
+      modelChosen: hasModel || !preset,
+      thinkingChosen: key === "cursor" || hasThinking || !preset?.thinking,
+      custom: false,
+      input: InputState.new({ placeholder: "Exact model ID" }),
+      remove: cx.focus_handle(),
+      retry: cx.focus_handle(),
+    };
+    for (const field of ["agent", "model", "thinking"]) {
+      row[`${field}Picker`] = { trigger: cx.focus_handle(), list: cx.focus_handle(), scroll: VirtualListScrollHandle.new(), index: 0 };
+    }
+    row.input.on("change", (_event, cx) => {
+      if (!row.custom) return;
+      row.model = row.input.value().trim();
+      row.modelChosen = true;
+      if (row.key === "cursor" || (row.key === "antigravity" && AGY_SUFFIX.test(row.model))) row.thinking = null;
+      this.saveRepo();
+      cx.notify();
+    });
+    this.applyDefault(row);
+    return row;
+  }
+
+  // Match a row's selected model against catalog entries, including Cursor variant families.
+  modelEntry(row, details) {
+    if (!row.model || !details?.models) return null;
+    return details.models.find(item => item.id === row.model || Object.values(item.variants ?? {}).includes(row.model)) ?? null;
+  }
+
+  // Apply defaults only before the person chooses; refresh never replaces their choice.
+  applyDefault(row) {
+    if (row.terminal) return;
+    const details = this.agents.find(agent => agent.key === row.key)?.details;
+    const preset = MODEL_DEFAULTS[row.key];
+    if (!row.modelChosen && details?.model_supported) row.model = preset?.id ?? null;
+    if (row.key !== "cursor" && !row.thinkingChosen && details?.thinking_supported) row.thinking = preset?.thinking ?? null;
+  }
+
+  // Return advertised thinking levels for the row's current client and model.
+  thinkingLevels(row, details) {
+    const entry = !row.custom ? this.modelEntry(row, details) : null;
+    if (row.key === "cursor") return entry?.efforts ?? [];
+    if (row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) return [];
+    return entry?.efforts?.length ? entry.efforts : details?.thinking_supported ? (details.efforts ?? []) : [];
+  }
+
+  // Compute valid thinking choices for the row's current client and model.
+  thinkingConfig(row, details) {
+    const levels = this.thinkingLevels(row, details);
+    if (row.key === "cursor") {
+      const entry = !row.custom ? this.modelEntry(row, details) : null;
+      if (levels.length && entry?.variants) {
+        const value = Object.entries(entry.variants).find(([, slug]) => slug === row.model)?.[0] ?? levels[0];
+        return { options: levels.map(id => ({ id, name: THINKING_NAMES[id] ?? id })), enabled: true, value };
+      }
+      const label = !details ? "Checking…" : row.model ? "Set by model" : "App default";
+      return { options: [{ id: "", name: label }], enabled: false, value: "" };
+    }
+    if (row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) {
+      return { options: [{ id: "", name: "Set by model" }], enabled: false, value: "" };
+    }
+    const options = [{ id: "", name: !details ? "Checking…" : levels.length ? "App default" : "Set by client" },
+      ...levels.map(id => ({ id, name: THINKING_NAMES[id] ?? id }))];
+    if (row.thinking && !options.some(option => option.id === row.thinking)) {
+      options.push({ id: row.thinking, name: `${THINKING_NAMES[row.thinking] ?? row.thinking} (selected)` });
+    }
+    return { options, enabled: Boolean(details) && (levels.length > 0 || Boolean(row.thinking)), value: row.thinking ?? "" };
+  }
+
+  // Repeated apps are intentional: each row starts a distinct conversation.
+  addAgent(cx) {
+    if (!this.agents.length || this.busy || this.loading) return;
+    this.rows.push(this.newRow(this.agents[0].key, cx));
+    this.saveRepo();
+    cx.notify();
+  }
+
+  // Preserve running and edited rows while filling missing installed apps once each.
+  addAll(cx) {
+    for (const agent of this.agents) {
+      if (!this.rows.some(row => row.key === agent.key)) this.rows.push(this.newRow(agent.key, cx));
+    }
+    this.saveRepo();
+    cx.notify();
+  }
+
+  // A catalog is local to this dialog, never a saved or hard-coded model list.
+  async loadModels(agent, cx) {
+    agent.loading = true;
+    agent.details = null;
+    cx.notify();
+    try { agent.details = await this.helper("models", { key: agent.key, name: agent.name, run: agent.run }); }
+    catch (error) { agent.details = { models: [], model_supported: false, thinking_supported: false, efforts: [], yolo_flag: null, error: true, note: `Could not check client options: ${error.message ?? error}. Retry to choose a model, thinking level, or YOLO mode.` }; }
+    agent.loading = false;
+    for (const row of this.rows.filter(row => row.key === agent.key)) this.applyDefault(row);
+    cx.notify();
+  }
+
+  // Start only new rows; existing rows are references rather than copied settings.
+  start(cx) {
+    if (!this.ready()) return;
+    this.busy = true;
+    this.error = "";
+    this.picker = null;
+    this.saveRepo();
+    const request = { space: this.space.id, root: this.root, swarm: this.swarm,
+      agents: this.rows.map(row => {
+        if (row.terminal) return { id: row.id };
+        const agent = this.agents.find(agent => agent.key === row.key);
+        return { id: row.id, key: agent.key, name: agent.name, run: agent.run, model: row.model, thinking: row.key === "cursor" ? null : (row.thinking ?? null), yolo: row.yolo };
+      }) };
+    // Start the helper subprocess synchronously before spawning the continuation.
+    const launch = this.helper("launch", request);
+    cx.spawn(async cx => {
+      try {
+        const result = await launch;
+        notify({
+          title: "Chorus team ready",
+          body: `Opened ${result.created} new pane${result.created === 1 ? "" : "s"}; reused ${result.reused}. Give your goal to one agent and check each pane for prompts.`,
+          level: "info",
+        });
+        closeOverlay(props()?.overlay);
+        return;
+      } catch (error) { this.error = String(error.message ?? error); }
+      // Even a partial launch records completed rows, so retrying never duplicates them.
+      try { await this.loadTeam(cx); }
+      catch (error) { this.error += `${this.error ? "\n" : ""}Could not reload the team: ${error.message ?? error}`; }
+      this.busy = false;
+      cx.notify();
+    });
+  }
+
+  // Empty or incomplete custom model IDs and unverified options cannot silently launch.
+  ready() {
+    return !this.loading && !this.busy && Boolean(this.root) && SWARM.test(this.swarm) && this.rows.length > 0
+      && this.rows.every(row => {
+        if (row.terminal) return true;
+        const details = this.agents.find(agent => agent.key === row.key)?.details;
+        const levels = this.thinkingLevels(row, details);
+        const thinkingValid = !row.thinking || (row.key !== "cursor" && Boolean(details?.thinking_supported) && levels.includes(row.thinking));
+        return (row.modelChosen || Boolean(row.model)) && (!row.custom || Boolean(row.model)) && (!row.model || Boolean(details?.model_supported))
+          && thinkingValid && (!row.yolo || Boolean(details?.yolo_flag));
+      });
+  }
+
+  // Native buttons provide keyboard activation, disabled semantics and visible focus.
+  button(id, label, handle, action, enabled = true, primary = false) {
+    const t = theme();
+    return Button.new(id).track_focus(handle).tab_stop(true).disabled(!enabled).px(12).py(8).rounded(6).border_1()
+      .border_color(handle.is_focused() ? t.accent : primary ? t.solid : t.border)
+      .bg(primary && enabled ? t.solid : t.popover).text_size(13)
+      .text_color(enabled ? primary ? t.solid_foreground : t.foreground : t.dim)
+      .when(enabled, el => el.cursor_pointer().hover(s => s.bg(primary ? t.solid : t.hover)))
+      .on_click((_event, cx) => action(cx)).child(label);
+  }
+
+  // Native Select owns focus and dismissal; the virtual list adds arrow navigation.
+  select(id, label, value, options, state, choose, enabled) {
+    const t = theme();
+    const open = this.picker === id;
+    const accept = (index, cx) => {
+      this.picker = null;
+      state.trigger.focus();
+      choose(options[index].id, cx);
+      cx.notify();
+    };
+    const setOpen = (opened, cx) => {
+      this.picker = opened ? id : null;
+      if (opened) {
+        state.index = Math.max(0, options.findIndex(option => option.id === value));
+        state.scroll.scroll_to_item(state.index, "center");
+        state.list.focus();
+      }
+      cx.notify();
+    };
+    const trigger = h_flex().id(`${id}-trigger`).track_focus(state.trigger).tab_stop(true).w_full().min_w(0).h(36).px(10).gap(8)
+      .items_center().justify_between().rounded(6).border_1().border_color(state.trigger.is_focused() ? t.accent : t.input)
+      .bg(t.background).text_color(enabled ? t.foreground : t.dim)
+      .on_click((_event, cx) => { if (enabled) setOpen(!open, cx); })
+      .child(div().min_w(0).truncate().child(options.find(o => o.id === value)?.name ?? value))
+      .child(div().text_size(11).text_color(t.muted).child("Choose"));
+    const list = v_flex().id(`${id}-content`).role("list_box").relative().track_focus(state.list).w(320).h(Math.min(options.length * 34, 238)).bg(t.popover).border_1().border_color(t.border).rounded(6)
+      .on_key_down((event, cx) => {
+        const moves = { up: -1, down: 1, home: -options.length, end: options.length };
+        if (event.key in moves) {
+          state.index = Math.max(0, Math.min(options.length - 1, state.index + moves[event.key]));
+          state.scroll.scroll_to_item(state.index, "center");
+          cx.stop_propagation();
+          cx.notify();
+        }
+      })
+      .child(div().size_full().child(v_virtual_list(`${id}-options`, options.length, 34, i => String(i), range => options.slice(range.start, range.end).map((option, offset) => {
+        const index = range.start + offset;
+        return div().role("list_box_option").aria_selected(option.id === value)
+          .when(index === state.index, el => el.aria_active_descendant()).h(34).px(10).py(7).text_size(13)
+          .text_color(t.foreground).bg(index === state.index ? t.selected : t.popover).child(option.name);
+      })).size_full().track_scroll(state.scroll).on_item_click((key, cx) => accept(Number(key), cx))))
+      .child(Scrollbar.vertical(`${id}-options`).absolute().inset_0());
+    return Select.new(id).w_full().min_w(0).accessibility_label(label).disabled(!enabled).open(open)
+      .track_focus(state.trigger).content_focus_handle(state.list)
+      .on_open_change(setOpen)
+      .on_dismiss((_event, cx) => cx.stop_propagation())
+      .on_confirm((_event, cx) => accept(state.index, cx))
+      .child(Popup.new(`${id}-popup`, trigger).anchor("bottom_left").when(open, el => el.content(list)));
+  }
+
+  // Show immutable launch settings for existing panes and editable controls for new ones.
+  renderRow(row, index) {
+    const t = theme();
+    const agent = this.agents.find(agent => agent.key === row.key);
+    const details = agent?.details;
+    const editable = !row.terminal && !this.busy;
+    const entry = !row.custom ? this.modelEntry(row, details) : null;
+    const selectedModelId = row.custom ? "__custom__" : entry ? entry.id : (row.model ?? "");
+    const modelOptions = [{ id: "", name: "App default" }, ...(details?.models ?? [])];
+    if (row.model && !row.custom && !entry && !modelOptions.some(option => option.id === row.model)) {
+      modelOptions.push({ id: row.model, name: MODEL_DEFAULTS[row.key]?.id === row.model ? MODEL_DEFAULTS[row.key].name : `${row.model} (selected)` });
+    }
+    if (details?.model_supported || row.custom) modelOptions.push({ id: "__custom__", name: "Enter model ID…" });
+    const thinking = this.thinkingConfig(row, details);
+    const cursorLevel = entry?.variants
+      ? Object.entries(entry.variants).find(([, slug]) => slug === row.model)?.[0]
+      : null;
+    const recordedThinking = row.key === "cursor"
+      ? (THINKING_NAMES[cursorLevel] ?? (row.model ? "Set by model" : "App default at launch"))
+      : (THINKING_NAMES[row.thinking] ?? row.thinking ?? "App default at launch");
+    const name = agent?.name ?? row.key;
+    return v_flex().id(row.id).flex_none().gap(8).py(12).border_b_1().border_color(t.border)
+      .child(h_flex().items_end().gap(10)
+        .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child(`Agent ${index + 1}`))
+          .child(row.terminal ? div().h(36).py(8).child(name) : this.select(`${row.id}-agent`, `Agent ${index + 1} client`, row.key,
+            this.agents.map(a => ({ id: a.key, name: a.name })), row.agentPicker,
+            key => {
+              const preset = MODEL_DEFAULTS[key];
+              row.key = key;
+              row.model = null;
+              row.thinking = null;
+              row.modelChosen = !preset;
+              row.thinkingChosen = !preset?.thinking;
+              row.custom = false;
+              row.input.set_value("");
+              this.applyDefault(row);
+              if (!this.agents.find(a => a.key === key)?.details?.yolo_flag) row.yolo = false;
+              this.saveRepo();
+            }, editable)))
+        .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Model"))
+          .child(row.terminal ? div().h(36).py(8).truncate().child(row.recorded ? row.model ?? "App default at launch" : "Not recorded")
+            : this.select(`${row.id}-model`, `Agent ${index + 1} model`, selectedModelId, modelOptions, row.modelPicker,
+              model => {
+                row.modelChosen = true;
+                row.custom = model === "__custom__";
+                const prevVariant = row.key === "cursor" && !row.custom ? Object.entries(entry?.variants ?? {}).find(([, slug]) => slug === row.model)?.[0] : null;
+                row.model = row.custom ? row.input.value().trim() : model || null;
+                const nextEntry = !row.custom ? this.modelEntry(row, details) : null;
+                if (row.key === "cursor" && nextEntry?.variants && prevVariant && nextEntry.variants[prevVariant]) {
+                  row.model = nextEntry.variants[prevVariant];
+                } else if (row.thinking) {
+                  const levels = this.thinkingLevels(row, details);
+                  if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.thinking))) {
+                    row.thinking = null;
+                  }
+                }
+                this.saveRepo();
+                if (row.custom) row.input.focus();
+              }, editable && Boolean(details))))
+        .child(v_flex().w(170).min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Thinking"))
+          .child(row.terminal ? div().h(36).py(8).truncate().child(row.recorded ? recordedThinking : "Not recorded")
+            : this.select(`${row.id}-thinking`, `Agent ${index + 1} thinking`, thinking.value, thinking.options, row.thinkingPicker,
+              level => {
+                if (row.key === "cursor") {
+                  if (entry?.variants?.[level]) {
+                    row.model = entry.variants[level];
+                    row.modelChosen = true;
+                  }
+                } else {
+                  row.thinkingChosen = true;
+                  row.thinking = level || null;
+                }
+                this.saveRepo();
+              }, editable && thinking.enabled)))
+        .when(!row.terminal, el => el.child(this.button(`${row.id}-remove`, "Remove", row.remove, cx => {
+          this.rows = this.rows.filter(item => item.id !== row.id);
+          this.picker = null;
+          this.saveRepo();
+          cx.notify();
+        }, editable))))
+      .when(row.custom && !row.terminal, el => el.child(Input.new(row.input).accessibility_label(`Agent ${index + 1} exact model ID`).w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background)))
+      .child(h_flex().items_center().gap(9)
+        .when(!row.terminal, el => el.child(Checkbox.new(`${row.id}-yolo`).accessibility_label(`Agent ${index + 1} YOLO mode`).checked(row.yolo)
+          .disabled(!editable || (!details?.yolo_flag && !row.yolo)).on_change((checked, cx) => { row.yolo = checked; this.saveRepo(); cx.notify(); })
+          .child(h_flex().gap(8).items_center()
+            .child(div().size(16).border_1().rounded(3).border_color(row.yolo ? t.accent : t.input).bg(row.yolo ? t.accent : t.background)
+              .child(div().m(3).size(8).rounded(1).bg(t.background)))
+            .child(div().text_size(13).child("YOLO mode")))))
+        .child(div().text_size(12).text_color(t.muted).child(row.terminal
+          ? `Existing pane · ${row.recorded ? row.yolo ? `YOLO · ${YOLO_EFFECT[row.key]}` : "Client settings at launch" : "Launch settings not recorded"}`
+          : row.yolo ? details?.yolo_flag ? YOLO_EFFECT[row.key] : "YOLO not verified · retry or turn it off to continue" : agent?.loading || !details ? "Checking client options…" : details.yolo_flag ? "Off · use client settings" : "YOLO unavailable · use client settings")))
+      .when(!row.terminal && Boolean(details?.note), el => el.child(div().text_size(12).text_color(t.muted).child(details.note)))
+      .when(!row.terminal && Boolean(details?.error), el => el.child(this.button(`${row.id}-retry`, "Retry client options", row.retry, cx => {
+        cx.spawn(async cx => this.loadModels(agent, cx));
+      }, !this.busy && !agent.loading)));
+  }
+
+  // Keep project and action fixed while the editable team list scrolls.
+  render(cx) {
+    const t = theme();
+    const pending = this.rows.filter(row => !row.terminal);
+    const supported = pending.filter(row => row.yolo || this.agents.find(agent => agent.key === row.key)?.details?.yolo_flag);
+    const allYolo = supported.length > 0 && supported.every(row => row.yolo);
+    return v_flex().id("chorus-launcher").size_full().p(22).gap(14).bg(t.popover).text_color(t.foreground).track_focus(this.handle)
+      .on_key_down((event, cx) => { if (event.key === "escape" && !this.picker) { closeOverlay(props().overlay); cx.stop_propagation(); } })
+      .child(div().text_size(20).font_semibold().child("Start Chorus"))
+      .child(div().text_size(13).text_color(t.muted).child("Choose a client, model, and thinking level for each pane. New agents join and wait for work."))
+      .child(h_flex().gap(20)
+        .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Project"))
+          .child(div().text_size(13).truncate().child(this.root || this.folder || "Focus a project terminal")))
+        .child(v_flex().w(210).gap(5).child(div().text_size(12).text_color(t.muted).child("Chorus name"))
+          .child(this.teamExists ? div().h(36).py(8).child(this.swarm) : Input.new(this.input).accessibility_label("Chorus name").w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background))))
+      .when(Boolean(this.swarm) && !SWARM.test(this.swarm), el => el.child(div().text_size(12).text_color(t.blocked).child("Use 1–32 letters, numbers, underscores or hyphens, starting with a letter or number.")))
+      .child(h_flex().items_center().gap(8)
+        .child(this.button("chorus-add", "Add agent", this.buttons.add, cx => this.addAgent(cx), !this.loading && !this.busy && this.agents.length > 0))
+        .child(this.button("chorus-all", "Add all installed", this.buttons.all, cx => this.addAll(cx), !this.loading && !this.busy && this.agents.length > 0))
+        .child(div().flex_1())
+        .child(this.button("chorus-yolo-all", allYolo ? "Turn YOLO off for all" : "Apply YOLO to all", this.buttons["yolo-all"], cx => {
+          for (const row of supported) row.yolo = !allYolo;
+          this.saveRepo();
+          cx.notify();
+        }, !this.busy && supported.length > 0)))
+      .child(v_flex().id("chorus-team-rows").flex_1().min_h(0).overflow_y_scrollbar().text_size(13)
+        .when(this.loading, el => el.child(div().py(16).text_color(t.muted).child("Checking project and existing team…")))
+        .when(!this.loading && this.rows.length === 0, el => el.child(div().py(16).text_color(t.muted).child("No agents selected. Add an agent to open your team.")))
+        .children(this.rows.map((row, index) => this.renderRow(row, index))))
+      .when(Boolean(this.error), el => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
+      .child(div().text_size(12).text_color(t.muted).child("YOLO off uses your client’s existing permissions. Choices are remembered per project folder; existing panes keep their launch settings."))
+      .child(h_flex().items_center().gap(10)
+        .child(this.button("chorus-reload", "Reload team", this.buttons.reload, cx => {
+          this.busy = true; this.error = "";
+          cx.spawn(async cx => { try { await this.loadTeam(cx); } catch (error) { this.error = String(error.message ?? error); } this.busy = false; cx.notify(); });
+        }, !this.loading && !this.busy && Boolean(this.root)))
+        .child(div().flex_1())
+        .child(this.button("chorus-close", "Close", this.buttons.close, () => closeOverlay(props().overlay)))
+        .child(this.button("chorus-start", this.busy ? "Opening team…" : "Open Chorus team", this.buttons.start, cx => this.start(cx), this.ready(), true)));
+  }
+}

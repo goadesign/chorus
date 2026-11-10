@@ -106,6 +106,10 @@ The curl command installs the `chorus` binary, installs the model-agnostic [Chor
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
+If you use Herdr, open it once before running `chorus up` to install the
+[Chorus launcher for Herdr](skills/herdr/chorus-launcher/). From a project
+terminal, run `herdr-app do mod.open --name chorus-launcher` to choose your team.
+
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
 Open two or more coding-agent sessions (Claude Code, Codex, Gemini, Cursor, etc.) in the same repository folder and start the skill in each one:
@@ -266,14 +270,22 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 | Command | Description |
 | --- | --- |
-| `chorus up` | Register Chorus with your coding agents (the same global setup as `chorus setup -global`; set `CHORUS_NO_SETUP=1` to skip it, and note it replaces hand-edited installed skill files), start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon), wait for `GET /healthz` (automatically restarts the daemon if an older version is running), and print the dashboard and MCP addresses |
-| `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, and skills stay) |
+| `chorus up` | Register Chorus with your coding agents and install the Chorus launcher for Herdr when Herdr's settings directory exists (the same global setup as `chorus setup -global`; set `CHORUS_NO_SETUP=1` to skip it, and note it replaces hand-edited installed skill and bundled launcher files), start Chorus in the background (`launchd` on macOS, `systemd --user` on Linux, or detached daemon), wait for `GET /healthz` (automatically restarts the daemon if an older version is running), and print the dashboard and MCP addresses |
+| `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, skills, and the Herdr launcher stay) |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
 | `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
-| `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex) |
+| `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex, and install the Chorus launcher for Herdr when Herdr's settings directory exists) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
+
+Global setup installs the Herdr launcher under `$HERDR_APP_HOME` when set,
+otherwise `~/.config/herdr-app`, only when that directory exists. Repeating
+setup updates bundled runtime files and preserves Herdr's saved settings and
+keyboard configuration. Unchanged files are left untouched so setup keeps an
+open launcher dialog intact. A symlinked launcher directory is updated at its
+target. Set `CHORUS_NO_SETUP=1` to skip integrations during `chorus up` or the
+curl install.
 
 #### CLI & Server Flags (`chorus` / `chorus serve` / `chorus up`)
 

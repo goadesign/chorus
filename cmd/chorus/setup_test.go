@@ -1,14 +1,177 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/goadesign/chorus/skills"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestSetupInstallsHerdrLauncher checks detection, repeated updates, and
+// preservation of user preferences and unrelated files.
+// No Herdr process or real user configuration is used by these tests.
+func TestSetupInstallsHerdrLauncher(t *testing.T) {
+	cases := []struct {
+		// name describes the installation state supplied to global setup.
+		name string
+		// directory marks an existing default Herdr configuration directory.
+		directory bool
+		// custom selects an explicit HERDR_APP_HOME.
+		custom bool
+		// want says whether the launcher must be installed.
+		want bool
+	}{
+		{name: "absent"},
+		{name: "existing directory", directory: true, want: true},
+		{name: "explicit home", custom: true, directory: true, want: true},
+		{name: "missing explicit home", custom: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("HERDR_APP_HOME", "")
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			herdrHome := filepath.Join(home, ".config", "herdr-app")
+			if tc.custom {
+				require.NoError(t, os.MkdirAll(herdrHome, 0o755))
+				herdrHome = filepath.Join(t.TempDir(), "custom-herdr")
+				t.Setenv("HERDR_APP_HOME", herdrHome)
+			}
+			if tc.directory {
+				require.NoError(t, os.MkdirAll(herdrHome, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(herdrHome, "keys.json"), []byte(`{"global":{"cmd-alt-shift-c":"tab.new"}}`), 0o600))
+			}
+			mod := filepath.Join(herdrHome, "mods", "chorus-launcher")
+			unchangedTime := time.Unix(1000000000, 0)
+			for attempt := range 2 {
+				installedDir, err := setupHerdrLauncher(home)
+				require.NoError(t, err)
+				if !tc.want {
+					assert.NoDirExists(t, mod)
+					assert.Empty(t, installedDir)
+					assert.NoDirExists(t, filepath.Join(home, ".config", "herdr-app", "mods"))
+					return
+				}
+				assert.Equal(t, mod, installedDir)
+				for _, name := range []string{"mod.json", "main.js", "launch.py"} {
+					target := filepath.Join(mod, name)
+					want, err := skills.HerdrLauncher.ReadFile("herdr/chorus-launcher/" + name)
+					require.NoError(t, err)
+					got, err := os.ReadFile(target)
+					require.NoError(t, err)
+					assert.Equal(t, want, got)
+				}
+				assert.NoFileExists(t, filepath.Join(mod, "test_launch.py"))
+				assert.NoFileExists(t, filepath.Join(mod, "test_ui.mjs"))
+				assert.NoFileExists(t, filepath.Join(mod, "README.md"))
+				if attempt == 0 {
+					// User settings and extra files survive the next installation.
+					require.NoError(t, os.WriteFile(filepath.Join(mod, "notes.txt"), []byte("keep notes"), 0o600))
+					require.NoError(t, os.WriteFile(filepath.Join(herdrHome, "shared.json"), []byte(`{"chorus-launcher.repo:/repo":{"swarm":"saved"}}`), 0o600))
+					require.NoError(t, os.WriteFile(filepath.Join(mod, "main.js"), []byte("old installed version"), 0o644))
+					require.NoError(t, os.Chtimes(filepath.Join(mod, "launch.py"), unchangedTime, unchangedTime))
+				}
+			}
+			if tc.custom {
+				assert.NoDirExists(t, filepath.Join(home, ".config", "herdr-app", "mods"))
+			}
+			if tc.directory {
+				keys, err := os.ReadFile(filepath.Join(herdrHome, "keys.json"))
+				require.NoError(t, err)
+				assert.Equal(t, `{"global":{"cmd-alt-shift-c":"tab.new"}}`, string(keys))
+			}
+			info, err := os.Stat(filepath.Join(mod, "launch.py"))
+			require.NoError(t, err)
+			assert.Equal(t, unchangedTime, info.ModTime(), "unchanged files must not trigger a Herdr reload")
+			shared, err := os.ReadFile(filepath.Join(herdrHome, "shared.json"))
+			require.NoError(t, err)
+			assert.Equal(t, `{"chorus-launcher.repo:/repo":{"swarm":"saved"}}`, string(shared))
+			notes, err := os.ReadFile(filepath.Join(mod, "notes.txt"))
+			require.NoError(t, err)
+			assert.Equal(t, "keep notes", string(notes))
+		})
+	}
+}
+
+// TestSetupHerdrLauncherReportsInspectionError distinguishes a missing app
+// home from an unreadable one instead of claiming an unsuccessful install worked.
+func TestSetupHerdrLauncherReportsInspectionError(t *testing.T) {
+	home := t.TempDir()
+	blocked := filepath.Join(home, "not-a-directory")
+	require.NoError(t, os.WriteFile(blocked, []byte("blocked"), 0o600))
+	herdrHome := filepath.Join(blocked, "herdr-app")
+	t.Setenv("HERDR_APP_HOME", herdrHome)
+	modDir, err := setupHerdrLauncher(home)
+	require.Error(t, err)
+	assert.Empty(t, modDir)
+	assert.Contains(t, err.Error(), "inspect Herdr configuration "+herdrHome)
+}
+
+// TestHerdrLauncherBundle verifies that source runtime files are included in
+// the installation; contributor tests and documentation stay in the repository.
+func TestHerdrLauncherBundle(t *testing.T) {
+	const source = "herdr/chorus-launcher"
+	entries, err := os.ReadDir(filepath.Join("..", "..", "skills", source))
+	require.NoError(t, err)
+	home := t.TempDir()
+	t.Setenv("HERDR_APP_HOME", home)
+	modDir, err := setupHerdrLauncher(home)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "test_") || entry.Name() == "README.md" {
+			continue
+		}
+		bundled, err := skills.HerdrLauncher.ReadFile(source + "/" + entry.Name())
+		require.NoError(t, err, "source runtime file %s must be bundled", entry.Name())
+		installed, err := os.ReadFile(filepath.Join(modDir, entry.Name()))
+		require.NoError(t, err, "bundled runtime file %s must be installed", entry.Name())
+		assert.Equal(t, bundled, installed)
+	}
+}
+
+// TestRunSetupInstallsHerdrOnlyGlobally checks that project setup only changes
+// project files, even when the project has the same name as the Herdr mod.
+func TestRunSetupInstallsHerdrOnlyGlobally(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		t.Run(fmt.Sprintf("global=%t", global), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("HERDR_APP_HOME", "")
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("PATH", t.TempDir())
+			project := filepath.Join(t.TempDir(), "chorus-launcher")
+			require.NoError(t, os.MkdirAll(project, 0o755))
+			t.Chdir(project)
+			herdrHome := filepath.Join(home, ".config", "herdr-app")
+			require.NoError(t, os.MkdirAll(herdrHome, 0o755))
+			var args []string
+			if global {
+				args = []string{"-global"}
+			}
+			var out bytes.Buffer
+			require.NoError(t, runSetup(args, &out))
+			if global {
+				assert.Contains(t, out.String(), "Installed Chorus launcher in "+filepath.Join(herdrHome, "mods", "chorus-launcher"))
+				assert.Contains(t, out.String(), "herdr-app do mod.open --name chorus-launcher")
+			} else {
+				assert.Contains(t, out.String(), "Registered Chorus MCP (http://localhost:9440/mcp) in "+filepath.Join(project, ".mcp.json"))
+				assert.NotContains(t, out.String(), "Installed Chorus launcher")
+				assert.NoDirExists(t, filepath.Join(herdrHome, "mods"))
+			}
+		})
+	}
+}
 
 // TestMergeCodexConfigFile verifies that registering Chorus in a Codex
 // config.toml changes only mcp_servers.chorus.url: comments, other servers,
