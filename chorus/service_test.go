@@ -1014,7 +1014,8 @@ func TestMentionsOnlyWakeupAndFullContextDrain(t *testing.T) {
 // subscribed channel members (with roles) and the channel's active
 // pinned collaboration manifest (deduplicated when inside tail, preserved in
 // rmap even after scrolling past tail and streamMaxLen trimming, overwritten in
-// place when a newer message sets pin=true, and waking mentions_only watchers).
+// place when a newer message sets pin=true, and waking only the mentions_only
+// watchers its text mentions).
 func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	c := newTestCluster(t, 2, []chorus.Option{
 		chorus.WithStreamMaxLen(5),
