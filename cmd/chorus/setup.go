@@ -38,6 +38,17 @@ type codexURLEdit struct {
 	afterHeader int
 }
 
+// herdrShortcutBinding describes an existing assignment of the launcher's first
+// keypress. Command arguments stay private to the keyboard file.
+type herdrShortcutBinding struct {
+	// section is the keyboard context that already uses the keypress.
+	section string
+	// command names the action without any arguments or terminal text.
+	command string
+	// opensLauncher is true only for a single keypress opening this launcher.
+	opensLauncher bool
+}
+
 const (
 	// herdrLauncherShortcut opens the launcher without taking a common terminal key.
 	herdrLauncherShortcut = "cmd-alt-shift-c"
@@ -221,7 +232,8 @@ func setupHerdrLauncher(homeDir string, out io.Writer) (string, error) {
 	}
 	if runtime.GOOS == "darwin" {
 		if err := setupHerdrShortcut(herdrHome, out); err != nil {
-			return "", err
+			writeHerdrLauncherSummary(out, modDir)
+			return "", fmt.Errorf("add Herdr launcher shortcut: %w", err)
 		}
 	}
 	return modDir, nil
@@ -242,12 +254,24 @@ func setupHerdrShortcut(herdrHome string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read Herdr keyboard settings %s: %w", path, err)
 	}
-	updated, err := addHerdrShortcut(raw)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect Herdr keyboard settings %s: %w", path, err)
+	}
+	if info.Mode().Perm()&0o222 == 0 {
+		fmt.Fprintf(out, "Herdr keyboard settings %s are read-only; kept the file unchanged. Use the launcher command below.\n", path)
+		return nil
+	}
+	updated, existing, err := addHerdrShortcut(raw)
 	if err != nil {
 		return fmt.Errorf("parse Herdr keyboard settings %s: %w", path, err)
 	}
-	if bytes.Equal(raw, updated) {
-		fmt.Fprintf(out, "Kept the existing Herdr binding for %s; use the launcher command below.\n", herdrLauncherShortcut)
+	if existing != nil {
+		if existing.opensLauncher {
+			fmt.Fprintf(out, "Herdr shortcut %s already opens Chorus in %q.\n", herdrLauncherShortcut, existing.section)
+		} else {
+			fmt.Fprintf(out, "Herdr shortcut %s is taken by command %q in %q; kept its existing binding. Use the launcher command below.\n", herdrLauncherShortcut, existing.command, existing.section)
+		}
 		return nil
 	}
 	if err := writeHerdrKeyboardFile(path, updated); err != nil {
@@ -260,26 +284,30 @@ func setupHerdrShortcut(herdrHome string, out io.Writer) error {
 // addHerdrShortcut locates the global object while validating the complete
 // keyboard document. Any matching chord in any section prevents an insertion.
 // Unrelated bytes, including key order and numeric arguments, remain unchanged.
-func addHerdrShortcut(raw []byte) ([]byte, error) {
+func addHerdrShortcut(raw []byte) ([]byte, *herdrShortcutBinding, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	token, err := decoder.Token()
 	if err != nil {
-		return nil, err
+		if errors.Is(err, io.EOF) {
+			return nil, nil, errors.New("keyboard settings file is empty")
+		}
+		return nil, nil, err
 	}
 	if token != json.Delim('{') {
-		return nil, errors.New("keyboard settings must contain a JSON object")
+		return nil, nil, errors.New("keyboard settings must contain a JSON object")
 	}
-	var occupied, rootHasMembers, globalHasMembers bool
+	var existing *herdrShortcutBinding
+	var rootHasMembers, globalHasMembers bool
 	globalClose := -1
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		section := token.(string)
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		rootHasMembers = true
 		if section != "global" && section != "terminal" && !strings.HasPrefix(section, "layout:") && !strings.HasPrefix(section, "mod:") {
@@ -287,42 +315,90 @@ func addHerdrShortcut(raw []byte) ([]byte, error) {
 		}
 		var bindings map[string]json.RawMessage
 		if err := json.Unmarshal(value, &bindings); err != nil || bindings == nil {
-			return nil, fmt.Errorf("%s must contain a JSON object", section)
+			return nil, nil, fmt.Errorf("%s must contain a JSON object", section)
 		}
 		if section == "global" {
 			if globalClose >= 0 {
-				return nil, errors.New("keyboard settings contain more than one global section")
+				return nil, nil, errors.New("keyboard settings contain more than one global section")
 			}
 			globalClose = int(decoder.InputOffset()) - 1
 			globalHasMembers = len(bindings) > 0
 		}
-		for chord := range bindings {
-			parts := strings.Split(strings.ToLower(chord), "-")
-			if len(parts) != 4 || parts[3] != "c" {
+		for chord, action := range bindings {
+			if !herdrShortcutMatches(chord) {
 				continue
 			}
-			slices.Sort(parts[:3])
-			if slices.Equal(parts[:3], []string{"alt", "cmd", "shift"}) {
-				occupied = true
+			var name string
+			var object struct {
+				// Command is the app action selected by this binding.
+				Command string `json:"command"`
+				// Args contains the action's named arguments without re-encoding them.
+				Args map[string]json.RawMessage `json:"args"`
+			}
+			opens := false
+			if json.Unmarshal(action, &name) == nil {
+				opens = name == herdrLauncherAction
+				name, _, _ = strings.Cut(name, ":")
+			} else if json.Unmarshal(action, &object) == nil {
+				name = object.Command
+				var mod string
+				opens = object.Command == "mod.open" && len(object.Args) == 1 && json.Unmarshal(object.Args["name"], &mod) == nil && mod == "chorus-launcher"
+			}
+			binding := &herdrShortcutBinding{
+				section:       section,
+				command:       name,
+				opensLauncher: opens && len(strings.Fields(chord)) == 1,
+			}
+			// A conflicting assignment takes precedence over an existing launcher
+			// assignment because it can intercept the key in a specific context.
+			if existing == nil || !binding.opensLauncher {
+				existing = binding
 			}
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rootClose := int(decoder.InputOffset()) - 1
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("keyboard settings must contain one JSON object")
+		return nil, nil, errors.New("keyboard settings must contain one JSON object")
 	}
-	if occupied {
-		return raw, nil
+	if existing != nil {
+		return raw, existing, nil
 	}
 	member := fmt.Sprintf("%q: %q", herdrLauncherShortcut, herdrLauncherAction)
 	if globalClose >= 0 {
-		return insertJSONMember(raw, globalClose, globalHasMembers, member), nil
+		return insertJSONMember(raw, globalClose, globalHasMembers, member), nil, nil
 	}
 	member = fmt.Sprintf("%q: {%s}", "global", member)
-	return insertJSONMember(raw, rootClose, rootHasMembers, member), nil
+	return insertJSONMember(raw, rootClose, rootHasMembers, member), nil, nil
+}
+
+// herdrShortcutMatches recognizes Herdr's aliases and implicit shift for an
+// uppercase letter. A sequence starting with this keypress also occupies it.
+func herdrShortcutMatches(chord string) bool {
+	strokes := strings.Fields(chord)
+	if len(strokes) == 0 {
+		return false
+	}
+	parts := strings.Split(strokes[0], "-")
+	key := parts[len(parts)-1]
+	if key != "c" && key != "C" {
+		return false
+	}
+	held := make(map[string]bool)
+	for _, modifier := range parts[:len(parts)-1] {
+		modifier = strings.ToLower(modifier)
+		switch modifier {
+		case "secondary", "super", "win":
+			modifier = "cmd"
+		}
+		held[modifier] = true
+	}
+	if key == "C" {
+		held["shift"] = true
+	}
+	return len(held) == 3 && held["cmd"] && held["alt"] && held["shift"]
 }
 
 // insertJSONMember adds a member before a validated object's closing brace,
@@ -340,7 +416,20 @@ func insertJSONMember(raw []byte, closeOffset int, hasMembers bool, member strin
 	if bytes.ContainsRune(raw[at:closeOffset], '\n') {
 		line := bytes.LastIndexByte(raw[:closeOffset], '\n') + 1
 		indent := string(raw[line:closeOffset])
-		insertion = separator + "\n" + indent + "  " + member + "\n" + indent
+		memberIndent := indent + "  "
+		if hasMembers {
+			previous := bytes.LastIndexByte(raw[:at], '\n') + 1
+			end := previous
+			for end < at && (raw[end] == ' ' || raw[end] == '\t') {
+				end++
+			}
+			memberIndent = string(raw[previous:end])
+		}
+		newline := "\n"
+		if bytes.Contains(raw[at:closeOffset], []byte("\r\n")) {
+			newline = "\r\n"
+		}
+		insertion = separator + newline + memberIndent + member + newline + indent
 	} else {
 		insertion = separator + member + string(raw[at:closeOffset])
 	}
@@ -373,6 +462,9 @@ func writeHerdrKeyboardFile(path string, content []byte) (err error) {
 	writeErr := file.Chmod(info.Mode().Perm())
 	if writeErr == nil {
 		_, writeErr = file.Write(content)
+	}
+	if writeErr == nil {
+		writeErr = file.Sync()
 	}
 	if err := errors.Join(writeErr, file.Close()); err != nil {
 		return fmt.Errorf("write Herdr keyboard settings %s: %w", target, err)

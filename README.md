@@ -288,8 +288,8 @@ already assigns that shortcut. Existing bindings are preserved. If `keys.json`
 is missing, open Herdr and rerun `chorus setup -global`. Adding the shortcut
 makes Herdr treat the keyboard file as user-managed, so future Herdr upgrades
 will no longer replace it with updated defaults. The launcher command above
-works even when the shortcut is skipped. Unchanged files are left untouched so setup keeps an
-open launcher dialog intact. A symlinked launcher directory is updated at its
+works even when the shortcut is skipped. Unchanged files are left untouched so
+setup keeps an open launcher dialog intact. A symlinked launcher directory is updated at its
 target. Set `CHORUS_NO_SETUP=1` to skip integrations during `chorus up` or the
 curl install.
 

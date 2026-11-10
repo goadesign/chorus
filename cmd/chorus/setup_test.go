@@ -51,7 +51,7 @@ func TestSetupHerdrShortcut(t *testing.T) {
 			require.NoError(t, os.Chtimes(target, oldTime, oldTime))
 			out.Reset()
 			require.NoError(t, setupHerdrShortcut(home, &out))
-			assert.Contains(t, out.String(), "Kept the existing Herdr binding")
+			assert.Contains(t, out.String(), "already opens Chorus in \"global\"")
 			info, err = os.Stat(path)
 			require.NoError(t, err)
 			assert.Equal(t, oldTime, info.ModTime())
@@ -82,9 +82,12 @@ func TestAddHerdrShortcut(t *testing.T) {
 		{name: "duplicate global", before: `{"global":{},"global":{}}`, wantErr: true},
 		{name: "trailing document", before: `{} {}`, wantErr: true},
 		{name: "trailing junk", before: `{} oops`, wantErr: true},
+		{name: "empty file", before: " ", wantErr: true},
+		{name: "four-space indentation", before: "{\n    \"global\": {\n        \"cmd-t\": \"tab.new\"\n    }\n}", want: "{\n    \"global\": {\n        \"cmd-t\": \"tab.new\",\n        \"cmd-alt-shift-c\": \"mod.open:chorus-launcher\"\n    }\n}"},
+		{name: "CRLF tabs", before: "{\r\n\t\"global\": {\r\n\t\t\"cmd-t\": \"tab.new\"\r\n\t}\r\n}", want: "{\r\n\t\"global\": {\r\n\t\t\"cmd-t\": \"tab.new\",\r\n\t\t\"cmd-alt-shift-c\": \"mod.open:chorus-launcher\"\r\n\t}\r\n}"},
 	}
 	for _, section := range []string{"global", "terminal", "layout:terminals", "mod:editor"} {
-		for _, chord := range []string{"cmd-alt-shift-c", "SHIFT-CMD-ALT-C"} {
+		for _, chord := range []string{"cmd-alt-shift-c", "SHIFT-CMD-ALT-C", "cmd-alt-C", "super-alt-shift-c", "win-alt-shift-c", "secondary-alt-shift-c", " cmd-alt-shift-c", "cmd-alt-shift-c cmd-k"} {
 			before := fmt.Sprintf(`{%q:{%q:{"command":"other","args":{"id":42}}}}`, section, chord)
 			cases = append(cases, struct {
 				name, before, want string
@@ -94,7 +97,7 @@ func TestAddHerdrShortcut(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := addHerdrShortcut([]byte(tc.before))
+			got, _, err := addHerdrShortcut([]byte(tc.before))
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, got)
@@ -105,6 +108,46 @@ func TestAddHerdrShortcut(t *testing.T) {
 			assert.True(t, json.Valid(got))
 		})
 	}
+}
+
+// TestHerdrShortcutOutcomes distinguishes an installed launcher binding from
+// another action, including a specific context that overrides a global binding.
+func TestHerdrShortcutOutcomes(t *testing.T) {
+	cases := []struct{ name, before, notice string }{
+		{"already string", `{"global":{"cmd-alt-shift-c":"mod.open:chorus-launcher"}}`, `already opens Chorus in "global"`},
+		{"already object", `{"global":{"cmd-alt-shift-c":{"command":"mod.open","args":{"name":"chorus-launcher"}}}}`, `already opens Chorus in "global"`},
+		{"taken", `{"terminal":{"cmd-alt-shift-c":"terminal.copy"}}`, `taken by command "terminal.copy" in "terminal"`},
+		{"terminal text", `{"global":{"cmd-alt-shift-c":"send:private terminal text"}}`, `taken by command "send" in "global"`},
+		{"sequence", `{"global":{"cmd-alt-shift-c cmd-k":"mod.open:chorus-launcher"}}`, `taken by command "mod.open" in "global"`},
+		{"specific context", `{"global":{"cmd-alt-shift-c":"mod.open:chorus-launcher"},"terminal":{"cmd-alt-C":"terminal.copy"}}`, `taken by command "terminal.copy" in "terminal"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, "keys.json")
+			require.NoError(t, os.WriteFile(path, []byte(tc.before), 0o600))
+			var out bytes.Buffer
+			require.NoError(t, setupHerdrShortcut(home, &out))
+			assert.Contains(t, out.String(), tc.notice)
+			assert.NotContains(t, out.String(), "private terminal text")
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.before, string(got))
+		})
+	}
+}
+
+// TestHerdrShortcutReadOnly preserves a file whose permissions prohibit edits.
+func TestHerdrShortcutReadOnly(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "keys.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o444))
+	var out bytes.Buffer
+	require.NoError(t, setupHerdrShortcut(home, &out))
+	assert.Contains(t, out.String(), "read-only; kept the file unchanged")
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, `{}`, string(got))
 }
 
 // TestSetupHerdrShortcutSkipsMissingAndRejectsInvalid keeps Herdr responsible
