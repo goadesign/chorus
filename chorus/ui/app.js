@@ -502,6 +502,12 @@
       document.getElementById("send-text")?.focus();
     },
 
+    // clearReply drops a pending reply and its chip from the message box.
+    clearReply() {
+      state.replyTo = null;
+      renderReplyChip();
+    },
+
     composeDM(handle) {
       const clean = String(handle || "").replace(/^@/, "");
       if (!clean) return;
@@ -734,6 +740,7 @@
     state.pairedDMs = buildPairedDMs(state.view?.inboxes || []);
     reconcileSelectedTarget(state.view, state.pairedDMs);
     renderHeaderAndTabs();
+    window.ChorusChat.render(state, actions);
 
     const stageEl = document.getElementById("stage-container");
     const streamEl = document.getElementById("message-stream");
@@ -1088,6 +1095,7 @@
       renderReplyChip();
       if (to.startsWith("@")) setComposerFeedback(["Sent to ", handleBadge(to.slice(1))], "ok");
       else setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
+      window.ChorusChat.sent();
       if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     } catch (err) {
       setComposerFeedback(err.message || "Failed to send message.", "error");

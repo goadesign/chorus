@@ -2222,12 +2222,201 @@ body[data-theme="light"] .provider-openai {
 }
 
 .composer-card {
+  position: relative;
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Chat sheet: the person's conversation with the agents. It grows upward out
+   of the message box, over the page, and shares the box's surface and border
+   so the two read as one object. Closed, it has no height and cannot be
+   reached by pointer or keyboard (the element is also inert). */
+.chat-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  /* Above the page's sticky message toolbar (8) and timeline overlays
+     (9, 10), below the participant details popover (20, 30). */
+  z-index: 15;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.2s cubic-bezier(0.3, 0, 0.8, 0.15),
+    opacity 0.15s linear,
+    visibility 0s 0.2s;
+}
+
+.chat-sheet.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    grid-template-rows 0.38s cubic-bezier(0.05, 0.7, 0.1, 1),
+    opacity 0.18s linear,
+    visibility 0s;
+}
+
+.chat-sheet-surface {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-bottom: none;
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -16px 40px -12px rgb(0 0 0 / 0.35);
+}
+
+.has-chat-open .composer-box {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.chat-log {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* The script sets --chat-limit to the room between the timeline graph and
+     the message box. */
+  max-height: var(--chat-limit, 52dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Keep both sides of the conversation within one readable column however
+     wide the message box is. */
+  padding: 18px max(18px, (100% - 820px) / 2) 14px;
+  /* The script sets a height when the chat is sized to new messages. */
+  transition: height 0.25s cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+
+.chat-log:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: min(72ch, 86%);
+}
+
+.chat-row.is-mine {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+.chat-sender {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat-bubble {
+  padding: 9px 14px;
+  border-radius: 4px 18px 18px 18px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.chat-row.is-mine .chat-bubble {
+  border-radius: 18px 4px 18px 18px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--bg-surface));
+}
+
+/* Reply stays out of the way until the row is pointed at or reached by
+   keyboard; on touch screens, which cannot hover, it is always shown. */
+.chat-reply {
+  border: none;
+  background: transparent;
+  padding: 0 4px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.chat-row:hover .chat-reply,
+.chat-reply:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chat-reply {
+    opacity: 1;
+  }
+}
+
+/* Three dots under a message the person just sent, until an agent answers.
+   They are still until an agent has read the message, then pulse in turn. */
+.chat-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 13px 14px;
+}
+
+.chat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.45;
+}
+
+.chat-waiting.is-read .chat-dot {
+  animation: chat-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.chat-waiting.is-read .chat-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.chat-waiting.is-read .chat-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes chat-dot-pulse {
+  0%, 60%, 100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes chat-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.chat-row.is-arriving {
+  animation: chat-arrive 0.32s cubic-bezier(0.05, 0.7, 0.1, 1);
 }
 
 .composer-box {
@@ -2316,9 +2505,21 @@ body[data-theme="light"] .provider-openai {
   pointer-events: none;
 }
 
+/* Result of the last send. It floats just above the message box, over the
+   chat when that is raised, so showing or clearing it never moves the box. */
 .composer-feedback {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 8px);
+  z-index: 16;
+  max-width: calc(100% - 24px);
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
   font-size: 13px;
-  min-height: 18px;
+  line-height: 18px;
   color: var(--text-muted);
   display: flex;
   align-items: center;
@@ -2326,6 +2527,11 @@ body[data-theme="light"] .provider-openai {
 }
 
 .composer-feedback:not(.ok):not(.error) {
+  display: none;
+}
+
+/* With the chat raised, the sent message itself appears in it. */
+.has-chat-open .composer-feedback.ok {
   display: none;
 }
 
@@ -2377,5 +2583,12 @@ body[data-theme="light"] .provider-openai {
   *, *::before, *::after {
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+  .chat-row.is-arriving,
+  .chat-waiting.is-read .chat-dot {
+    animation: none;
+  }
+  .chat-waiting.is-read .chat-dot {
+    opacity: 1;
   }
 }

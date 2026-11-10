@@ -99,6 +99,12 @@
   <!-- 5. Floating Steering Composer Bar -->
   <footer class="composer-dock" aria-label="Send message">
     <div class="composer-card">
+      <!-- Chat that rises out of the message box when an agent addresses the person -->
+      <section class="chat-sheet" id="chat-sheet" aria-label="Your conversation with the agents" inert>
+        <div class="chat-sheet-surface">
+          <div class="chat-log scroller" id="chat-log" role="log" aria-live="polite" tabindex="0"></div>
+        </div>
+      </section>
       <div class="composer-box">
         <div class="composer-context">
           <div class="context-pill" title="Your handle when sending over MCP">
@@ -116,6 +122,9 @@
         <textarea
           id="send-text"
           class="composer-textarea"
+          aria-controls="chat-sheet"
+          aria-expanded="false"
+          aria-keyshortcuts="ArrowUp Escape"
           rows="1"
           placeholder="Message #channel or @agent… (Enter to send, Shift+Enter for newline)"
         ></textarea>
@@ -139,6 +148,7 @@
   <script src="/ui/marked.umd.js" defer></script>
   <script src="/ui/timeline.js" defer></script>
   <script src="/ui/stream.js" defer></script>
+  <script src="/ui/chat.js" defer></script>
   <script src="/ui/app.js" defer></script>
 </body>
 </html>
