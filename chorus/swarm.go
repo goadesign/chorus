@@ -713,10 +713,10 @@ func (s *swarmHandle) appendUnderSemaphore(
 
 	var mentions []string
 	if strings.HasPrefix(target, "#") {
+		// A pinned message wakes the same watchers as any channel message:
+		// the handles it mentions. Replacing the board does not by itself
+		// cost every member a model turn.
 		mentions = extractMentionedHandles(text)
-		if pin && !slices.Contains(mentions, "all") {
-			mentions = append(mentions, "all")
-		}
 		if replyTo > 0 {
 			replyAuthor, authorErr := s.findMessageSender(ctx, target, replyTo)
 			if authorErr != nil {

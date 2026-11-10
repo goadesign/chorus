@@ -120,7 +120,8 @@ type SendPayload struct {
 	ReplyTo *int
 	// When true on a #channel message, pins this message as the channel's active
 	// collaboration manifest (replacing any previous pin) so joining agents always
-	// see it.
+	// see it. A pin wakes only the members its text @mentions, like any channel
+	// message.
 	Pin bool
 	// Optional seconds to block waiting for a reply, @mention, @all, or direct
 	// message after sending (0 returns immediately).
