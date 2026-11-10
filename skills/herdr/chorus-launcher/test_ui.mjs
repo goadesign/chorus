@@ -125,7 +125,7 @@ function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/p
     return { created, reused: request.agents.length - created };
   };
   view.init({}, cx);
-  return { view, cx, controls, launches, focus, scrolls, closed, sharedStore,
+  return { view, cx, controls, launches, focus, scrolls, closed, notices, sharedStore,
     get inspects() { return inspects; },
     async settle() { while (tasks.length) await tasks.shift(); },
     partialAfter(count) { failAfter = count; },
@@ -146,6 +146,8 @@ test('successful launch dismisses the dialog without a dead post-close inspect w
   h.view.start(h.cx);
   await h.settle();
   assert.deepEqual(h.closed, ['ov-chorus']);
+  assert.equal(h.notices.length, 1);
+  assert.match(h.notices[0].body, /Opened 3 new panes; reused 0/);
   assert.equal(h.inspects, 1);
   assert.equal(h.launches[0].agents[0].model, 'claude-opus-5-5');
   assert.equal(h.launches[0].agents[0].thinking, null);
@@ -300,6 +302,30 @@ test('per-repository preferences persist across reopenings without affecting oth
   await other.settle();
   assert.equal(other.view.swarm, 'beta');
   assert.equal(other.view.rows.length, 4);
+
+  // Picking a suffixed Antigravity model (or single-effort model without "high") stays ready on reopen, and untouched rows omit model/thinking.
+  const agySaved = harness({ agents: DEFAULT_AGENTS, root: '/repos/gamma', sharedStore });
+  await agySaved.settle();
+  agySaved.render();
+  const agyRow = agySaved.view.rows[2];
+  agyRow.modelPicker.index = 3; // Enter model ID…
+  agySaved.click(`${agyRow.id}-model`, 'on_confirm');
+  agyRow.input.set_value('gemini-4-argon-low');
+  agyRow.input.events.change({}, agySaved.cx);
+  assert.deepEqual(sharedStore['chorus-launcher.repo:/repos/gamma'].rows[0], { key: 'claude', yolo: false });
+  assert.deepEqual(sharedStore['chorus-launcher.repo:/repos/gamma'].rows[2], { key: 'antigravity', yolo: false, model: 'gemini-4-argon-low' });
+
+  const agyReopened = harness({ agents: DEFAULT_AGENTS, root: '/repos/gamma', sharedStore });
+  await agyReopened.settle();
+  assert.equal(agyReopened.view.rows[2].model, 'gemini-4-argon-low');
+  assert.equal(agyReopened.view.rows[2].thinking, null);
+  assert.equal(agyReopened.view.ready(), true);
+
+  // A saved thinking level no longer supported by the model blocks launch with an explicit reason.
+  agyReopened.view.rows[1].model = 'gpt-6-luna';
+  agyReopened.view.rows[1].thinking = 'ultra';
+  assert.equal(agyReopened.view.ready(), false);
+  assert.match(agyReopened.view.blockingReason(), /Unavailable|unavailable/);
 });
 
 test('adding all preserves edited rows and fills only missing client apps', async () => {

@@ -140,45 +140,66 @@ export default class ChorusLauncher extends View {
       swarm: this.swarm,
       rows: savable.map(row => {
         const entry = { key: row.key, yolo: Boolean(row.yolo) };
-        if (row.terminal || row.modelChosen) entry.model = row.model ?? null;
-        if ((row.terminal || row.thinkingChosen) && row.key !== "cursor") entry.thinking = row.thinking ?? null;
+        if (row.terminal) {
+          entry.model = row.model;
+          if (row.key !== "cursor") entry.thinking = row.thinking;
+        } else {
+          if (row.chosenModel !== undefined) entry.model = row.chosenModel;
+          if (row.key !== "cursor" && row.chosenThinking !== undefined) entry.thinking = row.chosenThinking;
+        }
         return entry;
       }),
     });
   }
 
-  // Retain input and focus state for exactly one row while the dialog is open.
+  // Retain input and focus state for one row; undefined chosen values inherit verified defaults.
   newRow(key, cx, saved = null, persisted = null) {
-    const preset = MODEL_DEFAULTS[key];
-    const hasModel = Boolean(saved) || Boolean(persisted && "model" in persisted);
-    const hasThinking = Boolean(saved) || Boolean(persisted && "thinking" in persisted);
+    const self = this;
     const row = {
       id: saved?.id ?? `${this.session}-${++this.ordinal}`,
       key,
       terminal: saved?.terminal ?? null,
-      model: hasModel ? ((saved ?? persisted).model ?? null) : null,
-      thinking: key === "cursor" ? null : (hasThinking ? ((saved ?? persisted).thinking ?? null) : null),
+      chosenModel: saved ? (saved.model ?? null) : (persisted && "model" in persisted ? (persisted.model ?? null) : undefined),
+      chosenThinking: key === "cursor" ? undefined : (saved ? (saved.thinking ?? null) : (persisted && "thinking" in persisted ? (persisted.thinking ?? null) : undefined)),
       yolo: saved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
       recorded: saved ? saved.yolo !== null : true,
-      modelChosen: hasModel || !preset,
-      thinkingChosen: key === "cursor" || hasThinking || !preset?.thinking,
       custom: false,
       input: InputState.new({ placeholder: "Exact model ID" }),
       remove: cx.focus_handle(),
       retry: cx.focus_handle(),
+      get model() {
+        if (this.terminal || this.chosenModel !== undefined) return this.chosenModel ?? null;
+        const details = self.agents.find(agent => agent.key === this.key)?.details;
+        return details?.model_supported ? (MODEL_DEFAULTS[this.key]?.id ?? null) : null;
+      },
+      set model(value) {
+        this.chosenModel = value;
+      },
+      get thinking() {
+        if (this.key === "cursor") return null;
+        if (this.terminal || this.chosenThinking !== undefined) return this.chosenThinking ?? null;
+        const details = self.agents.find(agent => agent.key === this.key)?.details;
+        const preset = MODEL_DEFAULTS[this.key]?.thinking;
+        return preset && details?.thinking_supported && self.thinkingLevels(this, details).includes(preset) ? preset : null;
+      },
+      set thinking(value) {
+        this.chosenThinking = this.key === "cursor" ? undefined : value;
+      },
     };
     for (const field of ["agent", "model", "thinking"]) {
       row[`${field}Picker`] = { trigger: cx.focus_handle(), list: cx.focus_handle(), scroll: VirtualListScrollHandle.new(), index: 0 };
     }
     row.input.on("change", (_event, cx) => {
       if (!row.custom) return;
-      row.model = row.input.value().trim();
-      row.modelChosen = true;
-      if (row.key === "cursor" || (row.key === "antigravity" && AGY_SUFFIX.test(row.model))) row.thinking = null;
+      row.chosenModel = row.input.value().trim();
+      const details = this.agents.find(agent => agent.key === row.key)?.details;
+      const levels = this.thinkingLevels(row, details);
+      if (row.chosenThinking && ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking)))) {
+        row.chosenThinking = undefined;
+      }
       this.saveRepo();
       cx.notify();
     });
-    this.applyDefault(row);
     return row;
   }
 
@@ -186,15 +207,6 @@ export default class ChorusLauncher extends View {
   modelEntry(row, details) {
     if (!row.model || !details?.models) return null;
     return details.models.find(item => item.id === row.model || Object.values(item.variants ?? {}).includes(row.model)) ?? null;
-  }
-
-  // Apply defaults only before the person chooses; refresh never replaces their choice.
-  applyDefault(row) {
-    if (row.terminal) return;
-    const details = this.agents.find(agent => agent.key === row.key)?.details;
-    const preset = MODEL_DEFAULTS[row.key];
-    if (!row.modelChosen && details?.model_supported) row.model = preset?.id ?? null;
-    if (row.key !== "cursor" && !row.thinkingChosen && details?.thinking_supported) row.thinking = preset?.thinking ?? null;
   }
 
   // Return advertised thinking levels for the row's current client and model.
@@ -211,7 +223,7 @@ export default class ChorusLauncher extends View {
     if (row.key === "cursor") {
       const entry = !row.custom ? this.modelEntry(row, details) : null;
       if (levels.length && entry?.variants) {
-        const value = Object.entries(entry.variants).find(([, slug]) => slug === row.model)?.[0] ?? levels[0];
+        const value = Object.entries(entry.variants).find(([, slug]) => slug === row.model)?.[0] ?? "";
         return { options: levels.map(id => ({ id, name: THINKING_NAMES[id] ?? id })), enabled: true, value };
       }
       const label = !details ? "Checking…" : row.model ? "Set by model" : "App default";
@@ -253,7 +265,6 @@ export default class ChorusLauncher extends View {
     try { agent.details = await this.helper("models", { key: agent.key, name: agent.name, run: agent.run }); }
     catch (error) { agent.details = { models: [], model_supported: false, thinking_supported: false, efforts: [], yolo_flag: null, error: true, note: `Could not check client options: ${error.message ?? error}. Retry to choose a model, thinking level, or YOLO mode.` }; }
     agent.loading = false;
-    for (const row of this.rows.filter(row => row.key === agent.key)) this.applyDefault(row);
     cx.notify();
   }
 
@@ -268,40 +279,62 @@ export default class ChorusLauncher extends View {
       agents: this.rows.map(row => {
         if (row.terminal) return { id: row.id };
         const agent = this.agents.find(agent => agent.key === row.key);
-        return { id: row.id, key: agent.key, name: agent.name, run: agent.run, model: row.model, thinking: row.key === "cursor" ? null : (row.thinking ?? null), yolo: row.yolo };
+        return { id: row.id, key: agent.key, name: agent.name, run: agent.run, model: row.model, thinking: row.thinking ?? null, yolo: row.yolo };
       }) };
     // Start the helper subprocess synchronously before spawning the continuation.
     const launch = this.helper("launch", request);
     cx.spawn(async cx => {
+      let result;
       try {
-        const result = await launch;
+        result = await launch;
+      } catch (error) {
+        this.error = String(error.message ?? error);
+        // Even a partial launch records completed rows, so retrying never duplicates them.
+        try { await this.loadTeam(cx); }
+        catch (reloadError) { this.error += `${this.error ? "\n" : ""}Could not reload the team: ${reloadError.message ?? reloadError}`; }
+        this.busy = false;
+        cx.notify();
+        return;
+      }
+      try {
         notify({
           title: "Chorus team ready",
           body: `Opened ${result.created} new pane${result.created === 1 ? "" : "s"}; reused ${result.reused}. Give your goal to one agent and check each pane for prompts.`,
           level: "info",
         });
-        closeOverlay(props()?.overlay);
-        return;
-      } catch (error) { this.error = String(error.message ?? error); }
-      // Even a partial launch records completed rows, so retrying never duplicates them.
-      try { await this.loadTeam(cx); }
-      catch (error) { this.error += `${this.error ? "\n" : ""}Could not reload the team: ${error.message ?? error}`; }
-      this.busy = false;
-      cx.notify();
+      } catch {}
+      closeOverlay(props()?.overlay);
     });
+  }
+
+  // Explain the first setting that prevents launching so the person knows what to change.
+  blockingReason() {
+    for (let index = 0; index < this.rows.length; index += 1) {
+      const row = this.rows[index];
+      if (row.terminal) continue;
+      const agent = this.agents.find(item => item.key === row.key);
+      const name = agent?.name ?? row.key;
+      const details = agent?.details;
+      if (row.custom && !row.model) return `Agent ${index + 1} (${name}): enter a model ID or choose another model.`;
+      if (!details) return `Checking client options for ${name}…`;
+      if ((row.chosenModel === undefined && !row.model && MODEL_DEFAULTS[row.key]?.id) || (row.model && !details.model_supported)) {
+        return `Agent ${index + 1} (${name}): retry client options or choose App default model.`;
+      }
+      const levels = this.thinkingLevels(row, details);
+      const thinkingValid = !row.thinking || (row.key !== "cursor" && Boolean(details.thinking_supported) && levels.includes(row.thinking));
+      if (!thinkingValid) {
+        return `Agent ${index + 1} (${name}): thinking level "${THINKING_NAMES[row.thinking] ?? row.thinking}" is unavailable for this model; choose another thinking level.`;
+      }
+      if (row.yolo && !details.yolo_flag) {
+        return `Agent ${index + 1} (${name}): YOLO mode could not be verified; retry client options or turn YOLO off.`;
+      }
+    }
+    return "";
   }
 
   // Empty or incomplete custom model IDs and unverified options cannot silently launch.
   ready() {
-    return !this.loading && !this.busy && Boolean(this.root) && SWARM.test(this.swarm) && this.rows.length > 0
-      && this.rows.every(row => {
-        if (row.terminal) return true;
-        const details = this.agents.find(agent => agent.key === row.key)?.details;
-        const levels = this.thinkingLevels(row, details);
-        const thinkingValid = !row.thinking || (row.key !== "cursor" && Boolean(details?.thinking_supported) && levels.includes(row.thinking));
-        return (row.modelChosen || Boolean(row.model)) && (!row.custom || Boolean(row.model)) && (!row.model || Boolean(details?.model_supported))
-          && thinkingValid && (!row.yolo || Boolean(details?.yolo_flag));
-      });
+    return !this.loading && !this.busy && Boolean(this.root) && SWARM.test(this.swarm) && this.rows.length > 0 && !this.blockingReason();
   }
 
   // Native buttons provide keyboard activation, disabled semantics and visible focus.
@@ -373,7 +406,14 @@ export default class ChorusLauncher extends View {
     const editable = !row.terminal && !this.busy;
     const entry = !row.custom ? this.modelEntry(row, details) : null;
     const selectedModelId = row.custom ? "__custom__" : entry ? entry.id : (row.model ?? "");
-    const modelOptions = [{ id: "", name: "App default" }, ...(details?.models ?? [])];
+    const catalog = details?.models ?? [];
+    const modelOptions = [
+      { id: "", name: "App default" },
+      ...catalog.map(item => ({
+        id: item.id,
+        name: !item.variants && catalog.some(other => other !== item && other.name === item.name) ? `${item.name} (${item.id})` : item.name,
+      })),
+    ];
     if (row.model && !row.custom && !entry && !modelOptions.some(option => option.id === row.model)) {
       modelOptions.push({ id: row.model, name: MODEL_DEFAULTS[row.key]?.id === row.model ? MODEL_DEFAULTS[row.key].name : `${row.model} (selected)` });
     }
@@ -392,15 +432,11 @@ export default class ChorusLauncher extends View {
           .child(row.terminal ? div().h(36).py(8).child(name) : this.select(`${row.id}-agent`, `Agent ${index + 1} client`, row.key,
             this.agents.map(a => ({ id: a.key, name: a.name })), row.agentPicker,
             key => {
-              const preset = MODEL_DEFAULTS[key];
               row.key = key;
-              row.model = null;
-              row.thinking = null;
-              row.modelChosen = !preset;
-              row.thinkingChosen = !preset?.thinking;
+              row.chosenModel = undefined;
+              row.chosenThinking = undefined;
               row.custom = false;
               row.input.set_value("");
-              this.applyDefault(row);
               if (!this.agents.find(a => a.key === key)?.details?.yolo_flag) row.yolo = false;
               this.saveRepo();
             }, editable)))
@@ -408,17 +444,16 @@ export default class ChorusLauncher extends View {
           .child(row.terminal ? div().h(36).py(8).truncate().child(row.recorded ? row.model ?? "App default at launch" : "Not recorded")
             : this.select(`${row.id}-model`, `Agent ${index + 1} model`, selectedModelId, modelOptions, row.modelPicker,
               model => {
-                row.modelChosen = true;
                 row.custom = model === "__custom__";
                 const prevVariant = row.key === "cursor" && !row.custom ? Object.entries(entry?.variants ?? {}).find(([, slug]) => slug === row.model)?.[0] : null;
-                row.model = row.custom ? row.input.value().trim() : model || null;
+                row.chosenModel = row.custom ? row.input.value().trim() : model || null;
                 const nextEntry = !row.custom ? this.modelEntry(row, details) : null;
                 if (row.key === "cursor" && nextEntry?.variants && prevVariant && nextEntry.variants[prevVariant]) {
-                  row.model = nextEntry.variants[prevVariant];
-                } else if (row.thinking) {
+                  row.chosenModel = nextEntry.variants[prevVariant];
+                } else if (row.chosenThinking) {
                   const levels = this.thinkingLevels(row, details);
-                  if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.thinking))) {
-                    row.thinking = null;
+                  if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking))) {
+                    row.chosenThinking = undefined;
                   }
                 }
                 this.saveRepo();
@@ -429,13 +464,9 @@ export default class ChorusLauncher extends View {
             : this.select(`${row.id}-thinking`, `Agent ${index + 1} thinking`, thinking.value, thinking.options, row.thinkingPicker,
               level => {
                 if (row.key === "cursor") {
-                  if (entry?.variants?.[level]) {
-                    row.model = entry.variants[level];
-                    row.modelChosen = true;
-                  }
+                  if (entry?.variants?.[level]) row.chosenModel = entry.variants[level];
                 } else {
-                  row.thinkingChosen = true;
-                  row.thinking = level || null;
+                  row.chosenThinking = level || null;
                 }
                 this.saveRepo();
               }, editable && thinking.enabled)))
@@ -468,6 +499,7 @@ export default class ChorusLauncher extends View {
     const pending = this.rows.filter(row => !row.terminal);
     const supported = pending.filter(row => row.yolo || this.agents.find(agent => agent.key === row.key)?.details?.yolo_flag);
     const allYolo = supported.length > 0 && supported.every(row => row.yolo);
+    const reason = !this.loading && !this.busy && !this.error && Boolean(this.root) && SWARM.test(this.swarm) && this.rows.length > 0 ? this.blockingReason() : "";
     return v_flex().id("chorus-launcher").size_full().p(22).gap(14).bg(t.popover).text_color(t.foreground).track_focus(this.handle)
       .on_key_down((event, cx) => { if (event.key === "escape" && !this.picker) { closeOverlay(props().overlay); cx.stop_propagation(); } })
       .child(div().text_size(20).font_semibold().child("Start Chorus"))
@@ -492,6 +524,7 @@ export default class ChorusLauncher extends View {
         .when(!this.loading && this.rows.length === 0, el => el.child(div().py(16).text_color(t.muted).child("No agents selected. Add an agent to open your team.")))
         .children(this.rows.map((row, index) => this.renderRow(row, index))))
       .when(Boolean(this.error), el => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
+      .when(Boolean(reason), el => el.child(div().text_size(12).text_color(t.muted).child(reason)))
       .child(div().text_size(12).text_color(t.muted).child("YOLO off uses your client’s existing permissions. Choices are remembered per project folder; existing panes keep their launch settings."))
       .child(h_flex().items_center().gap(10)
         .child(this.button("chorus-reload", "Reload team", this.buttons.reload, cx => {
