@@ -1,0 +1,5 @@
+{
+  "place": "none",
+  "title": "Start Chorus",
+  "overlay": { "kind": "dialog", "width": 820, "height": 650 }
+}

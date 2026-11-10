@@ -103,7 +103,7 @@ func dispatch(args []string, out io.Writer) error {
 			case "ui":
 				return runUI(args[1:], out, openBrowser)
 			case "setup":
-				return runSetup(args[1:])
+				return runSetup(args[1:], out)
 			case "watch":
 				return runWatch(args[1:], out)
 			case "serve":

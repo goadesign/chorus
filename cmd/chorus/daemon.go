@@ -62,7 +62,8 @@ var (
 
 // runUp is the one command a new user runs after installing Chorus. It
 // registers Chorus with the coding agents on this machine (the same global
-// setup as "chorus setup -global", skipped when CHORUS_NO_SETUP=1), starts
+// setup as "chorus setup -global", including the launcher when Herdr has a
+// settings directory, skipped when CHORUS_NO_SETUP=1), starts
 // Chorus in the background (a user service when supported, otherwise a
 // detached daemon) unless the current version already answers, waits until
 // GET /healthz reports that version, and writes the dashboard and MCP
