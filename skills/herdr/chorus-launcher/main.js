@@ -144,7 +144,7 @@ export default class ChorusLauncher extends View {
           entry.model = row.model;
           if (row.key !== "cursor") entry.thinking = row.thinking;
         } else {
-          if (row.chosenModel !== undefined) entry.model = row.chosenModel;
+          if (row.chosenModel !== undefined && row.chosenModel !== "") entry.model = row.chosenModel;
           if (row.key !== "cursor" && row.chosenThinking !== undefined) entry.thinking = row.chosenThinking;
         }
         return entry;
@@ -155,11 +155,12 @@ export default class ChorusLauncher extends View {
   // Retain input and focus state for one row; undefined chosen values inherit verified defaults.
   newRow(key, cx, saved = null, persisted = null) {
     const self = this;
+    const persistedModel = persisted && "model" in persisted && persisted.model !== "" ? (persisted.model ?? null) : undefined;
     const row = {
       id: saved?.id ?? `${this.session}-${++this.ordinal}`,
       key,
       terminal: saved?.terminal ?? null,
-      chosenModel: saved ? (saved.model ?? null) : (persisted && "model" in persisted ? (persisted.model ?? null) : undefined),
+      chosenModel: saved ? (saved.model || null) : persistedModel,
       chosenThinking: key === "cursor" ? undefined : (saved ? (saved.thinking ?? null) : (persisted && "thinking" in persisted ? (persisted.thinking ?? null) : undefined)),
       yolo: saved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
       recorded: saved ? saved.yolo !== null : true,
@@ -168,7 +169,8 @@ export default class ChorusLauncher extends View {
       remove: cx.focus_handle(),
       retry: cx.focus_handle(),
       get model() {
-        if (this.terminal || this.chosenModel !== undefined) return this.chosenModel ?? null;
+        if (this.custom) return this.chosenModel ?? "";
+        if (this.terminal || this.chosenModel !== undefined) return this.chosenModel || null;
         const details = self.agents.find(agent => agent.key === this.key)?.details;
         return details?.model_supported ? (MODEL_DEFAULTS[this.key]?.id ?? null) : null;
       },
@@ -179,8 +181,9 @@ export default class ChorusLauncher extends View {
         if (this.key === "cursor") return null;
         if (this.terminal || this.chosenThinking !== undefined) return this.chosenThinking ?? null;
         const details = self.agents.find(agent => agent.key === this.key)?.details;
+        const entry = !this.custom ? self.modelEntry(this, details) : null;
         const preset = MODEL_DEFAULTS[this.key]?.thinking;
-        return preset && details?.thinking_supported && self.thinkingLevels(this, details).includes(preset) ? preset : null;
+        return preset && details?.thinking_supported && entry?.efforts?.includes(preset) ? preset : null;
       },
       set thinking(value) {
         this.chosenThinking = this.key === "cursor" ? undefined : value;
@@ -193,14 +196,20 @@ export default class ChorusLauncher extends View {
       if (!row.custom) return;
       row.chosenModel = row.input.value().trim();
       const details = this.agents.find(agent => agent.key === row.key)?.details;
-      const levels = this.thinkingLevels(row, details);
-      if (row.chosenThinking && ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking)))) {
-        row.chosenThinking = undefined;
-      }
+      this.syncThinking(row, details);
       this.saveRepo();
       cx.notify();
     });
     return row;
+  }
+
+  // Clear an explicit thinking choice when the selected model no longer supports it.
+  syncThinking(row, details) {
+    if (!row.chosenThinking) return;
+    const levels = this.thinkingLevels(row, details);
+    if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking))) {
+      row.chosenThinking = null;
+    }
   }
 
   // Match a row's selected model against catalog entries, including Cursor variant families.
@@ -450,11 +459,8 @@ export default class ChorusLauncher extends View {
                 const nextEntry = !row.custom ? this.modelEntry(row, details) : null;
                 if (row.key === "cursor" && nextEntry?.variants && prevVariant && nextEntry.variants[prevVariant]) {
                   row.chosenModel = nextEntry.variants[prevVariant];
-                } else if (row.chosenThinking) {
-                  const levels = this.thinkingLevels(row, details);
-                  if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking))) {
-                    row.chosenThinking = undefined;
-                  }
+                } else {
+                  this.syncThinking(row, details);
                 }
                 this.saveRepo();
                 if (row.custom) row.input.focus();

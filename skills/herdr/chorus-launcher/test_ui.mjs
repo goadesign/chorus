@@ -308,16 +308,30 @@ test('per-repository preferences persist across reopenings without affecting oth
   await agySaved.settle();
   agySaved.render();
   const agyRow = agySaved.view.rows[2];
+  // Explicit "low" thinking reset by a suffixed model becomes explicit App default (null), not preset "high", and empty custom input is never persisted.
+  agyRow.thinkingPicker.index = 1; // low
+  agySaved.click(`${agyRow.id}-thinking`, 'on_confirm');
+  assert.equal(agyRow.thinking, 'low');
   agyRow.modelPicker.index = 3; // Enter model ID…
   agySaved.click(`${agyRow.id}-model`, 'on_confirm');
+  assert.equal(agySaved.view.ready(), false);
+  assert.equal('model' in sharedStore['chorus-launcher.repo:/repos/gamma'].rows[2], false);
+  agyRow.input.set_value('gemini-4-argon-low');
+  agyRow.input.events.change({}, agySaved.cx);
+  assert.equal(agyRow.thinking, null);
+  agyRow.input.set_value('gemini-4-argon-lowx');
+  agyRow.input.events.change({}, agySaved.cx);
+  assert.equal(agyRow.thinking, null);
   agyRow.input.set_value('gemini-4-argon-low');
   agyRow.input.events.change({}, agySaved.cx);
   assert.deepEqual(sharedStore['chorus-launcher.repo:/repos/gamma'].rows[0], { key: 'claude', yolo: false });
-  assert.deepEqual(sharedStore['chorus-launcher.repo:/repos/gamma'].rows[2], { key: 'antigravity', yolo: false, model: 'gemini-4-argon-low' });
+  assert.deepEqual(sharedStore['chorus-launcher.repo:/repos/gamma'].rows[2], { key: 'antigravity', yolo: false, model: 'gemini-4-argon-low', thinking: null });
 
+  // A saved custom/unlisted Antigravity model without an explicit thinking choice reopens with thinking: null (not preset "high").
+  sharedStore['chorus-launcher.repo:/repos/gamma'].rows[2] = { key: 'antigravity', yolo: false, model: 'my-custom-agy-model' };
   const agyReopened = harness({ agents: DEFAULT_AGENTS, root: '/repos/gamma', sharedStore });
   await agyReopened.settle();
-  assert.equal(agyReopened.view.rows[2].model, 'gemini-4-argon-low');
+  assert.equal(agyReopened.view.rows[2].model, 'my-custom-agy-model');
   assert.equal(agyReopened.view.rows[2].thinking, null);
   assert.equal(agyReopened.view.ready(), true);
 
