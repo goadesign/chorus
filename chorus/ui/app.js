@@ -1095,6 +1095,7 @@
       renderReplyChip();
       if (to.startsWith("@")) setComposerFeedback(["Sent to ", handleBadge(to.slice(1))], "ok");
       else setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
+      window.ChorusChat.sent();
       if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     } catch (err) {
       setComposerFeedback(err.message || "Failed to send message.", "error");

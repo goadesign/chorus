@@ -2368,6 +2368,46 @@ body[data-theme="light"] .provider-openai {
   }
 }
 
+/* Three dots under a message the person just sent, until an agent answers.
+   They are still until an agent has read the message, then pulse in turn. */
+.chat-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 13px 14px;
+}
+
+.chat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.45;
+}
+
+.chat-waiting.is-read .chat-dot {
+  animation: chat-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.chat-waiting.is-read .chat-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.chat-waiting.is-read .chat-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes chat-dot-pulse {
+  0%, 60%, 100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
 @keyframes chat-arrive {
   from {
     opacity: 0;
@@ -2544,7 +2584,11 @@ body[data-theme="light"] .provider-openai {
     transition: none !important;
     scroll-behavior: auto !important;
   }
-  .chat-row.is-arriving {
+  .chat-row.is-arriving,
+  .chat-waiting.is-read .chat-dot {
     animation: none;
+  }
+  .chat-waiting.is-read .chat-dot {
+    opacity: 1;
   }
 }

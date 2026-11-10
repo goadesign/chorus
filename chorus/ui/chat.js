@@ -2,7 +2,8 @@
 // using the dashboard, or when the person clicks the message box at the
 // bottom of the page, a chat rises out of that box. It shows what agents said
 // to the person and what the person sent, oldest at the top and newest at the
-// bottom. It stays up while they write and send, and folds back into the
+// bottom. It stays up while they write and send, shows three dots under a
+// message they just sent until an agent answers, and folds back into the
 // plain message box when they click anywhere outside it or press Escape.
 (() => {
   "use strict";
@@ -32,6 +33,13 @@
   // drawn lists, in order, the keys of the rows currently in the chat and
   // whose conversation they belong to, so a refresh adds only new rows.
   let drawn = { owner: "", keys: [] };
+  // listed is how many messages the latest render found in the conversation.
+  let listed = 0;
+  // awaiting is set when the person sends with the chat raised: it holds how
+  // many messages were listed at that moment, so the message they sent is
+  // the first one past that count. It is cleared when an agent's message
+  // follows theirs, or when they fold the chat. null when nothing was sent.
+  let awaiting = null;
   // latest holds the arguments of the most recent render for redraws that
   // start here (opening, closing, returning to the page).
   let latest = null;
@@ -75,6 +83,13 @@
     const unseen = incoming.filter((entry) => entry.message.sent_at_ms > seenMs).length;
     document.title = unseen > 0 ? `(${unseen}) Chorus` : "Chorus";
 
+    // The dots show while the message the person sent from this page is the
+    // newest in the conversation; an agent's message after it ends the wait.
+    listed = entries.length;
+    const newest = entries.at(-1);
+    if (awaiting && entries.length > awaiting.listed && !newest.mine) awaiting = null;
+    const waitingOn = awaiting && entries.length > awaiting.listed ? newest : null;
+
     document.getElementById("send-text").setAttribute("aria-expanded", String(open));
     const sheet = document.getElementById("chat-sheet");
     const wasOpen = sheet.classList.contains("is-open");
@@ -82,7 +97,14 @@
     sheet.inert = !open;
     sheet.closest(".composer-card").classList.toggle("has-chat-open", open);
     if (open) fitSheet();
-    drawLog(document.getElementById("chat-log"), entries, `${state.activeSwarm}|${me}`, actions, open && !wasOpen, firstNew);
+    const waiting = waitingOn ? waitingRow(state.view, waitingOn, me) : null;
+    drawLog(document.getElementById("chat-log"), entries, `${state.activeSwarm}|${me}`, actions, open && !wasOpen, firstNew, waiting);
+  }
+
+  // sent is called after the message box publishes a message. With the chat
+  // raised, it starts the wait for an answer to that message.
+  function sent() {
+    if (open) awaiting = { listed };
   }
 
   // fitSheet lets the chat grow from the message box up to the bottom of the
@@ -149,6 +171,7 @@
       latest.actions.clearReply();
     }
     if (!open) aimedFrom = null;
+    if (!open) awaiting = null;
     render(latest.state, latest.actions);
   }
 
@@ -179,7 +202,13 @@
   // take it in and glides to it: to its first line when an agent said it,
   // so a long message is read from the start, and to the end when the person
   // said it.
-  function drawLog(log, entries, owner, actions, justOpened, firstNew) {
+  //
+  // waiting, when given, is the row of dots shown last, under the message
+  // the person is waiting on. It is not a message, so it is replaced on every
+  // call and never counted among the drawn rows.
+  function drawLog(log, entries, owner, actions, justOpened, firstNew, waiting) {
+    const previousWaiting = log.querySelector(".chat-waiting");
+    previousWaiting?.remove();
     const keys = entries.map(entryKey);
     const continues = owner === drawn.owner && drawn.keys.every((key, index) => keys[index] === key);
     const added = continues ? entries.slice(drawn.keys.length) : entries;
@@ -192,6 +221,8 @@
     if (continues) log.append(...rows);
     else log.replaceChildren(...rows);
     drawn = { owner, keys };
+    if (waiting) log.append(waiting);
+    const waitingAppeared = Boolean(waiting) && !previousWaiting;
 
     if (justOpened) {
       // The sheet itself is sliding up, so the list is placed, not scrolled.
@@ -203,10 +234,10 @@
       } else {
         log.scrollTop = log.scrollHeight;
       }
-    } else if (added.length > 0) {
+    } else if (added.length > 0 || waitingAppeared) {
       if (log.style.height) log.style.height = `${log.scrollHeight - log.scrollTop}px`;
       const newest = log.lastElementChild;
-      const readFromStart = !newest.classList.contains("is-mine");
+      const readFromStart = !newest.matches(".is-mine, .chat-waiting");
       log.scrollTo({
         top: readFromStart ? newest.offsetTop - ROW_HEADROOM_PX : log.scrollHeight,
         behavior: REDUCED_MOTION.matches ? "auto" : "smooth",
@@ -239,6 +270,44 @@
     return el("article", { className: "chat-row is-mine", title: sentAt(entry.message) },
       el("header", { className: "chat-meta" }, "You to ", to),
       bubble(entry.message));
+  }
+
+  // waitingRow builds the row of three dots shown under entry, the message
+  // the person just sent. The dots are still until an agent expected to
+  // answer has read the message, then they pulse.
+  //
+  // The agents expected to answer are the recipient of a direct message, or
+  // in a channel the author of the message it replies to and the members it
+  // mentions. When exactly one is expected, the row names it. A channel
+  // message that names nobody can be answered by any member.
+  function waitingRow(view, entry, me) {
+    const { el, handleBadge, matchesMessage } = window.ChorusUI;
+    const message = entry.message;
+    const notMe = (handle) => handle.toLowerCase() !== me.toLowerCase();
+    let expected = [];
+    let read = false;
+    if (entry.target.startsWith("@")) {
+      expected = [entry.target.slice(1)];
+      read = view.inboxes.some((inbox) => `@${inbox.recipient}` === entry.target && inbox.read_seq >= message.seq);
+    } else {
+      const channel = view.channels.find((candidate) => candidate.name === entry.target);
+      const members = channel.positions.filter((position) => notMe(position.handle));
+      const parent = channel.messages.find((candidate) => candidate.seq === message.reply_to);
+      const named = members.filter((position) => position.handle === parent?.sender
+        || matchesMessage(entry.target, message, position.handle, ""));
+      expected = named.map((position) => position.handle);
+      read = (named.length > 0 ? named : members).some((position) => position.read_seq >= message.seq);
+    }
+    const who = expected.length === 1 ? `@${expected[0]}` : "an agent";
+    return el("div", {
+      className: `chat-row chat-waiting${read ? " is-read" : ""}`,
+      role: "img",
+      "aria-label": read ? `${who} has read your message; waiting for the reply` : `Waiting for ${who} to read your message`,
+      title: read ? `${who} has read your message` : `${who} has not read your message yet`,
+    },
+      expected.length === 1 && el("div", { className: "chat-meta" }, handleBadge(expected[0], "", "chat-sender")),
+      el("div", { className: "chat-bubble chat-dots" },
+        el("span", { className: "chat-dot" }), el("span", { className: "chat-dot" }), el("span", { className: "chat-dot" })));
   }
 
   // bubble renders the full message text with the dashboard's Markdown
@@ -290,5 +359,5 @@
     if (latest && document.visibilityState === "visible") render(latest.state, latest.actions);
   });
 
-  window.ChorusChat = Object.freeze({ render });
+  window.ChorusChat = Object.freeze({ render, sent });
 })();
