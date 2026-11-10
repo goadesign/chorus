@@ -255,8 +255,11 @@
   }
 
   // The person raises the chat by clicking the message box, or by pressing
-  // the Up arrow in it while it is empty. They fold it with Escape, or by
-  // clicking anywhere outside the chat and the message box.
+  // the Up arrow in it while it is empty. They fold it with Escape, or with
+  // one click anywhere that is not a message in the chat or the message box:
+  // the rest of the page, and also the blank space around the messages. The
+  // click is read before the page's own controls can swallow it. Dragging
+  // the chat's scrollbar is not such a click.
   const messageBox = document.getElementById("send-text");
   const composerCard = document.querySelector(".composer-card");
   messageBox.addEventListener("click", () => {
@@ -269,8 +272,12 @@
     if (event.key === "Escape" && !event.isComposing && open) setOpen(false);
   });
   document.addEventListener("pointerdown", (event) => {
-    if (open && !composerCard.contains(event.target)) setOpen(false);
-  });
+    if (!open || !(event.target instanceof Element)) return;
+    if (event.target.closest(".chat-row, .composer-box")) return;
+    const log = document.getElementById("chat-log");
+    if (event.target === log && event.offsetX >= log.clientWidth) return;
+    setOpen(false);
+  }, true);
   // The chat follows the handle in the "As @" field as the person edits it.
   document.getElementById("send-handle").addEventListener("input", () => {
     if (latest) render(latest.state, latest.actions);
