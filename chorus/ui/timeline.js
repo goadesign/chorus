@@ -1368,7 +1368,7 @@
     const title = el("title", {});
     // The exact model the agent declared on join or who, when it has one.
     title.textContent = "@" + lane.handle + (lane.model ? " · " + lane.model : "") +
-      (lane.human ? " · human" : "") +
+      (lane.human ? " · user" : "") +
       (lane.unregistered ? " · no current registration (messages kept)" : "");
     label.appendChild(title);
     svg.appendChild(label);

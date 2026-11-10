@@ -973,7 +973,7 @@
     const senderColor = senderColorClass(last.message.sender, state, lastFromHuman);
     const metaRow = element("span", "message-meta",
       element("strong", `message-sender ${senderColor}`.trim(), `@${last.message.sender}`),
-      ...(rootFromHuman ? [element("span", "human-pill", "Human thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman, first.message.model), ")")] : []),
+      ...(rootFromHuman ? [element("span", "human-pill", "User thread (", handleBadgeNode(first.message.sender, state, "", rootFromHuman, first.message.model), ")")] : []),
       ...(latestReplyToHuman ? [element("span", "human-response-pill", latestReplyToHuman)] : []),
       element("span", "message-coordinate", `Thread ${first.target}#${first.message.seq} → #${last.message.seq}`),
       element("span", "thread-count-pill", `${entries.length} messages`),
@@ -1076,7 +1076,7 @@
     const senderColor = senderColorClass(message.sender, state, fromHuman);
     const meta = element("span", "message-meta",
       element("strong", `message-sender ${senderColor}`.trim(), `@${message.sender}`),
-      ...(fromHuman ? [element("span", "human-pill", "Human")] : []),
+      ...(fromHuman ? [element("span", "human-pill", "User")] : []),
       ...(toHumanBadge ? [element("span", "human-response-pill", toHumanBadge)] : []),
       ...(!toHumanBadge && message.reply_to > 0 ? [element("span", "message-reply-badge", `↩ #${message.reply_to}`)] : []),
       element("span", "message-coordinate", `${entry.target}#${message.seq}`),
