@@ -1,6 +1,11 @@
 # Chorus launcher for Herdr
 
 Open the launcher from a project terminal with `herdr-app do mod.open --name chorus-launcher`.
+On macOS, `chorus up` or `chorus setup -global` also adds **Command–Option–Shift–C**
+when the existing Herdr keyboard file leaves that shortcut free in every section.
+Existing bindings are preserved. If the keyboard file is missing, open Herdr
+and rerun setup. Adding the shortcut makes that file user-managed: Herdr will
+no longer replace it with new default shortcuts during upgrades.
 Choose the agent app, model, thinking level, and YOLO setting for each new pane,
 then choose **Open Chorus team**. The dialog dismisses automatically once all
 requested panes have been created and labeled in the team tab; if a step fails,

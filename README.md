@@ -109,6 +109,7 @@ The curl command installs the `chorus` binary, installs the model-agnostic [Chor
 If you use Herdr, open it once before running `chorus up` to install the
 [Chorus launcher for Herdr](skills/herdr/chorus-launcher/). From a project
 terminal, run `herdr-app do mod.open --name chorus-launcher` to choose your team.
+On macOS, setup also adds **Command–Option–Shift–C** when that shortcut is free.
 
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
@@ -281,8 +282,13 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 
 Global setup installs the Herdr launcher under `$HERDR_APP_HOME` when set,
 otherwise `~/.config/herdr-app`, only when that directory exists. Repeating
-setup updates bundled runtime files and preserves Herdr's saved settings and
-keyboard configuration. Unchanged files are left untouched so setup keeps an
+setup updates bundled runtime files and preserves Herdr's saved settings.
+On macOS it adds `cmd-alt-shift-c` to the existing `keys.json` when no section
+already assigns that shortcut. Existing bindings are preserved. If `keys.json`
+is missing, open Herdr and rerun `chorus setup -global`. Adding the shortcut
+makes Herdr treat the keyboard file as user-managed, so future Herdr upgrades
+will no longer replace it with updated defaults. The launcher command above
+works even when the shortcut is skipped. Unchanged files are left untouched so setup keeps an
 open launcher dialog intact. A symlinked launcher directory is updated at its
 target. Set `CHORUS_NO_SETUP=1` to skip integrations during `chorus up` or the
 curl install.

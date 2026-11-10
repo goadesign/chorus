@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,6 +37,13 @@ type codexURLEdit struct {
 	// header line, used when that table has no url yet.
 	afterHeader int
 }
+
+const (
+	// herdrLauncherShortcut opens the launcher without taking a common terminal key.
+	herdrLauncherShortcut = "cmd-alt-shift-c"
+	// herdrLauncherAction is Herdr's documented command shorthand for this mod.
+	herdrLauncherAction = "mod.open:chorus-launcher"
+)
 
 // runSetup registers the Chorus MCP server URL in project and/or global MCP
 // configuration files and installs the Chorus Agent Skill (SKILL.md). Global
@@ -74,7 +82,7 @@ func runSetup(args []string, out io.Writer) error {
 		}
 	}
 	if global {
-		modDir, err := setupHerdrLauncher(homeDir)
+		modDir, err := setupHerdrLauncher(homeDir, out)
 		if err != nil {
 			return fmt.Errorf("install Chorus launcher in Herdr: %w", err)
 		}
@@ -180,10 +188,12 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 
 // setupHerdrLauncher installs the bundled mod into Herdr's existing home
 // directory. Herdr creates that directory on its first launch. Only bundled
-// runtime files are replaced; saved preferences and shortcuts remain untouched.
+// runtime files are replaced; saved preferences and existing bindings survive.
+// The launcher shortcut is added only when its global key is unassigned and
+// Herdr has already created its keyboard file. Shortcut outcomes are written to out.
 // It returns the installed mod directory, or an empty string when Herdr has
 // no existing home directory, and reports read or write failures with a path.
-func setupHerdrLauncher(homeDir string) (string, error) {
+func setupHerdrLauncher(homeDir string, out io.Writer) (string, error) {
 	herdrHome := cmp.Or(os.Getenv("HERDR_APP_HOME"), filepath.Join(homeDir, ".config", "herdr-app"))
 	info, err := os.Stat(herdrHome)
 	if errors.Is(err, os.ErrNotExist) {
@@ -209,7 +219,168 @@ func setupHerdrLauncher(homeDir string) (string, error) {
 			return "", err
 		}
 	}
+	if runtime.GOOS == "darwin" {
+		if err := setupHerdrShortcut(herdrHome, out); err != nil {
+			return "", err
+		}
+	}
 	return modDir, nil
+}
+
+// setupHerdrShortcut adds the launcher to Herdr's existing global bindings.
+// A missing file is left for Herdr to create with its complete defaults.
+// Existing bindings, including explicit nulls and object actions, are preserved;
+// malformed files are reported without writing. Editing the file makes Herdr
+// treat it as user-managed on future upgrades.
+func setupHerdrShortcut(herdrHome string, out io.Writer) error {
+	path := filepath.Join(herdrHome, "keys.json")
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(out, "Herdr keyboard file is missing; open Herdr and rerun chorus setup -global to add the shortcut.")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Herdr keyboard settings %s: %w", path, err)
+	}
+	updated, err := addHerdrShortcut(raw)
+	if err != nil {
+		return fmt.Errorf("parse Herdr keyboard settings %s: %w", path, err)
+	}
+	if bytes.Equal(raw, updated) {
+		fmt.Fprintf(out, "Kept the existing Herdr binding for %s; use the launcher command below.\n", herdrLauncherShortcut)
+		return nil
+	}
+	if err := writeHerdrKeyboardFile(path, updated); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Added Herdr shortcut %s to open Chorus. Herdr now treats keys.json as user-managed.\n", herdrLauncherShortcut)
+	return nil
+}
+
+// addHerdrShortcut locates the global object while validating the complete
+// keyboard document. Any matching chord in any section prevents an insertion.
+// Unrelated bytes, including key order and numeric arguments, remain unchanged.
+func addHerdrShortcut(raw []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if token != json.Delim('{') {
+		return nil, errors.New("keyboard settings must contain a JSON object")
+	}
+	var occupied, rootHasMembers, globalHasMembers bool
+	globalClose := -1
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		section := token.(string)
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		rootHasMembers = true
+		if section != "global" && section != "terminal" && !strings.HasPrefix(section, "layout:") && !strings.HasPrefix(section, "mod:") {
+			continue
+		}
+		var bindings map[string]json.RawMessage
+		if err := json.Unmarshal(value, &bindings); err != nil || bindings == nil {
+			return nil, fmt.Errorf("%s must contain a JSON object", section)
+		}
+		if section == "global" {
+			if globalClose >= 0 {
+				return nil, errors.New("keyboard settings contain more than one global section")
+			}
+			globalClose = int(decoder.InputOffset()) - 1
+			globalHasMembers = len(bindings) > 0
+		}
+		for chord := range bindings {
+			parts := strings.Split(strings.ToLower(chord), "-")
+			if len(parts) != 4 || parts[3] != "c" {
+				continue
+			}
+			slices.Sort(parts[:3])
+			if slices.Equal(parts[:3], []string{"alt", "cmd", "shift"}) {
+				occupied = true
+			}
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	rootClose := int(decoder.InputOffset()) - 1
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("keyboard settings must contain one JSON object")
+	}
+	if occupied {
+		return raw, nil
+	}
+	member := fmt.Sprintf("%q: %q", herdrLauncherShortcut, herdrLauncherAction)
+	if globalClose >= 0 {
+		return insertJSONMember(raw, globalClose, globalHasMembers, member), nil
+	}
+	member = fmt.Sprintf("%q: {%s}", "global", member)
+	return insertJSONMember(raw, rootClose, rootHasMembers, member), nil
+}
+
+// insertJSONMember adds a member before a validated object's closing brace,
+// reusing its existing closing indentation and leaving other bytes untouched.
+func insertJSONMember(raw []byte, closeOffset int, hasMembers bool, member string) []byte {
+	at := closeOffset
+	for at > 0 && strings.ContainsRune(" \t\r\n", rune(raw[at-1])) {
+		at--
+	}
+	separator := ""
+	if hasMembers {
+		separator = ","
+	}
+	var insertion string
+	if bytes.ContainsRune(raw[at:closeOffset], '\n') {
+		line := bytes.LastIndexByte(raw[:closeOffset], '\n') + 1
+		indent := string(raw[line:closeOffset])
+		insertion = separator + "\n" + indent + "  " + member + "\n" + indent
+	} else {
+		insertion = separator + member + string(raw[at:closeOffset])
+	}
+	updated := make([]byte, 0, len(raw)+len(insertion))
+	updated = append(updated, raw[:at]...)
+	updated = append(updated, insertion...)
+	return append(updated, raw[closeOffset:]...)
+}
+
+// writeHerdrKeyboardFile replaces the complete keyboard file atomically,
+// preserving permissions and following an existing symlink to its target.
+func writeHerdrKeyboardFile(path string, content []byte) (err error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolve Herdr keyboard settings %s: %w", path, err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("inspect Herdr keyboard settings %s: %w", target, err)
+	}
+	file, err := os.CreateTemp(filepath.Dir(target), ".chorus-keys-*")
+	if err != nil {
+		return fmt.Errorf("create Herdr keyboard update: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.Remove(file.Name()); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove Herdr keyboard temporary file: %w", cleanupErr))
+		}
+	}()
+	writeErr := file.Chmod(info.Mode().Perm())
+	if writeErr == nil {
+		_, writeErr = file.Write(content)
+	}
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return fmt.Errorf("write Herdr keyboard settings %s: %w", target, err)
+	}
+	if err := os.Rename(file.Name(), target); err != nil {
+		return fmt.Errorf("replace Herdr keyboard settings %s: %w", target, err)
+	}
+	return nil
 }
 
 // writeIntegrationFile installs bundled skill or launcher content, creating
@@ -444,7 +615,7 @@ func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 		return fmt.Errorf("register Chorus with your coding agents: %w (fix the file, or set CHORUS_NO_SETUP=1 to skip this step)", err)
 	}
 	fmt.Fprintf(out, "Registered Chorus with your coding agents (%d files)\n", len(updated))
-	modDir, err := setupHerdrLauncher(homeDir)
+	modDir, err := setupHerdrLauncher(homeDir, out)
 	if err != nil {
 		return fmt.Errorf("install Chorus launcher in Herdr: %w (fix this path, then rerun chorus up; or set CHORUS_NO_SETUP=1 to skip setup)", err)
 	}
@@ -453,7 +624,7 @@ func setupForUp(homeDir, mcpURL string, out io.Writer) error {
 }
 
 // writeHerdrLauncherSummary names the installed mod directory once and gives
-// the person a command to open it without changing Herdr's keyboard settings.
+// the person a command to open it even when the shortcut key is already assigned.
 func writeHerdrLauncherSummary(out io.Writer, modDir string) {
 	if modDir != "" {
 		fmt.Fprintf(out, "Installed Chorus launcher in %s\n", modDir)

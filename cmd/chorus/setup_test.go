@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,115 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestSetupHerdrShortcut checks that installing the shortcut preserves existing
+// key actions, file permissions, symlinks, and the file on repeated setup.
+func TestSetupHerdrShortcut(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("symlink=%t", symlink), func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, "keys.json")
+			target := path
+			if symlink {
+				target = filepath.Join(t.TempDir(), "keyboard.json")
+				require.NoError(t, os.Symlink(target, path))
+			}
+			before := "{\n  \"terminal\": {\"ctrl-r\": {\"command\":\"test\",\"args\":{\"number\":9007199254740993}}},\n  \"global\": {\n    \"cmd-t\": \"tab.new\"\n  }\n}\n"
+			require.NoError(t, os.WriteFile(target, []byte(before), 0o640))
+			var out bytes.Buffer
+			require.NoError(t, setupHerdrShortcut(home, &out))
+			assert.Contains(t, out.String(), "Added Herdr shortcut cmd-alt-shift-c")
+			assert.Contains(t, out.String(), "user-managed")
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			want := strings.Replace(before, "\"tab.new\"\n", "\"tab.new\",\n    \"cmd-alt-shift-c\": \"mod.open:chorus-launcher\"\n", 1)
+			assert.Equal(t, want, string(got))
+			info, err := os.Stat(path)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+			if symlink {
+				link, err := os.Readlink(path)
+				require.NoError(t, err)
+				assert.Equal(t, target, link)
+			}
+			oldTime := time.Unix(1000000000, 0)
+			require.NoError(t, os.Chtimes(target, oldTime, oldTime))
+			out.Reset()
+			require.NoError(t, setupHerdrShortcut(home, &out))
+			assert.Contains(t, out.String(), "Kept the existing Herdr binding")
+			info, err = os.Stat(path)
+			require.NoError(t, err)
+			assert.Equal(t, oldTime, info.ModTime())
+			got, err = os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, want, string(got))
+		})
+	}
+}
+
+// TestAddHerdrShortcut verifies conflict handling across every documented
+// section and rejects malformed input without producing replacement bytes.
+func TestAddHerdrShortcut(t *testing.T) {
+	cases := []struct {
+		name    string
+		before  string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty", before: `{}`, want: `{"global": {"cmd-alt-shift-c": "mod.open:chorus-launcher"}}`},
+		{name: "empty global", before: `{"global": { }}`, want: `{"global": {"cmd-alt-shift-c": "mod.open:chorus-launcher" }}`},
+		{name: "absent global", before: `{"terminal":{"ctrl-c":"terminal"}}`, want: `{"terminal":{"ctrl-c":"terminal"},"global": {"cmd-alt-shift-c": "mod.open:chorus-launcher"}}`},
+		{name: "invalid JSON", before: `{"global":`, wantErr: true},
+		{name: "array", before: `[]`, wantErr: true},
+		{name: "null", before: `null`, wantErr: true},
+		{name: "non-object global", before: `{"global":null}`, wantErr: true},
+		{name: "non-object terminal", before: `{"terminal":[]}`, wantErr: true},
+		{name: "duplicate global", before: `{"global":{},"global":{}}`, wantErr: true},
+		{name: "trailing document", before: `{} {}`, wantErr: true},
+		{name: "trailing junk", before: `{} oops`, wantErr: true},
+	}
+	for _, section := range []string{"global", "terminal", "layout:terminals", "mod:editor"} {
+		for _, chord := range []string{"cmd-alt-shift-c", "SHIFT-CMD-ALT-C"} {
+			before := fmt.Sprintf(`{%q:{%q:{"command":"other","args":{"id":42}}}}`, section, chord)
+			cases = append(cases, struct {
+				name, before, want string
+				wantErr            bool
+			}{name: section + " " + chord, before: before, want: before})
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := addHerdrShortcut([]byte(tc.before))
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(got))
+			assert.True(t, json.Valid(got))
+		})
+	}
+}
+
+// TestSetupHerdrShortcutSkipsMissingAndRejectsInvalid keeps Herdr responsible
+// for creating the complete default file and preserves a malformed existing file.
+func TestSetupHerdrShortcutSkipsMissingAndRejectsInvalid(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "keys.json")
+	var out bytes.Buffer
+	require.NoError(t, setupHerdrShortcut(home, &out))
+	assert.NoFileExists(t, path)
+	assert.Contains(t, out.String(), "open Herdr and rerun chorus setup -global")
+	before := []byte(`{"global":[]}`)
+	require.NoError(t, os.WriteFile(path, before, 0o600))
+	err := setupHerdrShortcut(home, &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), path)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, got)
+}
 
 // TestSetupInstallsHerdrLauncher checks detection, repeated updates, and
 // preservation of user preferences and unrelated files.
@@ -55,7 +166,7 @@ func TestSetupInstallsHerdrLauncher(t *testing.T) {
 			mod := filepath.Join(herdrHome, "mods", "chorus-launcher")
 			unchangedTime := time.Unix(1000000000, 0)
 			for attempt := range 2 {
-				installedDir, err := setupHerdrLauncher(home)
+				installedDir, err := setupHerdrLauncher(home, io.Discard)
 				require.NoError(t, err)
 				if !tc.want {
 					assert.NoDirExists(t, mod)
@@ -112,7 +223,7 @@ func TestSetupHerdrLauncherReportsInspectionError(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocked, []byte("blocked"), 0o600))
 	herdrHome := filepath.Join(blocked, "herdr-app")
 	t.Setenv("HERDR_APP_HOME", herdrHome)
-	modDir, err := setupHerdrLauncher(home)
+	modDir, err := setupHerdrLauncher(home, io.Discard)
 	require.Error(t, err)
 	assert.Empty(t, modDir)
 	assert.Contains(t, err.Error(), "inspect Herdr configuration "+herdrHome)
@@ -126,7 +237,7 @@ func TestHerdrLauncherBundle(t *testing.T) {
 	require.NoError(t, err)
 	home := t.TempDir()
 	t.Setenv("HERDR_APP_HOME", home)
-	modDir, err := setupHerdrLauncher(home)
+	modDir, err := setupHerdrLauncher(home, io.Discard)
 	require.NoError(t, err)
 	for _, entry := range entries {
 		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "test_") || entry.Name() == "README.md" {

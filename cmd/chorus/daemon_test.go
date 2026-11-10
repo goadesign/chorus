@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -116,6 +117,9 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 				var launcherHint string
 				if tc.herdr {
 					launcherHint = fmt.Sprintf("Installed Chorus launcher in %s\nOpen it from a project terminal: herdr-app do mod.open --name chorus-launcher\n", filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher"))
+					if runtime.GOOS == "darwin" {
+						launcherHint = "Herdr keyboard file is missing; open Herdr and rerun chorus setup -global to add the shortcut.\n" + launcherHint
+					}
 					assert.FileExists(t, filepath.Join(home, ".config", "herdr-app", "mods", "chorus-launcher", "main.js"))
 					assert.NoFileExists(t, filepath.Join(home, ".config", "herdr-app", "keys.json"))
 				}
