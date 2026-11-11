@@ -1014,7 +1014,8 @@ func TestMentionsOnlyWakeupAndFullContextDrain(t *testing.T) {
 // subscribed channel members (with roles) and the channel's active
 // pinned collaboration manifest (deduplicated when inside tail, preserved in
 // rmap even after scrolling past tail and streamMaxLen trimming, overwritten in
-// place when a newer message sets pin=true, and waking mentions_only watchers).
+// place when a newer message sets pin=true, and waking mentions_only watchers
+// exactly as an unpinned channel message would).
 func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	c := newTestCluster(t, 2, []chorus.Option{
 		chorus.WithStreamMaxLen(5),
@@ -1109,8 +1110,8 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	}
 
 	// 5. @qa joins and blocks on read(mentions_only=true). When @arch pins an
-	// updated manifest (#auth#10) with pin=true, @qa wakes immediately even
-	// without an explicit @qa/@all token in the text, and the new pin replaces
+	// updated manifest (#auth#10) that mentions @qa, @qa wakes like it would
+	// for any channel message that mentions it, and the new pin replaces
 	// #auth#1 in place.
 	qa.call("join", map[string]any{
 		"channels": []string{"#auth"},
@@ -1128,7 +1129,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 
 	arch.call("send", map[string]any{
 		"to":   "#auth",
-		"text": "Updated manifest: 401 challenge_expired landed; ready for final QA sign-off",
+		"text": "Updated manifest: 401 challenge_expired landed; @qa final sign-off",
 		"pin":  true,
 	})
 
@@ -1147,6 +1148,25 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	})
 	if strings.Contains(rejoinRaw, "pin #auth#1 ") || !strings.Contains(rejoinRaw, "\npin #auth#10 @arch: Updated manifest:") {
 		t.Fatalf("expected #auth#10 to overwrite #auth#1 as the single channel pin, got:\n%s", rejoinRaw)
+	}
+
+	// A pin that mentions nobody replaces the board without waking anyone: a
+	// mentions_only read finds nothing to act on, while an ordinary read still
+	// delivers the message, and a later join shows it as the channel's pin.
+	arch.call("send", map[string]any{
+		"to":   "#auth",
+		"text": "Updated manifest: release notes drafted",
+		"pin":  true,
+	})
+	if got := qa.call("read", map[string]any{"mentions_only": true}); got != "none" {
+		t.Fatalf("expected a pin with no mention to leave a mentions_only read at 'none', got:\n%s", got)
+	}
+	quietPin := parseWireMessages(t, qa.call("read", map[string]any{}))
+	if len(quietPin) != 1 || quietPin[0].seq != 11 || quietPin[0].sender != "arch" {
+		t.Fatalf("expected an ordinary read to deliver pinned #auth#11, got %+v", quietPin)
+	}
+	if raw := db.call("join", map[string]any{"channels": []string{"#auth"}}); !strings.Contains(raw, "\npin #auth#11 @arch: Updated manifest: release notes drafted") {
+		t.Fatalf("expected #auth#11 to be the channel pin on join, got:\n%s", raw)
 	}
 
 	// 6. When all subscribed members leave #auth, the channel, its pin, and its

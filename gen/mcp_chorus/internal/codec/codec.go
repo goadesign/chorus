@@ -501,7 +501,8 @@ type SendPayloadTransport struct {
 	ReplyTo *SendPayloadIntTransport `json:"reply_to,omitempty"`
 	// When true on a #channel message, pins this message as the channel's active
 	// collaboration manifest (replacing any previous pin) so joining agents always
-	// see it.
+	// see it. Pinning adds no wake of its own: the message wakes the same members
+	// as any channel message.
 	Pin *bool `json:"pin,omitempty"`
 	// Optional seconds to block waiting for a reply, @mention, @all, or direct
 	// message after sending (0 returns immediately).

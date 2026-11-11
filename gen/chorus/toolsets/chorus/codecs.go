@@ -251,7 +251,7 @@ var sendPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("pin")},
 		JSONType:    "boolean",
-		Description: "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.",
+		Description: "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it. Pinning adds no wake of its own: the message wakes the same members as any channel message.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("wait_sec")},
@@ -1286,7 +1286,7 @@ func validateSendPayloadJSONValue(path string, value any, description string) er
 		case "pin":
 			if err := validateBooleanJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.",
+				typed[key], "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it. Pinning adds no wake of its own: the message wakes the same members as any channel message.",
 			); err != nil {
 				return err
 			}

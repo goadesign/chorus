@@ -205,7 +205,7 @@ var _ = Service("chorus", func() {
 				Minimum(1)
 				Example(14)
 			})
-			Attribute("pin", Boolean, "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it.", func() {
+			Attribute("pin", Boolean, "When true on a #channel message, pins this message as the channel's active collaboration manifest (replacing any previous pin) so joining agents always see it. Pinning adds no wake of its own: the message wakes the same members as any channel message.", func() {
 				Default(false)
 				Example(true)
 			})
