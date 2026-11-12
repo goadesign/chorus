@@ -142,10 +142,7 @@ func serve(args []string) error {
 		return err
 	}
 	slog.Info("restarting chorus on the updated binary", "exe", next)
-	if err := syscall.Exec(next, append([]string{next}, os.Args[1:]...), os.Environ()); err != nil {
-		return fmt.Errorf("restart chorus on %s: %w", next, err)
-	}
-	return nil
+	return restartProcess(next)
 }
 
 // runServe parses server flags, connects to (or auto-starts) Redis, and serves
@@ -278,6 +275,17 @@ func runServe(args []string, releases releaseSource, exe string) (string, error)
 		}
 		return "", nil
 	}
+}
+
+// restartProcess replaces this process with the binary at next, passing it
+// this process's command-line arguments (os.Args[1:]) and environment
+// unchanged, so the process ID, flags, and Redis password stay the same. It
+// returns only when the replacement fails.
+func restartProcess(next string) error {
+	if err := syscall.Exec(next, append([]string{next}, os.Args[1:]...), os.Environ()); err != nil {
+		return fmt.Errorf("restart chorus on %s: %w", next, err)
+	}
+	return nil
 }
 
 // parseServerFlags parses CLI flags and environment variable defaults into serverConfig.

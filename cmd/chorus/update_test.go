@@ -581,6 +581,42 @@ func TestServeRestartsInPlace(t *testing.T) {
 	}
 }
 
+// TestRestartProcessKeepsArgsAndEnvironment verifies the real process
+// replacement behind serve's restart. A child copy of this test binary,
+// started with server flags that include explicit empty values and with
+// REDIS_PASSWORD in its environment, calls restartProcess on a script that
+// records its process ID, arguments, and REDIS_PASSWORD. The script must run
+// in the same process with exactly the child's arguments and environment.
+func TestRestartProcessKeepsArgsAndEnvironment(t *testing.T) {
+	if record := os.Getenv("CHORUS_TEST_RESTART_RECORD"); record != "" {
+		pidFile := record + ".pid"
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+			t.Fatalf("write pid: %v", err)
+		}
+		err := restartProcess(os.Getenv("CHORUS_TEST_RESTART_EXE"))
+		t.Fatalf("restartProcess returned instead of replacing the process: %v", err)
+	}
+
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record")
+	exe := filepath.Join(dir, "chorus")
+	writeExecutable(t, exe, []byte(fmt.Sprintf("#!/bin/sh\n{ echo \"$$\"; printf '%%s\\n' \"$@\"; echo \"REDIS_PASSWORD=$REDIS_PASSWORD\"; } > %q\n", record)))
+	serverArgs := []string{"--", "serve", "-addr", "127.0.0.1:9550", "-redis-password=", "-origins="}
+	cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestRestartProcessKeepsArgsAndEnvironment$"}, serverArgs...)...)
+	cmd.Env = append(os.Environ(),
+		"CHORUS_TEST_RESTART_RECORD="+record,
+		"CHORUS_TEST_RESTART_EXE="+exe,
+		"REDIS_PASSWORD=from-environment",
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	pid := strings.TrimSpace(string(mustReadFile(t, record+".pid")))
+	want := append([]string{pid, "-test.run=^TestRestartProcessKeepsArgsAndEnvironment$"}, serverArgs...)
+	want = append(want, "REDIS_PASSWORD=from-environment")
+	assert.Equal(t, strings.Join(want, "\n")+"\n", string(mustReadFile(t, record)))
+}
+
 // TestServiceExecutable verifies that service files name Homebrew's stable
 // bin/chorus link rather than a versioned Cellar path, given either path, and
 // keep any other executable path as it is.
