@@ -524,8 +524,10 @@ func TestStartRestart(t *testing.T) {
 
 // TestServeArgsPersistence verifies that the flags "chorus up" saved are the
 // starting point for the next run, that flags given on the command line
-// override them, that the Redis password is never saved, and that a damaged
-// file is reported with a way to clear it.
+// override them, that a running server's complete flags (as a restart passes
+// them) override every saved one including an empty -origins, that the Redis
+// password is never saved, and that a damaged file is reported with a way to
+// clear it.
 func TestServeArgsPersistence(t *testing.T) {
 	home := t.TempDir()
 	loaded, err := loadServeArgs(home)
@@ -546,6 +548,19 @@ func TestServeArgsPersistence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "127.0.0.1:9550", restarted.addr)
 	assert.Equal(t, "1h0m0s", restarted.swarmTTL.String())
+
+	// A restart passes the running server's complete flags after the saved
+	// ones, so a saved -origins does not come back when the server has none.
+	withOrigins, err := parseServerFlags([]string{"-addr", "127.0.0.1:9550", "-origins", "https://old.example"})
+	require.NoError(t, err)
+	require.NoError(t, saveServeArgs(home, withOrigins))
+	loaded, err = loadServeArgs(home)
+	require.NoError(t, err)
+	current, err := parseServerFlags([]string{"-addr", "127.0.0.1:9550"})
+	require.NoError(t, err)
+	restarted, err = parseServerFlags(append(loaded, buildServeArgs(current)[1:]...))
+	require.NoError(t, err)
+	assert.Equal(t, current, restarted)
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".chorus", serveArgsFile), []byte("{"), 0o644))
 	_, err = loadServeArgs(home)

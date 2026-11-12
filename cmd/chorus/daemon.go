@@ -517,9 +517,13 @@ func loadServeArgs(homeDir string) ([]string, error) {
 
 // buildServeArgs constructs the CLI argument list for "chorus serve" from cfg,
 // excluding redisPassword so credentials are never exposed in process tables or
-// service unit files.
+// service unit files. Every other setting is listed, even when empty (such as
+// "-origins=", one argument so a systemd unit never needs an empty quoted
+// argument), so the list fully overrides flags saved by an earlier
+// "chorus up": a restart through "up" with these arguments never brings back
+// a saved -origins the server no longer uses.
 func buildServeArgs(cfg serverConfig) []string {
-	args := []string{
+	return []string{
 		"serve",
 		"-addr", cfg.addr,
 		"-redis-addr", cfg.redisAddr,
@@ -527,11 +531,8 @@ func buildServeArgs(cfg serverConfig) []string {
 		"-swarm-ttl", cfg.swarmTTL.String(),
 		"-stream-max-len", strconv.Itoa(cfg.streamMaxLen),
 		"-online-window", cfg.onlineWindow.String(),
+		"-origins=" + cfg.origins,
 	}
-	if cfg.origins != "" {
-		args = append(args, "-origins", cfg.origins)
-	}
-	return args
 }
 
 // daemonPathEnv returns a PATH string that includes standard package-manager
