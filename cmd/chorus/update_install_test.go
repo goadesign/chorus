@@ -193,3 +193,29 @@ func assertLocked(t *testing.T, dir string) {
 		t.Errorf("expected the install lock on %s to be held", dir)
 	}
 }
+
+// TestInstallReleaseBoundsCommandOutput verifies that a release binary which
+// prints the right version but leaves a background process holding its
+// output cannot hold up the update: the version check gives up
+// commandOutputWait after the binary exits, the release is refused, the
+// staged file is removed, the installed binary is unchanged, and the install
+// lock is released.
+func TestInstallReleaseBoundsCommandOutput(t *testing.T) {
+	next := nextMinorVersion(t)
+	lingering := []byte(fmt.Sprintf("#!/bin/sh\nsleep 5 &\necho \"chorus v%s\"\n", next))
+	releases := fakeReleases(t, next, lingering, false)
+	exe := filepath.Join(t.TempDir(), "chorus")
+	writeExecutable(t, exe, fakeChorusBinary(genchorus.APIVersion))
+
+	start := time.Now()
+	_, _, err := installRelease(context.Background(), releases, release{version: next}, exe, io.Discard)
+	require.ErrorIs(t, err, errReleaseUnavailable)
+	assert.Less(t, time.Since(start), 4*time.Second, "the version check must stop waiting for the lingering output")
+	assert.Equal(t, fakeChorusBinary(genchorus.APIVersion), mustReadFile(t, exe))
+	entries, err := os.ReadDir(filepath.Dir(exe))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the staged release must be removed")
+	unlock, err := lockDir(context.Background(), filepath.Dir(exe))
+	require.NoError(t, err, "the install lock must be released")
+	assert.NoError(t, unlock())
+}

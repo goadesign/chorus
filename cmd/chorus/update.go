@@ -133,6 +133,10 @@ const (
 	// installLockPoll is how often an install retries the lock on the
 	// binary's directory while another install holds it.
 	installLockPoll = 100 * time.Millisecond
+	// commandOutputWait bounds how long an update waits for a command's
+	// output to close after the command exits or is canceled. A background
+	// process the command started can keep its output open indefinitely.
+	commandOutputWait = 2 * time.Second
 )
 
 var (
@@ -522,7 +526,7 @@ func installDirect(ctx context.Context, releases releaseSource, rel release, rea
 // runBrew runs "brew args..." with HOMEBREW_NO_AUTO_UPDATE=1, writing its
 // output to out, so only an explicit "brew update" refreshes the taps.
 func runBrew(ctx context.Context, out io.Writer, args ...string) error {
-	cmd := exec.CommandContext(ctx, "brew", args...)
+	cmd := updateCommand(ctx, "brew", args...)
 	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
 	cmd.Stdout = out
 	cmd.Stderr = out
@@ -535,7 +539,7 @@ func runBrew(ctx context.Context, out io.Writer, args ...string) error {
 // homebrewStableVersion returns the version the goadesign/tap/chorus formula
 // offers, from "brew info --json=v2".
 func homebrewStableVersion(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", homebrewFormula)
+	cmd := updateCommand(ctx, "brew", "info", "--json=v2", homebrewFormula)
 	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
 	raw, err := cmd.Output()
 	if err != nil {
@@ -663,7 +667,7 @@ func homebrewPrefix(realExe string) (string, bool) {
 // binaryVersion returns the version "<exe> version" reports without its
 // leading "v" (for example "0.10.0"), or "" when exe cannot run.
 func binaryVersion(ctx context.Context, exe string) string {
-	out, err := exec.CommandContext(ctx, exe, "version").Output()
+	out, err := updateCommand(ctx, exe, "version").Output()
 	if err != nil {
 		return ""
 	}
@@ -725,10 +729,22 @@ func confirm(in io.Reader, out io.Writer, question string) bool {
 	}
 }
 
+// updateCommand returns the command an update runs (brew, or a chorus
+// binary's version or setup), canceled with ctx. Its output stops being
+// read commandOutputWait after the command exits or is canceled, and Run,
+// Output, or Wait then fail with exec.ErrWaitDelay, so a background process
+// left holding the output cannot keep the update, its staged file, or its
+// install lock past ctx.
+func updateCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = commandOutputWait
+	return cmd
+}
+
 // runChorus runs "<exe> args..." with its output written to out and returns
 // an error naming the command when it fails.
 func runChorus(ctx context.Context, exe string, out io.Writer, args ...string) error {
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := updateCommand(ctx, exe, args...)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
