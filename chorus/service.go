@@ -183,7 +183,7 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 		defaultErrorHandler,
 		nil,
 	)
-	viewSrv.Use(viewGuard(origins))
+	viewSrv.Use(LocalOnly(origins...))
 	viewSrv.Use(uiBuildStamp)
 	genviewsrv.Mount(mux, viewSrv)
 	mountUI(mux)

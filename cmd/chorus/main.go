@@ -84,8 +84,8 @@ func main() {
 }
 
 // dispatch routes CLI subcommands ("up", "down", "status", "ui", "setup", "watch",
-// "version", "serve") or defaults to running the foreground server when invoked
-// with server flags or no arguments.
+// "update", "version", "serve") or defaults to running the foreground server
+// when invoked with server flags or no arguments.
 func dispatch(args []string, out io.Writer) error {
 	if len(args) > 0 {
 		if args[0] == "version" || args[0] == "-version" || args[0] == "--version" || args[0] == "-v" {
@@ -106,21 +106,29 @@ func dispatch(args []string, out io.Writer) error {
 				return runSetup(args[1:], out)
 			case "watch":
 				return runWatch(args[1:], out)
+			case "update":
+				exe, err := os.Executable()
+				if err != nil {
+					return fmt.Errorf("resolve chorus executable path: %w", err)
+				}
+				return runUpdate(args[1:], os.Stdin, out, defaultReleaseSource(), exe)
 			case "serve":
-				return runServe(args[1:])
+				return runServe(args[1:], defaultReleaseSource())
 			case "who", "join", "leave", "send", "read":
 				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
-				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, version, serve)", args[0])
+				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, update, version, serve)", args[0])
 			}
 		}
 	}
-	return runServe(args)
+	return runServe(args, defaultReleaseSource())
 }
 
 // runServe parses server flags, connects to (or auto-starts) Redis, and serves
-// the Chorus MCP endpoint until interrupted.
-func runServe(args []string) error {
+// the Chorus MCP endpoint and dashboard until interrupted. It also serves
+// GET and POST /update, which let the dashboard update this server to the
+// latest release from releases and restart it.
+func runServe(args []string, releases releaseSource) error {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
 		return err
@@ -169,12 +177,32 @@ func runServe(args []string) error {
 		}
 	}
 
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve chorus executable path: %w", err)
+	}
+	updates := chorus.LocalOnly(origins...)(loopbackPeer(&updateHandler{
+		releases: releases,
+		exe:      exe,
+		cfg:      cfg,
+		restart:  startRestart,
+	}))
+	routes := chorus.NewHTTPHandler(svc, origins...)
+
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
 	httpServer := &http.Server{
-		Addr:              cfg.addr,
-		Handler:           chorus.NewHTTPHandler(svc, origins...),
+		Addr: cfg.addr,
+		// /update belongs to this command, not to the embeddable chorus
+		// handler, because it replaces this executable and restarts it.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/update" {
+				updates.ServeHTTP(w, r)
+				return
+			}
+			routes.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
 			return sigCtx
@@ -225,7 +253,7 @@ func parseServerFlags(args []string) (serverConfig, error) {
 	}
 	fs := flag.NewFlagSet("chorus", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: chorus [up|down|status|setup|watch|version|serve] [flags]\n\nFlags:\n  -version, --version, -v\n    \tPrint Chorus version and exit\n")
+		fmt.Fprintf(fs.Output(), "Usage: chorus [up|down|status|ui|setup|watch|update|version|serve] [flags]\n\nFlags:\n  -version, --version, -v\n    \tPrint Chorus version and exit\n")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.addr, "addr", defaultListenAddr, "HTTP listen address")

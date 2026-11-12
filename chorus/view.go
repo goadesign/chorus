@@ -83,15 +83,17 @@ func (v *viewService) View(ctx context.Context, p *genview.ViewPayload) (*genvie
 	return res, err
 }
 
-// viewGuard returns middleware that rejects requests a DNS-rebinding page or
-// another website could send. The Host header must name a loopback address
-// (localhost, 127.0.0.1, or ::1), because a rebound attacker page sends its own
-// hostname as Host. When an Origin header is present it must be one of origins,
-// which the composition root seeds with the server's own loopback origins.
-// Requests without Origin (curl, tests) pass once Host is loopback. A
-// browser request whose Sec-Fetch-Site says another site started it is
-// rejected even without Origin, which covers <script src> loads.
-func viewGuard(origins []string) func(http.Handler) http.Handler {
+// LocalOnly returns middleware that rejects requests a DNS-rebinding page or
+// another website could send, answering them with 403 Forbidden. The Host
+// header must name a loopback address (localhost, 127.0.0.1, or ::1), because a
+// rebound attacker page sends its own hostname as Host. When an Origin header
+// is present it must be one of origins, which the composition root seeds with
+// the server's own loopback origins. Requests without Origin (curl, tests) pass
+// once Host is loopback. A browser request whose Sec-Fetch-Site says another
+// site started it is rejected even without Origin, which covers <script src>
+// loads. NewHTTPHandler wraps the dashboard's view API with it, and the chorus
+// command wraps its own dashboard routes (such as /update) with the same rule.
+func LocalOnly(origins ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
 		allowed[o] = struct{}{}
