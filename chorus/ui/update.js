@@ -18,7 +18,7 @@
     const reload = document.getElementById("btn-reload-ui");
     const busy = progress?.status === "installing" || progress?.status === "restarting";
     const ready = progress?.status === "ready";
-    const showReload = ready || (!progress && uiChanged);
+    const showReload = ready || progress?.status === "conflict" || (!progress && uiChanged);
     banner.hidden = !progress && !uiChanged && !available;
     banner.setAttribute("aria-busy", String(busy));
     reload.hidden = !showReload;
@@ -100,6 +100,11 @@
       if (!response.ok) {
         const message = response.headers.get("Content-Type")?.includes("application/json")
           ? (await response.json()).error : await response.text();
+        if (response.status === 409) {
+          progress = { status: "conflict", error: `${message}. Reload to check the current version.` };
+          render();
+          return;
+        }
         throw new Error(message || `HTTP ${response.status}`);
       }
       const result = await response.json();

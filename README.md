@@ -319,6 +319,8 @@ choice: clicking it loads a fresh page and discards an unsent draft. If the
 server is still starting after 30 seconds, **Check again** checks its health
 without repeating the installation. The existing **Dashboard updated / Reload**
 notice takes precedence when the page's UI files have already changed.
+If another update conflicts with your request, **Reload** fetches the current
+version before you approve again.
 
 The Herdr launcher also checks for updates without delaying team discovery.
 Its **Update & restart** button approves the same CLI operation without

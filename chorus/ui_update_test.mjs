@@ -127,7 +127,7 @@ test('offline availability checks and up-to-date or unsafe release notices stay 
   }
 });
 
-for (const status of [403, 409, 500, 502]) {
+for (const status of [403, 500, 502]) {
   test(`installation HTTP ${status} reports the owner error and requires a fresh click to retry`, async () => {
     const h = harness((_url, options) => options.method
       ? response(status, { error: 'installation is unavailable' }) : response(200, available));
@@ -136,6 +136,22 @@ for (const status of [403, 409, 500, 502]) {
     assert.match(h.elements.get('update-message').textContent, /installation is unavailable/);
     assert.equal(h.elements.get('btn-update-chorus').textContent, 'Try again');
     assert.equal(h.elements.get('btn-update-chorus').disabled, false);
+    assert.equal(h.calls.filter(call => call.options.method === 'POST').length, 1);
+    assert.equal(h.reloads, 0);
+  });
+}
+
+for (const error of ['an update is already in progress', 'v0.10.0 would downgrade the running v0.11.0']) {
+  test(`conflict offers a manual refresh without retrying stale approval: ${error}`, async () => {
+    const h = harness((_url, options) => options.method
+      ? response(409, { error }) : response(200, available));
+    h.elements.get('send-text').value = 'Keep this draft';
+    await h.controller.start();
+    await h.click('btn-update-chorus');
+    assert.ok(h.elements.get('update-message').textContent.includes(error));
+    assert.equal(h.elements.get('btn-reload-ui').hidden, false);
+    assert.equal(h.elements.get('btn-update-chorus').hidden, true);
+    assert.equal(h.elements.get('send-text').value, 'Keep this draft');
     assert.equal(h.calls.filter(call => call.options.method === 'POST').length, 1);
     assert.equal(h.reloads, 0);
   });
