@@ -840,7 +840,15 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 
 	// When @alpha-lead has an active blocking watch and leaves its last channel,
 	// the watch wakes immediately, the Redis swarm binding is released, and
-	// @alpha-lead can re-join swarm-alpha cleanly.
+	// @alpha-lead can re-join swarm-alpha cleanly without replaying already-read DMs.
+	alphaPeer := c.newAgent(0, "swarm-alpha", "alpha-peer")
+	alphaPeer.call("join", map[string]any{"channels": []string{"#arch"}})
+	alphaPeer.send("@alpha-lead", "dm 1 before leave", 0)
+	if got := alphaLead.call("read", map[string]any{}); !strings.Contains(got, "@alpha-peer->me#1: dm 1 before leave") {
+		t.Fatalf("expected @alpha-lead to read dm #1 before leaving, got %q", got)
+	}
+	alphaPeer.call("leave", map[string]any{"channels": []string{"#arch"}})
+
 	watchDone := make(chan string, 1)
 	go func() {
 		watchDone <- alphaLead.call("read", map[string]any{"wait_sec": 5})
@@ -860,6 +868,9 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		"topic":    "Alpha Topic",
 		"role":     "Alpha Lead",
 	})
+	if got := alphaLead.call("read", map[string]any{}); got != "none" {
+		t.Fatalf("expected already-read dm #1 not to replay after leave and rejoin, got %q", got)
+	}
 
 	betaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
@@ -888,6 +899,18 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	}
 	if !strings.Contains(whoAlpha, "@observer (Observer)\n") {
 		t.Fatalf("expected @observer in directory, got:\n%s", whoAlpha)
+	}
+
+	// If a peer sends a new DM while @alpha-lead is expired, re-joining delivers
+	// only the new DM (#2) without replaying already-read DM #1.
+	alphaObserver.call("join", map[string]any{"channels": []string{"#arch"}})
+	alphaObserver.send("@alpha-lead", "dm 2 while expired", 0)
+	alphaLead.call("join", map[string]any{
+		"channels": []string{"#arch"},
+		"role":     "Alpha Lead",
+	})
+	if got := alphaLead.call("read", map[string]any{}); got != "@observer->me#2: dm 2 while expired" {
+		t.Fatalf("expected re-joined @alpha-lead to receive only new dm #2 (not already-read dm #1), got %q", got)
 	}
 
 	whoBetaExpiredSelf := betaLead.call("who", map[string]any{"role": "Beta Lead"})

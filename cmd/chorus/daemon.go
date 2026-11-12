@@ -43,7 +43,7 @@ const (
 	// healthProbeTimeout bounds a single GET /healthz HTTP check.
 	healthProbeTimeout = 500 * time.Millisecond
 	// defaultWatchWait is the default blocking duration for "chorus watch".
-	defaultWatchWait = 5 * time.Minute
+	defaultWatchWait = 24 * time.Hour
 	// maxReadWaitSec is the maximum wait_sec accepted by a single MCP read call.
 	maxReadWaitSec = 600
 	// watchReconnectBackoff is the delay between reconnect attempts when a
