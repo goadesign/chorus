@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,6 +45,18 @@ type (
 		onlineWindow time.Duration
 		// origins is a comma-separated list of allowed Origin header values.
 		origins string
+	}
+
+	// restartTarget is the binary a successful POST /update installed, which
+	// serve replaces this process with after runServe shuts down, and the
+	// release of the install lock still held on its directory. The lock ends
+	// when the process replaces itself (its file is closed on exec) or when
+	// unlock is called after a failure.
+	restartTarget struct {
+		// exe is the installed binary to restart on.
+		exe string
+		// unlock releases the install lock.
+		unlock func() error
 	}
 )
 
@@ -84,8 +97,8 @@ func main() {
 }
 
 // dispatch routes CLI subcommands ("up", "down", "status", "ui", "setup", "watch",
-// "version", "serve") or defaults to running the foreground server when invoked
-// with server flags or no arguments.
+// "update", "version", "serve") or defaults to running the foreground server
+// when invoked with server flags or no arguments.
 func dispatch(args []string, out io.Writer) error {
 	if len(args) > 0 {
 		if args[0] == "version" || args[0] == "-version" || args[0] == "--version" || args[0] == "-v" {
@@ -106,24 +119,59 @@ func dispatch(args []string, out io.Writer) error {
 				return runSetup(args[1:], out)
 			case "watch":
 				return runWatch(args[1:], out)
+			case "update":
+				exe, err := os.Executable()
+				if err != nil {
+					return fmt.Errorf("resolve chorus executable path: %w", err)
+				}
+				return runUpdate(args[1:], os.Stdin, out, defaultReleaseSource(), exe)
 			case "serve":
-				return runServe(args[1:])
+				return serve(args[1:])
 			case "who", "join", "leave", "send", "read":
 				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
-				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, version, serve)", args[0])
+				return fmt.Errorf("unknown subcommand %q (expected: up, down, status, ui, setup, watch, update, version, serve)", args[0])
 			}
 		}
 	}
-	return runServe(args)
+	return serve(args)
+}
+
+// serve runs the server with args until it stops. When it stopped because
+// POST /update installed a new binary, serve replaces this process with that
+// binary, keeping the process ID, the original command-line arguments
+// (os.Args), and the environment, so the server comes back with exactly the
+// same flags and Redis password under the same terminal, launchd job, or
+// systemd unit. An exec failure is returned, so the process exits nonzero
+// and a service manager restarts it.
+func serve(args []string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve chorus executable path: %w", err)
+	}
+	target, err := runServe(args, defaultReleaseSource(), exe)
+	if err != nil || target == nil {
+		return err
+	}
+	slog.Info("restarting chorus on the updated binary", "exe", target.exe)
+	if err := restartProcess(target.exe); err != nil {
+		releaseInstallLock(target.unlock)
+		return err
+	}
+	return nil
 }
 
 // runServe parses server flags, connects to (or auto-starts) Redis, and serves
-// the Chorus MCP endpoint until interrupted.
-func runServe(args []string) error {
+// the Chorus MCP endpoint and dashboard until interrupted. It also serves
+// GET and POST /update, which let the dashboard and "chorus update" update
+// this server, started from exe, to a release from releases. After a
+// successful POST /update, runServe shuts down exactly as on SIGTERM and
+// returns the binary to restart on, with its install lock still held;
+// otherwise it returns nil.
+func runServe(args []string, releases releaseSource, exe string) (*restartTarget, error) {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -137,12 +185,12 @@ func runServe(args []string) error {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 	redisDataDir := filepath.Join(homeDir, ".chorus", "redis")
 
 	if err := connectOrStartRedis(context.Background(), rdb, cfg.redisAddr, redisDataDir); err != nil {
-		return err
+		return nil, err
 	}
 
 	svc, err := chorus.New(
@@ -152,7 +200,7 @@ func runServe(args []string) error {
 		chorus.WithOnlineWindow(cfg.onlineWindow),
 	)
 	if err != nil {
-		return fmt.Errorf("create chorus service: %w", err)
+		return nil, fmt.Errorf("create chorus service: %w", err)
 	}
 	defer func() {
 		_ = svc.Close()
@@ -171,13 +219,37 @@ func runServe(args []string) error {
 
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	// serveCtx ends on SIGINT, SIGTERM, or a restart requested by
+	// POST /update, which first records the binary to restart on in next.
+	serveCtx, stopServing := context.WithCancel(sigCtx)
+	defer stopServing()
+	var next atomic.Pointer[restartTarget]
+
+	updates := chorus.LocalOnly(origins...)(loopbackPeer(&updateHandler{
+		releases: releases,
+		exe:      exe,
+		addr:     cfg.addr,
+		restart: func(exe string, unlock func() error) {
+			next.Store(&restartTarget{exe: exe, unlock: unlock})
+			stopServing()
+		},
+	}))
+	routes := chorus.NewHTTPHandler(svc, origins...)
 
 	httpServer := &http.Server{
-		Addr:              cfg.addr,
-		Handler:           chorus.NewHTTPHandler(svc, origins...),
+		Addr: cfg.addr,
+		// /update belongs to this command, not to the embeddable chorus
+		// handler, because it replaces this executable and restarts it.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/update" {
+				updates.ServeHTTP(w, r)
+				return
+			}
+			routes.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
-			return sigCtx
+			return serveCtx
 		},
 	}
 
@@ -204,16 +276,35 @@ func runServe(args []string) error {
 
 	select {
 	case serveErr := <-errCh:
-		return serveErr
-	case <-sigCtx.Done():
+		return nil, serveErr
+	case <-serveCtx.Done():
 		slog.Info("shutting down chorus MCP server")
 		shutCtx, cancelShut := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancelShut()
-		if shutErr := httpServer.Shutdown(shutCtx); shutErr != nil {
-			return fmt.Errorf("shutdown http server: %w", shutErr)
+		restart := next.Load()
+		shutErr := httpServer.Shutdown(shutCtx)
+		if shutErr == nil {
+			shutErr = <-errCh
 		}
-		return <-errCh
+		if shutErr != nil {
+			if restart != nil {
+				releaseInstallLock(restart.unlock)
+			}
+			return nil, fmt.Errorf("shutdown http server: %w", shutErr)
+		}
+		return restart, nil
 	}
+}
+
+// restartProcess replaces this process with the binary at next, passing it
+// this process's command-line arguments (os.Args[1:]) and environment
+// unchanged, so the process ID, flags, and Redis password stay the same. It
+// returns only when the replacement fails.
+func restartProcess(next string) error {
+	if err := syscall.Exec(next, append([]string{next}, os.Args[1:]...), os.Environ()); err != nil {
+		return fmt.Errorf("restart chorus on %s: %w", next, err)
+	}
+	return nil
 }
 
 // parseServerFlags parses CLI flags and environment variable defaults into serverConfig.
@@ -225,7 +316,7 @@ func parseServerFlags(args []string) (serverConfig, error) {
 	}
 	fs := flag.NewFlagSet("chorus", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: chorus [up|down|status|setup|watch|version|serve] [flags]\n\nFlags:\n  -version, --version, -v\n    \tPrint Chorus version and exit\n")
+		fmt.Fprintf(fs.Output(), "Usage: chorus [up|down|status|ui|setup|watch|update|version|serve] [flags]\n\nFlags:\n  -version, --version, -v\n    \tPrint Chorus version and exit\n")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.addr, "addr", defaultListenAddr, "HTTP listen address")

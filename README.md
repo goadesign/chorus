@@ -106,10 +106,8 @@ The curl command installs the `chorus` binary, installs the model-agnostic [Chor
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
-If you use Herdr, open it once before running `chorus up` to install the
-[Chorus launcher for Herdr](skills/herdr/chorus-launcher/). From a project
-terminal, run `herdr-app do mod.open --name chorus-launcher` to choose your team.
-On macOS, setup also adds **Command–Option–Shift–C** when that shortcut is free.
+If you use [Herdr](https://herdr.dev/), open it once before running `chorus up`
+so Chorus can install its team launcher (see [step 3](#3-or-launch-a-full-team-in-one-step-with-herdr)).
 
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
@@ -132,6 +130,38 @@ Now give the goal to **one** pane, for example: *"Lead this: add single-use chal
 To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead. Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
 
 Every agent connects to the same `http://localhost:9440/mcp` endpoint in every repository—no per-agent or per-project config files.
+
+### 3. Or Launch a Full Team in One Step with Herdr
+
+If you use [Herdr](https://herdr.dev/), the launcher opens the whole team for
+you instead of step 2. When Herdr's settings folder exists (`$HERDR_APP_HOME`,
+otherwise `~/.config/herdr-app`, which Herdr creates on first launch),
+`chorus up` and `chorus setup -global` install the
+[Chorus launcher for Herdr](skills/herdr/chorus-launcher/) into its
+`mods/chorus-launcher` folder. On macOS, setup also binds
+**Command–Option–Shift–C** when no existing Herdr shortcut uses it.
+
+From a terminal in your repository, press **Command–Option–Shift–C** or run:
+
+```bash
+herdr-app do mod.open --name chorus-launcher
+```
+
+The launcher shows one row per installed agent app (Claude Code, Codex, Cursor,
+Antigravity). For each row, choose the model, the thinking level, and whether to
+turn on YOLO mode (the client's own skip-permissions flag). It offers only the
+models, levels, and flags each installed client reports, and remembers your rows
+for that repository. **Open Chorus team** then opens a **Chorus · \<project\>**
+tab with one pane per row. Each pane starts its agent with the Chorus skill,
+which joins the swarm and channel shown in the launcher (the repository's folder
+name by default, for example swarm `auth` and channel `#auth`) under its own
+unique handle, starts `chorus watch`, and waits. Give the goal to one pane, as in
+step 2.
+
+Reopen the launcher in the same repository to see the running team's panes and
+add more. When a newer Chorus release is available, the launcher also offers
+**Update & restart**, which installs exactly the version it shows and restarts
+Chorus (see [Updating Chorus](#updating-chorus)).
 
 ---
 
@@ -160,7 +190,7 @@ Most multi-agent tools manage **where** agents run (new desktop IDEs, isolated g
 | Category | Examples | What It Owns | How Chorus Differs |
 | --- | --- | --- | --- |
 | **Agent IDEs & worktree runners** | [Orca](https://github.com/stablyai/orca), Superset, Conductor, Claude Squad | Desktop IDE + isolated git worktrees that fan one prompt across solo runs so a human can compare and merge diffs | Keeps your existing editors and terminals (Cursor, Antigravity, Claude Code, Codex); agents share a `#channel`, a pinned plan, and `@agent` DMs to divide one task instead of racing on copies |
-| **Terminal multiplexers & PTY spawners** | [Herdr (`hc`)](https://herdr.dev/core/), cmux, tmux scripts | Persistent pseudo-terminals that spawn CLI child processes, inject text into `stdin` (`hc send`), and read raw terminal scrollback (`hc read --lines 60`) | Structured MCP message bus over HTTP: IDE agents and CLI agents join the same swarm, receive only unseen messages since their server watermark (instead of scraping terminal scrollback), and can even run inside Herdr or tmux |
+| **Terminal multiplexers & PTY spawners** | [Herdr (`hc`)](https://herdr.dev/core/), cmux, tmux scripts | Persistent pseudo-terminals that spawn CLI child processes, inject text into `stdin` (`hc send`), and read raw terminal scrollback (`hc read --lines 60`) | Structured MCP message bus over HTTP: IDE agents and CLI agents join the same swarm, receive only unseen messages since their server watermark (instead of scraping terminal scrollback), and can even run inside Herdr or tmux. The built-in [Herdr launcher](skills/herdr/chorus-launcher/) (`chorus-launcher`) opens a **Chorus · \<project\>** tab and joins every pane to the swarm automatically |
 | **Built-in subagents** | Claude Code subagents, Codex subagents | Short-lived hierarchical child workers inside a single vendor and session | Connects independent long-lived peer sessions across different model families so Claude, Codex, and Gemini can challenge assumptions and review each other's diffs before merge |
 | **Chat bridges & JSON MCPs** | Slack/Discord MCPs, A2A, CRUD JSON chat servers | Wrappers around human chat APIs or verbose JSON schemas | Server-held read watermarks in `pulse/rmap`, piggybacked unread replies on `send`, `0` model tokens while waiting in `chorus watch`, and compact 1-line wire text (`~12–52 tokens/msg`) |
 
@@ -275,6 +305,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, skills, and the Herdr launcher stay) |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
 | `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
+| `chorus update` | Check for a newer release, show the versions and release link, and ask before installing it. Refresh bundled skills, MCP configs, and the Herdr launcher, then ask the running server to restart with its current settings. A server without the update endpoint stays running and needs a manual restart. Use `-check` to report availability without installing, `-yes` (or `-y`) to approve without a prompt, and `-addr` to select the server |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex, and install the Chorus launcher for Herdr when Herdr's settings directory exists) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
@@ -292,6 +323,60 @@ works even when the shortcut is skipped. Unchanged files are left untouched so
 setup keeps an open launcher dialog intact. A symlinked launcher directory is updated at its
 target. Set `CHORUS_NO_SETUP=1` to skip integrations during `chorus up` or the
 curl install.
+
+### Updating Chorus
+
+Run `chorus update` to check the latest release and approve installation. The
+updater uses Homebrew for Homebrew installations; other installations receive
+the release binary after its SHA-256 checksum has been verified. It refreshes
+the bundled integrations and restarts the running server at the selected
+address using its current settings, including its Redis connection.
+`chorus update -check` only reports availability. It does not install or restart.
+An automation that already obtained approval for a release can pass
+`chorus update -yes -version 0.10.0` to keep that exact target, without checking
+for a different latest release. Older targets are refused. `-version` cannot
+be combined with `-check`.
+
+Callers consuming `-check` can read the target from these two line formats
+(versions and the release URL vary):
+
+```text
+Update available: chorus v<current> -> v<target> (<release URL>)
+Restart needed: chorus binary is v<target>, running server is v<server>
+```
+
+Servers from before the update endpoint was added, including v0.9.0, cannot
+restart themselves through it. The CLI installs the binary and refreshes global
+integrations, leaves the old server running, and prints how to finish with
+the new binary's `chorus up`. Supply the original server flags and
+`REDIS_PASSWORD` when restarting; the updater does not guess missing settings
+or save the password on disk.
+
+The web dashboard checks for a release when the page opens. When one is
+available, **Release notes** opens its details and **Update & Restart** approves
+installation of the displayed version. The page waits up to 30 seconds for that
+server version to become healthy, then offers **Reload**. It keeps your unsent message and timeline
+selection during the update and reconnects automatically. Reload is your
+choice: clicking it loads a fresh page and discards an unsent draft. If the
+server is still starting after 30 seconds, **Check again** checks its health
+without repeating the installation. The existing **Dashboard updated / Reload**
+notice takes precedence when the page's UI files have already changed.
+If another update conflicts with your request, **Reload** fetches the current
+version before you approve again.
+
+The Herdr launcher also checks for updates without delaying team discovery.
+Its **Update & restart** button passes the displayed version to that CLI operation
+without disturbing existing panes (and keeps the open dialog intact when the launcher's
+own files are unchanged). Installation failures show the
+problem. **Check for updates** refreshes the notice before another approval.
+A failed availability check leaves both views usable.
+
+The dashboard's update action is available only through the standalone Chorus
+server on this machine. A Go application embedding `chorus.NewHTTPHandler`
+does not acquire installation or restart controls. After an update that changes
+the MCP tool definitions, reconnect your coding clients so they read the new
+definitions. Follow a release's upgrade instructions before crossing an
+incompatible shared-Redis format boundary, as described in the Tool Reference.
 
 #### CLI & Server Flags (`chorus` / `chorus serve` / `chorus up`)
 
@@ -352,7 +437,7 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (use an explicit name from the user or lead, otherwise keep the swarm already established for the task; only when neither is known, use the git repository root's basename or ask the user if outside Git), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the model the agent is running as exposed by its runtime or system prompt, kept as given (for example `Claude Opus 5.5`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Upgrading a running server from a version without this field drops each registration's saved role and model: existing registered participants show neither until they call `who` with `model` (and `role`, if they had one), preserving their current read positions (use `join` only to create or subscribe to missing channels, as `join` resets read watermarks to channel heads). Other calls (`send`, `read`) keep a registration's model but never add one. After upgrading, rerun the upgraded binary's `chorus setup` with the same `-addr` and `-global` flags used for your existing installation to refresh installed agent skills, then reconnect MCP clients so they re-read `tools/list`. For example, a person whose handle `@raphael` is already registered in swarm `auth` without a declared model can restore it with `who` (`{"swarm": "auth", "agent": "raphael", "model": "human", "role": "Product Lead"}`) and continue sending from the dashboard.
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (use an explicit name from the user or lead, otherwise keep the swarm already established for the task; only when neither is known, use the git repository root's basename or ask the user if outside Git), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the model the agent is running as exposed by its runtime or system prompt, kept as given (for example `Claude Opus 5.5`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Upgrading a running server from a version without this field drops each registration's saved role and model: existing registered participants show neither until they call `who` with `model` (and `role`, if they had one), preserving their current read positions (use `join` only to create or subscribe to missing channels, as `join` resets read watermarks to channel heads). Other calls (`send`, `read`) keep a registration's model but never add one. `chorus update` refreshes installed integrations. If you replace the binary through a package manager or another manual installation, run the upgraded binary's `chorus up` to refresh integrations and restart the server, or `chorus setup` with the same `-addr` and `-global` flags for a setup-only refresh. Reconnect MCP clients so they re-read `tools/list`. For example, a person whose handle `@raphael` is already registered in swarm `auth` without a declared model can restore it with `who` (`{"swarm": "auth", "agent": "raphael", "model": "human", "role": "Product Lead"}`) and continue sending from the dashboard.
 
 Chorus `0.6.0` adopts Pulse `v1.11.0`, which changes the replicated-map change format and Chorus presence record layout, so every Chorus process sharing the same saved swarms and maps in Redis must cross this upgrade boundary together. Before starting any upgraded binary, stop every Chorus server and `chorus serve` instance connected to that shared Redis state; use the same stop-all-before-start ordering when downgrading across this boundary. Keep the existing Redis data in place—do not flush Redis, delete map metadata, or restore a stale snapshot—so messages, channel subscriptions, and read positions remain intact subject to the configured `-swarm-ttl`, `-stream-max-len`, and `-online-window` retention windows. After upgrading, existing participants call `who` with `model` and `role` (rather than `join`, which resets read positions to channel heads) to restore their declarations; after a downgrade, calling the older server's `who` restores roles.
 
@@ -387,13 +472,17 @@ Chorus `0.6.0` adopts Pulse `v1.11.0`, which changes the replicated-map change f
 ├── cmd/
 │   └── chorus/
 │       ├── main.go        # Standalone CLI server binary & Redis bootstrap
-│       └── daemon.go      # Background service manager (up, down, status) & MCP setup
+│       ├── daemon.go      # Background service manager (up, down, status) & watch listener
+│       ├── setup.go       # MCP registration, skill install, and Herdr launcher install
+│       └── update.go      # chorus update and the dashboard's GET/POST /update routes
 ├── scripts/
 │   ├── homebrew-formula.sh # Renders the Homebrew formula from a release's checksums.txt
 │   └── install.sh         # One-line binary release & skill installer
 ├── skills/
-│   └── chorus/
-│       └── SKILL.md       # Agent skill for installing and coordinating with Chorus
+│   ├── chorus/
+│   │   └── SKILL.md       # Agent skill for installing and coordinating with Chorus
+│   └── herdr/
+│       └── chorus-launcher/ # Herdr team launcher (mod.json, main.js, launch.py, README.md)
 ├── .agents/
 │   └── skills/            # Contributor skills (chorus, editing-model-diagrams, chorus-release)
 ├── Makefile               # Code generation, diagram rendering, testing, and release automation

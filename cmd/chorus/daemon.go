@@ -51,7 +51,13 @@ const (
 	watchReconnectBackoff = 200 * time.Millisecond
 	// watchReconnectWindow bounds how long a blocking "chorus watch" waits for
 	// the server to come back up after a transport disconnect before failing.
-	watchReconnectWindow = 3 * time.Second
+	// It covers a full restart by "chorus up" or an update: stopping the old
+	// server and waiting for the new one to answer can each take up to
+	// daemonReadyTimeout.
+	watchReconnectWindow = 2 * daemonReadyTimeout
+	// serveArgsFile names the file under ~/.chorus that records the server
+	// flags "chorus up" last started Chorus with, as a JSON array of strings.
+	serveArgsFile = "chorus.args"
 )
 
 var (
@@ -68,15 +74,24 @@ var (
 // detached daemon) unless the current version already answers, waits until
 // GET /healthz reports that version, and writes the dashboard and MCP
 // addresses to out. A setup error stops runUp before anything is started.
+//
+// The server flags start from the ones "chorus up" last started Chorus with
+// (recorded in ~/.chorus/chorus.args), and flags given in args override them,
+// so a bare "chorus up" restarts Chorus with the same address and settings.
+// For example, after "chorus up -addr :9550 -swarm-ttl 48h", a later
+// "chorus up -swarm-ttl 1h" keeps -addr :9550.
 func runUp(args []string, out io.Writer) error {
-	cfg, err := parseServerFlags(args)
-	if err != nil {
-		return err
-	}
-
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
+	}
+	saved, err := loadServeArgs(homeDir)
+	if err != nil {
+		return err
+	}
+	cfg, err := parseServerFlags(append(saved, args...))
+	if err != nil {
+		return err
 	}
 
 	baseURL := localBaseURL(cfg.addr)
@@ -111,7 +126,10 @@ func runUp(args []string, out io.Writer) error {
 		return fmt.Errorf("resolve chorus executable path: %w", err)
 	}
 
-	if err := startBackgroundService(homeDir, exePath, cfg); err != nil {
+	if err := startBackgroundService(homeDir, serviceExecutable(exePath), cfg); err != nil {
+		return err
+	}
+	if err := saveServeArgs(homeDir, cfg); err != nil {
 		return err
 	}
 
@@ -126,7 +144,9 @@ func runUp(args []string, out io.Writer) error {
 	return fmt.Errorf("chorus did not become healthy at %s/healthz within %s", baseURL, daemonReadyTimeout)
 }
 
-// runDown stops the background Chorus service or detached daemon.
+// runDown stops the background Chorus service or detached daemon and forgets
+// the server flags it was started with, so the next "chorus up" starts from
+// the defaults again.
 func runDown(args []string) error {
 	fs := flag.NewFlagSet("chorus down", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
@@ -137,6 +157,9 @@ func runDown(args []string) error {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
 	stopBackgroundService(homeDir)
+	if err := os.Remove(filepath.Join(homeDir, ".chorus", serveArgsFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove saved server flags: %w", err)
+	}
 	fmt.Println("Chorus stopped")
 	return nil
 }
@@ -457,11 +480,68 @@ func parseLaunchdPID() int {
 	return 0
 }
 
+// saveServeArgs records the flags of the server that runUp just started in
+// ~/.chorus/chorus.args, so later "chorus up" and "chorus update" runs restart
+// Chorus with the same flags. The Redis password is never recorded.
+func saveServeArgs(homeDir string, cfg serverConfig) error {
+	raw, err := json.Marshal(buildServeArgs(cfg)[1:])
+	if err != nil {
+		return fmt.Errorf("encode server flags: %w", err)
+	}
+	path := filepath.Join(homeDir, ".chorus", serveArgsFile)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+		return fmt.Errorf("save server flags to %s: %w", path, err)
+	}
+	return nil
+}
+
+// loadServeArgs returns the server flags saveServeArgs recorded (for example
+// ["-addr", "127.0.0.1:9440", "-redis-addr", "localhost:6379", ...]), or nil
+// when Chorus was never started by "chorus up" or "chorus down" cleared them.
+// A file that is not a JSON array of strings is reported with its path.
+func loadServeArgs(homeDir string) ([]string, error) {
+	path := filepath.Join(homeDir, ".chorus", serveArgsFile)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read saved server flags %s: %w", path, err)
+	}
+	var args []string
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil, fmt.Errorf("read saved server flags %s: %w (run 'chorus down' to clear them)", path, err)
+	}
+	return args, nil
+}
+
+// serviceExecutable returns the path runUp records in the launchd plist,
+// systemd unit, or detached command line for the binary at exePath. For a
+// Homebrew install it is Homebrew's stable bin/chorus link (such as
+// /home/linuxbrew/.linuxbrew/bin/chorus) instead of the versioned Cellar path
+// os.Executable resolves to on Linux, which "brew upgrade" deletes. A server
+// updated in place by POST /update keeps its service file, so the file must
+// keep naming a binary that exists after the next crash or reboot.
+func serviceExecutable(exePath string) string {
+	realExe, err := filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return exePath
+	}
+	if prefix, ok := homebrewPrefix(realExe); ok {
+		return filepath.Join(prefix, "bin", "chorus")
+	}
+	return exePath
+}
+
 // buildServeArgs constructs the CLI argument list for "chorus serve" from cfg,
 // excluding redisPassword so credentials are never exposed in process tables or
-// service unit files.
+// service unit files. Every other setting is listed, even when empty (such as
+// "-origins=", one argument so a systemd unit never needs an empty quoted
+// argument), so the list fully overrides flags saved by an earlier
+// "chorus up": a restart through "up" with these arguments never brings back
+// a saved -origins the server no longer uses.
 func buildServeArgs(cfg serverConfig) []string {
-	args := []string{
+	return []string{
 		"serve",
 		"-addr", cfg.addr,
 		"-redis-addr", cfg.redisAddr,
@@ -469,11 +549,8 @@ func buildServeArgs(cfg serverConfig) []string {
 		"-swarm-ttl", cfg.swarmTTL.String(),
 		"-stream-max-len", strconv.Itoa(cfg.streamMaxLen),
 		"-online-window", cfg.onlineWindow.String(),
+		"-origins=" + cfg.origins,
 	}
-	if cfg.origins != "" {
-		args = append(args, "-origins", cfg.origins)
-	}
-	return args
 }
 
 // daemonPathEnv returns a PATH string that includes standard package-manager

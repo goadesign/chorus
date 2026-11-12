@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -353,7 +354,6 @@ func TestBuildServeArgs(t *testing.T) {
 		"-addr":       "127.0.0.1:9091",
 		"-redis-addr": "127.0.0.1:6380",
 		"-redis-db":   "2",
-		"-origins":    "https://example.com",
 	}
 	for flagName, wantVal := range wantPairs {
 		found := false
@@ -366,6 +366,16 @@ func TestBuildServeArgs(t *testing.T) {
 		if !found {
 			t.Fatalf("expected %s %s in buildServeArgs output %v", flagName, wantVal, args)
 		}
+	}
+	if !slices.Contains(args, "-origins=https://example.com") {
+		t.Fatalf("expected -origins=https://example.com in buildServeArgs output %v", args)
+	}
+	empty, err := parseServerFlags(nil)
+	if err != nil {
+		t.Fatalf("parseServerFlags failed: %v", err)
+	}
+	if !slices.Contains(buildServeArgs(empty), "-origins=") {
+		t.Fatalf("expected an explicit empty -origins= in buildServeArgs output %v", buildServeArgs(empty))
 	}
 }
 

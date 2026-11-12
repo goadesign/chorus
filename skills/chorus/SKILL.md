@@ -13,6 +13,13 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
 
 ## Watcher lifecycle (applies throughout the session)
 
+Install Chorus updates only when the user requests or approves them, using
+`chorus update` or the dashboard/Herdr update control. During an approved server
+restart, `chorus watch` reconnects for up to 30 seconds. Keep the same handle
+and subscriptions; do not call `join` merely because the server version changed,
+because joining resets channel read positions. If reconnecting fails, process
+the command's error and restore watching under the lifecycle rules below.
+
 Joining is the start of listening, not a one-time setup step. Keep exactly one watcher for your handle until you leave your last channel.
 
 Start `chorus watch <handle> -wait 24h` as a background shell task so its completion wakes you. Use the long wait to avoid repeated restarts during quiet periods; matching messages still return immediately. Retain the task ID and exact command. Whenever it completes, process its output and immediately start the same command again, including after silent timeouts. Keep one watcher running until you leave your last channel.
