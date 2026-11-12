@@ -1,6 +1,7 @@
 """Exercise project targeting, repeat launches, thinking options, and recovery without paid agents."""
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,12 +22,15 @@ class Herdr:
         self.terminals = []
         self.commands = []
         self.fail_agent = None
+        self.fail_command = None
 
     def app(self, argv):
         if argv == ["ls"]:
             return copy.deepcopy(self.listing)
         command, args = argv[1], json.loads(argv[2])
         self.commands.append((command, args))
+        if self.fail_command == command:
+            return {"error": f"{command} failed"}
         if command == "tab.select":
             return {"ok": True}
         if command == "terminal.kill":
@@ -903,6 +907,167 @@ class LaunchTests(unittest.TestCase):
                         }, owner.app, owner.core, app_home)
                     self.assertNotIn("leaked-secret", str(ctx2.exception))
                     self.assertEqual(owner.commands, [])
+
+    def test_roster_unlinks_claude_mcp_copy_when_tab_new_pane_split_or_target_pane_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home, root = Path(directory) / "herdr", Path(directory) / "project"
+            root.mkdir()
+            token_file = Path(directory) / "claude.token"
+            token_file.write_bytes(b"secret-claude-token-cleanup\n")
+            conn = [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(token_file)}]
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {"role": "guide", "title": "Guide", "handle": "guide", "folder": str(root), "first_message": "Guide.", "connections": conn, "place": None},
+                    {"role": "builder", "title": "Builder", "handle": "builder", "folder": str(root), "first_message": "Build.", "connections": conn, "place": {"beside": "guide", "direction": "right"}},
+                    {"role": "reviewer", "title": "Reviewer", "handle": "reviewer", "folder": str(root), "first_message": "Review.", "connections": conn, "place": {"beside": "builder", "direction": "down"}},
+                ],
+            }))
+            mcp_dir = app_home / "data" / "chorus-launcher" / "mcp"
+            guide_mcp, builder_mcp, reviewer_mcp = mcp_dir / "sp1--guide.json", mcp_dir / "sp1--builder.json", mcp_dir / "sp1--reviewer.json"
+            claude_row = lambda rid: {"id": f"role:{rid}", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False}
+
+            # (1) Failed tab.new removes guide's MCP copy and leaves zero panes.
+            owner_tab_fail = Herdr()
+            owner_tab_fail.fail_command = "tab.new"
+            with self.assertRaisesRegex(RuntimeError, "tab.new"):
+                launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [claude_row("guide"), claude_row("builder"), claude_row("reviewer")]}, owner_tab_fail.app, owner_tab_fail.core, app_home)
+            self.assertEqual(owner_tab_fail.terminals, [])
+            self.assertFalse(guide_mcp.exists())
+
+            # Open guide and builder first so subsequent split and target-pane failures run against a live team tab.
+            owner = Herdr()
+            res = launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [claude_row("guide"), claude_row("builder"), claude_row("reviewer")]}, owner.app, owner.core, app_home)
+            self.assertEqual(res, {"tab": "tb1", "created": 3, "reused": 0})
+            owner.app(["do", "terminal.kill", json.dumps({"terminal": "t3"})])
+            reviewer_mcp.unlink()
+
+            # (2) Failed pane.split when re-opening reviewer removes reviewer's MCP copy and leaves guide and builder untouched.
+            owner.fail_command = "pane.split"
+            with self.assertRaisesRegex(RuntimeError, "pane.split"):
+                launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [{"id": "role:guide"}, {"id": "role:builder"}, claude_row("reviewer")]}, owner.app, owner.core, app_home)
+            self.assertEqual([(t["address"], t["state"]) for t in owner.terminals if t["state"] == "live"], [("t1", "live"), ("t2", "live")])
+            self.assertFalse(reviewer_mcp.exists())
+            self.assertTrue(guide_mcp.exists())
+            self.assertTrue(builder_mcp.exists())
+
+            # (3) Missing target pane at place["beside"] (builder's pane is absent from the tab) removes reviewer's MCP copy and leaves existing terminals untouched.
+            owner.fail_command = None
+            owner.listing["spaces"][0]["tabs"][0]["terminals"] = [{"pane": "p1", "terminal": "t1"}]
+            with self.assertRaisesRegex(RuntimeError, "because its pane is not open"):
+                launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [{"id": "role:guide"}, {"id": "role:builder"}, claude_row("reviewer")]}, owner.app, owner.core, app_home)
+            self.assertEqual([(t["address"], t["state"]) for t in owner.terminals if t["state"] == "live"], [("t1", "live"), ("t2", "live")])
+            self.assertFalse(reviewer_mcp.exists())
+            self.assertTrue(guide_mcp.exists())
+
+    def test_roster_rejects_crlf_and_padded_credentials_and_delivers_identical_bytes_to_claude_and_codex(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home, root = Path(directory) / "herdr", Path(directory) / "project"
+            root.mkdir()
+            token_file = Path(directory) / "conn.token"
+            conn = [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(token_file)}]
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {"role": "guide", "title": "Guide", "handle": "guide", "folder": str(root), "first_message": "Coordinate.", "connections": conn, "place": None},
+                    {"role": "builder", "title": "Builder", "handle": "builder", "folder": str(root), "first_message": "Build.", "connections": conn, "place": {"beside": "guide", "direction": "right"}},
+                ],
+            }))
+            mcp_file = app_home / "data" / "chorus-launcher" / "mcp" / "sp1--guide.json"
+            for bad_bytes in (b"secret-token\r\n", b"secret-token\r", b" secret-token\n", b"secret-token \n", b" secret-token ", b"secret\ttoken\n", b"secret token\n", b"secret-token\n\n", b"\n", b""):
+                with self.subTest(raw=bad_bytes):
+                    token_file.write_bytes(bad_bytes)
+                    owner = Herdr()
+                    with self.assertRaisesRegex(ValueError, "Empty or invalid credential file"):
+                        launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+                    with self.assertRaisesRegex(ValueError, "Empty or invalid credential file"):
+                        launch.launch_team({
+                            "space": "sp1",
+                            "root": str(root),
+                            "swarm": "proj",
+                            "agents": [
+                                {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                                {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": None, "thinking": None, "yolo": False},
+                            ],
+                        }, owner.app, owner.core, app_home)
+                    self.assertEqual(owner.commands, [])
+                    self.assertEqual(owner.terminals, [])
+                    self.assertFalse(mcp_file.exists())
+
+            expected_token = "exact-shared-secret-token-778899"
+            for valid_bytes in (expected_token.encode("utf-8"), (expected_token + "\n").encode("utf-8")):
+                with self.subTest(valid=valid_bytes):
+                    token_file.write_bytes(valid_bytes)
+                    owner = Herdr()
+                    launch.launch_team({
+                        "space": "sp1",
+                        "root": str(root),
+                        "swarm": "proj",
+                        "agents": [
+                            {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                            {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["python3", "-c", "import os,json; print(json.dumps(os.environ.get('CHORUS_MCP_TOKEN_0')))"], "model": None, "thinking": None, "yolo": False},
+                        ],
+                    }, owner.app, owner.core, app_home)
+                    claude_header = json.loads(mcp_file.read_text())["mcpServers"]["surla"]["headers"]["Authorization"]
+                    self.assertEqual(claude_header, f"Bearer {expected_token}")
+                    codex_argv = [args["argv"] for name, args in owner.commands if name == "pane.split"][0]
+                    proc = subprocess.run(codex_argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
+                    self.assertEqual(claude_header.removeprefix("Bearer "), json.loads(proc.stdout))
+                    self.assertEqual(json.loads(proc.stdout), expected_token)
+
+    def test_roster_codex_wrapper_suppresses_shell_xtrace_verbose_and_traps_from_startup_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home, root, zdotdir = Path(directory) / "herdr", Path(directory) / "project", Path(directory) / "zdotdir"
+            root.mkdir()
+            zdotdir.mkdir()
+            codex_secret = "secret-codex-xtrace-canary-556677"
+            token_file = Path(directory) / "builder.token"
+            token_file.write_bytes((codex_secret + "\n").encode("utf-8"))
+            startup_body = (
+                "setopt XTRACE VERBOSE\n"
+                'TRAPDEBUG() { print -u2 "TRAPDEBUG:$ZSH_DEBUG_CMD:${CHORUS_MCP_TOKEN_0:-}"; }\n'
+                'trap \'print -u2 "TRAP:$ZSH_DEBUG_CMD:${CHORUS_MCP_TOKEN_0:-}"\' DEBUG EXIT ZERR ERR\n'
+                'chpwd() { print -u2 "CHPWD:${CHORUS_MCP_TOKEN_0:-}"; }\n'
+            )
+            (zdotdir / ".zshenv").write_text(startup_body)
+            (zdotdir / ".zshrc").write_text(startup_body)
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {"role": "guide", "title": "Guide", "handle": "guide", "folder": str(root), "first_message": "Guide.", "connections": [], "place": None},
+                    {"role": "builder", "title": "Builder", "handle": "builder", "folder": str(root), "first_message": "Build.", "connections": [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(token_file)}], "place": {"beside": "guide", "direction": "right"}},
+                ],
+            }))
+            owner = Herdr()
+            child_code = (
+                "import hashlib, json, os; "
+                "val = os.environ.get('CHORUS_MCP_TOKEN_0', ''); "
+                "print(json.dumps({'cwd': os.getcwd(), 'sha256': hashlib.sha256(val.encode()).hexdigest(), 'len': len(val)}))"
+            )
+            launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["python3", "-c", child_code], "model": None, "thinking": None, "yolo": False},
+                ],
+            }, owner.app, owner.core, app_home)
+            codex_argv = [args["argv"] for name, args in owner.commands if name == "pane.split"][0]
+            proc = subprocess.run(codex_argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, env={**os.environ, "ZDOTDIR": str(zdotdir)}, check=True)
+            self.assertNotIn(codex_secret, proc.stdout)
+            self.assertNotIn(codex_secret, proc.stderr)
+            child_report = json.loads(proc.stdout.strip().splitlines()[-1])
+            self.assertEqual(child_report, {"cwd": str(root.resolve()), "sha256": hashlib.sha256(codex_secret.encode()).hexdigest(), "len": len(codex_secret)})
 
     def test_no_roster_path_records_byte_identical_commands(self):
         with tempfile.TemporaryDirectory() as directory:

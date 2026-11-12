@@ -85,7 +85,7 @@ def mcp_config_path(app_home: Path, space: str, handle: str) -> Path:
 
 
 def read_credential(path_str: object, name: str) -> str:
-    """Read a non-empty bearer token from disk without including secrets in errors."""
+    """Read a single-token bearer credential from disk with at most one trailing LF."""
     if not isinstance(path_str, str) or not path_str or not Path(path_str).is_absolute():
         raise ValueError(f"Connection {name!r} requires an absolute credential_file path.")
     path = Path(path_str)
@@ -96,10 +96,11 @@ def read_credential(path_str: object, name: str) -> str:
     if not is_file:
         raise ValueError(f"Missing credential file for connection {name!r}: {path_str}")
     try:
-        token = path.read_text(encoding="utf-8").strip()
+        raw = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError):
         raise ValueError(f"Unreadable credential file for connection {name!r}: {path_str}") from None
-    if not token or any(ord(c) < 32 for c in token):
+    token = raw[:-1] if raw.endswith("\n") else raw
+    if not token or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in token):
         raise ValueError(f"Empty or invalid credential file for connection {name!r}: {path_str}")
     return token
 
@@ -537,10 +538,16 @@ def wrap_roster_argv(
     if env_files:
         flat = [item for pair in env_files for item in pair]
         script = (
-            'cd -- "$1" || exit; shift; '
+            '\\builtin emulate -L zsh; '
+            '\\builtin unsetopt xtrace verbose; '
+            '\\builtin unfunction -m "TRAP*" 2>/dev/null; '
+            '\\builtin unfunction chpwd 2>/dev/null; '
+            '\\builtin trap - DEBUG ZERR ERR EXIT; '
+            'chpwd_functions=(); '
+            '\\builtin cd -- "$1" || \\builtin exit; \\builtin shift; '
             'while [[ "$1" != "--" ]]; do '
-            'typeset -gx "$1=$(<"$2")" || exit; shift 2; '
-            'done; shift; exec "$@"'
+            '\\builtin typeset -gx "$1=$(<"$2")" || \\builtin exit; \\builtin shift 2; '
+            'done; \\builtin shift; \\builtin exec "$@"'
         )
         return ["/bin/zsh", "-lic", script, "/bin/zsh", folder, *flat, "--", *argv]
     if always_wrap:
@@ -740,48 +747,49 @@ def launch_team(
             role_id = role_entry["role"]
             folder = role_entry["folder"]
             wrote_mcp: Path | None = None
-            if role_entry["connections"] and agent["key"] == "claude":
-                wrote_mcp = write_claude_mcp_config(app_home, space, handle, role_entry["connections"])
-            raw_argv, env_files = roster_argv(agent, role_entry, root, swarm, wrote_mcp)
-            if tab_id is None:
-                start_argv = wrap_roster_argv(raw_argv, folder, env_files, always_wrap=False)
-                reply = app_command(
-                    app,
-                    "tab.new",
-                    space=space,
-                    name=f"Chorus · {Path(root).name}",
-                    folder=folder,
-                    argv=start_argv,
-                )
-                tab_id, terminal = reply["tab"], reply["terminal"]
-                pane = None
-            else:
-                place = role_entry["place"]
-                if place is None:
-                    existing_terminals = tabs.get(tab_id, {}).get("terminals", [])
-                    target_pane = (
-                        existing_terminals[0]["pane"]
-                        if existing_terminals
-                        else next(iter(pane_by_handle.values()), None)
-                    )
-                    if not target_pane:
-                        raise RuntimeError("The Chorus tab has no terminal pane to split. Close it and open the team again.")
-                    direction = "right"
-                else:
-                    target_pane = pane_by_handle.get(place["beside"])
-                    if not target_pane:
-                        raise RuntimeError(f"Cannot place role {role_id!r} beside {place['beside']!r} because its pane is not open.")
-                    direction = place["direction"]
-                start_argv = wrap_roster_argv(raw_argv, folder, env_files, always_wrap=True)
-                reply = app_command(
-                    app,
-                    "pane.split",
-                    pane=target_pane,
-                    direction=direction,
-                    argv=start_argv,
-                )
-                terminal, pane = reply["terminal"], reply["pane"]
+            terminal: str | None = None
             try:
+                if role_entry["connections"] and agent["key"] == "claude":
+                    wrote_mcp = write_claude_mcp_config(app_home, space, handle, role_entry["connections"])
+                raw_argv, env_files = roster_argv(agent, role_entry, root, swarm, wrote_mcp)
+                if tab_id is None:
+                    start_argv = wrap_roster_argv(raw_argv, folder, env_files, always_wrap=False)
+                    reply = app_command(
+                        app,
+                        "tab.new",
+                        space=space,
+                        name=f"Chorus · {Path(root).name}",
+                        folder=folder,
+                        argv=start_argv,
+                    )
+                    tab_id, terminal = reply["tab"], reply["terminal"]
+                    pane = None
+                else:
+                    place = role_entry["place"]
+                    if place is None:
+                        existing_terminals = tabs.get(tab_id, {}).get("terminals", [])
+                        target_pane = (
+                            existing_terminals[0]["pane"]
+                            if existing_terminals
+                            else next(iter(pane_by_handle.values()), None)
+                        )
+                        if not target_pane:
+                            raise RuntimeError("The Chorus tab has no terminal pane to split. Close it and open the team again.")
+                        direction = "right"
+                    else:
+                        target_pane = pane_by_handle.get(place["beside"])
+                        if not target_pane:
+                            raise RuntimeError(f"Cannot place role {role_id!r} beside {place['beside']!r} because its pane is not open.")
+                        direction = place["direction"]
+                    start_argv = wrap_roster_argv(raw_argv, folder, env_files, always_wrap=True)
+                    reply = app_command(
+                        app,
+                        "pane.split",
+                        pane=target_pane,
+                        direction=direction,
+                        argv=start_argv,
+                    )
+                    terminal, pane = reply["terminal"], reply["pane"]
                 options = json.dumps({"model": agent["model"], "thinking": agent["thinking"], "yolo": agent["yolo"]})
                 core([
                     "label",
@@ -797,7 +805,8 @@ def launch_team(
             except Exception:
                 if wrote_mcp is not None:
                     wrote_mcp.unlink(missing_ok=True)
-                app_command(app, "terminal.kill", terminal=terminal)
+                if terminal is not None:
+                    app_command(app, "terminal.kill", terminal=terminal)
                 raise
             if pane is None:
                 current = app(["ls"])
