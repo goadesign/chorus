@@ -65,7 +65,8 @@ func TestNewerVersion(t *testing.T) {
 // to downgrade a server newer than the release, declining the prompt,
 // installing over the executable and then asking the running server to
 // update itself to the approved version, leaving a server without
-// POST /update running after a global setup, running "setup -global" when no
+// POST /update running after a global setup and failing with how to restart
+// it, running "setup -global" when no
 // server answers, reporting a server's update error, never touching project
 // files in the working directory, and leaving the executable untouched when
 // the checksum does not match.
@@ -159,7 +160,7 @@ func TestRunUpdate(t *testing.T) {
 			latest:        next,
 			serverVersion: current,
 			legacyServer:  true,
-			wantOutParts:  []string{fmt.Sprintf("The running server (v%s at http://localhost:", current), "cannot update itself"},
+			wantErr:       fmt.Sprintf("installed chorus v%s and refreshed integrations, but the running server (v%s at http://localhost:", next, current),
 			wantRuns:      "setup -global -addr ADDR\n",
 			installed:     true,
 		},

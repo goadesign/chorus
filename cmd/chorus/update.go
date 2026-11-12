@@ -184,7 +184,9 @@ func defaultReleaseSource() releaseSource {
 // version, because only that process knows the flags and Redis password it
 // runs with; runUpdate waits for GET /healthz to report the version and
 // writes the server's addresses. A server older than POST /update is left
-// running with instructions to restart it, and with no server running, the
+// running, and runUpdate returns an error with instructions to restart it,
+// so callers such as the Herdr launcher see the update as unfinished. With
+// no server running, the
 // new binary's "setup -global" refreshes the skills, MCP registrations, and
 // Herdr launcher. Output of the commands it runs is written to out.
 func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSource, exe string) error {
@@ -288,8 +290,9 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 // already on version gets a "setup -global" from next, so its skills and
 // MCP registrations match the binary just installed. A server without
 // POST /update (v0.9.0 and earlier) is left running after the same setup,
-// and out says how to restart it: its Redis password and flags are unknown
-// here, so stopping it could leave nothing running.
+// and the returned error says how to restart it, so the command exits
+// nonzero while that server still runs the old version: its Redis password
+// and flags are unknown here, so stopping it could leave nothing running.
 func updateServer(ctx context.Context, out io.Writer, addr, next, serverVersion, version string) error {
 	baseURL := localBaseURL(addr)
 	body, err := json.Marshal(updateRequest{Version: version})
@@ -323,8 +326,7 @@ func updateServer(ctx context.Context, out io.Writer, addr, next, serverVersion,
 		if err := runChorus(ctx, next, out, "setup", "-global", "-addr", addr); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "The running server (v%s at %s) cannot update itself. Finish the update by running '%s up' with the flags and REDIS_PASSWORD it was started with.\n", serverVersion, baseURL, next)
-		return nil
+		return fmt.Errorf("installed chorus v%s and refreshed integrations, but the running server (v%s at %s) cannot update itself; finish the update by running '%s up' with the flags and REDIS_PASSWORD it was started with", version, serverVersion, baseURL, next)
 	default:
 		var failure updateError
 		if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil || failure.Error == "" {
