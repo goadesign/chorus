@@ -93,6 +93,8 @@ func TestRunUpdate(t *testing.T) {
 		// directory, as in a repository that checks in the Chorus skill.
 		projectSkill bool
 		badSum       bool
+		// releasedBin replaces the published binary, which otherwise reports latest.
+		releasedBin []byte
 		// wantOut is the exact output; wantOutParts are lines it must contain.
 		wantOut      string
 		wantOutParts []string
@@ -193,6 +195,22 @@ func TestRunUpdate(t *testing.T) {
 			installed:     true,
 		},
 		{
+			name:          "release reporting another version leaves the binary",
+			args:          []string{"-yes"},
+			latest:        next,
+			serverVersion: current,
+			releasedBin:   fakeChorusBinary("0.0.7"),
+			wantErr:       fmt.Sprintf(`the v%s release binary reports "0.0.7"`, next),
+		},
+		{
+			name:          "release that cannot run leaves the binary",
+			args:          []string{"-yes"},
+			latest:        next,
+			serverVersion: current,
+			releasedBin:   []byte("not a program"),
+			wantErr:       fmt.Sprintf(`the v%s release binary reports ""`, next),
+		},
+		{
 			name:          "checksum mismatch leaves the binary",
 			args:          []string{"-yes"},
 			latest:        next,
@@ -225,6 +243,9 @@ func TestRunUpdate(t *testing.T) {
 
 			oldBin := fakeChorusBinary(current)
 			newBin := fakeChorusBinary(tc.latest)
+			if tc.releasedBin != nil {
+				newBin = tc.releasedBin
+			}
 			exe := filepath.Join(t.TempDir(), "bin", "chorus")
 			writeExecutable(t, exe, oldBin)
 
@@ -252,6 +273,9 @@ func TestRunUpdate(t *testing.T) {
 			} else {
 				assert.Equal(t, oldBin, got)
 			}
+			entries, err := os.ReadDir(filepath.Dir(exe))
+			require.NoError(t, err)
+			assert.Len(t, entries, 1, "no staged release file may be left next to the binary")
 			if tc.projectSkill {
 				skill, err := os.ReadFile(filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md"))
 				require.NoError(t, err)

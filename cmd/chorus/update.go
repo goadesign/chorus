@@ -352,7 +352,9 @@ func updateServer(ctx context.Context, out io.Writer, addr, next, serverVersion,
 // installRelease makes rel the chorus binary run next and returns its path.
 // A binary inside a Homebrew Cellar is upgraded with "brew upgrade", writing
 // Homebrew's output to out, and the returned path is Homebrew's bin/chorus.
-// Any other binary is replaced in place by the downloaded release. Nothing is
+// Any other binary is replaced in place by the downloaded release, but only
+// after the downloaded file has run and reported rel's version, so a broken
+// or mislabeled release never overwrites a working binary. Nothing is
 // downloaded when the binary on disk already reports rel's version, for
 // example after an earlier update whose restart did not happen.
 func installRelease(ctx context.Context, releases releaseSource, rel release, exe string, out io.Writer) (string, error) {
@@ -384,11 +386,17 @@ func installRelease(ctx context.Context, releases releaseSource, rel release, ex
 	if err != nil {
 		return "", err
 	}
-	if err := replaceExecutable(realExe, bin); err != nil {
-		return "", fmt.Errorf("install chorus v%s at %s: %w (rerun with write access to %s)", rel.version, realExe, err, filepath.Dir(realExe))
+	err = replaceExecutable(realExe, bin, func(candidate string) error {
+		if got := binaryVersion(ctx, candidate); got != rel.version {
+			return fmt.Errorf("%w: the v%s release binary reports %q, not v%s", errReleaseUnavailable, rel.version, got, rel.version)
+		}
+		return nil
+	})
+	if errors.Is(err, errReleaseUnavailable) {
+		return "", err
 	}
-	if got := binaryVersion(ctx, realExe); got != rel.version {
-		return "", fmt.Errorf("installed chorus at %s reports %q, not v%s", realExe, got, rel.version)
+	if err != nil {
+		return "", fmt.Errorf("install chorus v%s at %s: %w (rerun with write access to %s)", rel.version, realExe, err, filepath.Dir(realExe))
 	}
 	return exe, nil
 }
@@ -419,10 +427,11 @@ func extractBinary(archive []byte) ([]byte, error) {
 }
 
 // replaceExecutable atomically replaces the file at target with an
-// executable holding content. The new file is written next to target and
-// renamed over it, so a running server keeps executing the old file and a
-// failure leaves target unchanged.
-func replaceExecutable(target string, content []byte) (err error) {
+// executable holding content. The new file is written next to target, passed
+// to check, and renamed over target only when check accepts it, so a running
+// server keeps executing the old file and any failure, including check's,
+// leaves target unchanged and removes the new file.
+func replaceExecutable(target string, content []byte, check func(candidate string) error) (err error) {
 	file, err := os.CreateTemp(filepath.Dir(target), ".chorus-update-*")
 	if err != nil {
 		return err
@@ -440,6 +449,9 @@ func replaceExecutable(target string, content []byte) (err error) {
 		writeErr = file.Sync()
 	}
 	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	if err := check(file.Name()); err != nil {
 		return err
 	}
 	return os.Rename(file.Name(), target)
