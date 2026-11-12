@@ -18,11 +18,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -383,14 +385,14 @@ func TestInstallReleaseHomebrew(t *testing.T) {
 // middleware runServe uses: requests from another machine or another website
 // are refused, GET reports the latest release, and POST installs exactly the
 // requested version, runs the new binary's setup, and answers 202 before
-// restarting with this server's flags and Redis password. It also verifies
+// asking for the restart on the new binary. It also verifies
 // the answers for the running version, a downgrade, a malformed body, a
 // concurrent update, an unavailable release, and an install failure, none
 // of which restart the server.
 func TestUpdateHandler(t *testing.T) {
 	current := genchorus.APIVersion
 	next := nextMinorVersion(t)
-	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9440", "-swarm-ttl", "48h", "-redis-password", "secret"})
+	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9440"})
 	require.NoError(t, err)
 	nextBody := fmt.Sprintf(`{"version":%q}`, next)
 
@@ -448,11 +450,9 @@ func TestUpdateHandler(t *testing.T) {
 			h := &updateHandler{
 				releases: fakeReleases(t, tc.published, fakeChorusBinary(tc.published), tc.badSum),
 				exe:      exe,
-				cfg:      cfg,
-				restart: func(next string, restartCfg serverConfig) error {
-					assert.Equal(t, cfg, restartCfg, "the restart must keep this server's flags and password")
+				addr:     cfg.addr,
+				restart: func(next string) {
 					restarts = append(restarts, next)
-					return nil
 				},
 			}
 			if tc.busy {
@@ -497,31 +497,107 @@ func TestUpdateHandler(t *testing.T) {
 	}
 }
 
-// TestStartRestart verifies that the restart runs "<exe> up" with the
-// server's flags in a separate process and hands it the Redis password
-// through REDIS_PASSWORD, never as an argument.
-func TestStartRestart(t *testing.T) {
+// TestServeRestartsInPlace verifies the restart behind POST /update with two
+// real servers sharing one home directory and Redis: the update of server A
+// installs the release over A's binary, shuts down only A exactly as on
+// SIGTERM, and returns A's binary for serve to exec, while server B keeps
+// answering on its own address with its own version. Nothing reads the
+// shared ~/.chorus/chorus.pid to find the server to stop.
+func TestServeRestartsInPlace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("CHORUS_FAKE_LOG", filepath.Join(t.TempDir(), "runs.log"))
 	t.Setenv("REDIS_PASSWORD", "")
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
-	runLog := filepath.Join(t.TempDir(), "runs.log")
-	exe := filepath.Join(t.TempDir(), "chorus")
-	writeExecutable(t, exe, []byte(fmt.Sprintf("#!/bin/sh\necho \"$* password=$REDIS_PASSWORD\" > %q.tmp && mv %q.tmp %q\n", runLog, runLog, runLog)))
-	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9550", "-redis-db", "7", "-redis-password", "secret"})
+
+	redisAddr := unusedAddr(t)
+	_, redisPort, err := net.SplitHostPort(redisAddr)
 	require.NoError(t, err)
+	port, err := strconv.Atoi(redisPort)
+	require.NoError(t, err)
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	t.Cleanup(func() {
+		stopTestRedis(t, rdb, port)
+		assert.NoError(t, rdb.Close())
+	})
+	require.NoError(t, connectOrStartRedis(context.Background(), rdb, redisAddr, t.TempDir()))
 
-	require.NoError(t, startRestart(exe, cfg))
+	current := genchorus.APIVersion
+	next := nextMinorVersion(t)
+	releases := fakeReleases(t, next, fakeChorusBinary(next), false)
+	type served struct {
+		next string
+		err  error
+	}
+	start := func(addr, exe string) chan served {
+		done := make(chan served, 1)
+		go func() {
+			restartOn, err := runServe([]string{"-addr", addr, "-redis-addr", redisAddr}, releases, exe)
+			done <- served{next: restartOn, err: err}
+		}()
+		require.Eventually(t, func() bool {
+			ok, _ := probeServer(localBaseURL(addr))
+			return ok
+		}, 15*time.Second, 50*time.Millisecond)
+		return done
+	}
+	update := func(addr string) int {
+		resp, err := http.Post(localBaseURL(addr)+"/update", "application/json", strings.NewReader(fmt.Sprintf(`{"version":%q}`, next)))
+		require.NoError(t, err)
+		assert.NoError(t, resp.Body.Close())
+		return resp.StatusCode
+	}
 
-	var got []byte
-	require.Eventually(t, func() bool {
-		got, err = os.ReadFile(runLog)
-		return err == nil
-	}, 5*time.Second, 20*time.Millisecond)
-	want := "up " + strings.Join(buildServeArgs(cfg)[1:], " ") + " password=secret\n"
-	assert.Equal(t, want, string(got))
-	assert.NotContains(t, strings.TrimSuffix(string(got), " password=secret\n"), "secret")
+	exeA := filepath.Join(t.TempDir(), "chorus")
+	writeExecutable(t, exeA, fakeChorusBinary(current))
+	exeB := filepath.Join(t.TempDir(), "chorus")
+	writeExecutable(t, exeB, fakeChorusBinary(current))
+	addrA, addrB := unusedAddr(t), unusedAddr(t)
+	doneA := start(addrA, exeA)
+	doneB := start(addrB, exeB)
+
+	assert.Equal(t, http.StatusAccepted, update(addrA))
+	select {
+	case got := <-doneA:
+		require.NoError(t, got.err)
+		assert.Equal(t, exeA, got.next, "runServe returns the installed binary for serve to exec")
+	case <-time.After(15 * time.Second):
+		t.Fatal("server A did not shut down for its restart")
+	}
+	assert.Equal(t, next, binaryVersion(context.Background(), exeA))
+	upA, _ := probeServer(localBaseURL(addrA))
+	assert.False(t, upA, "server A stopped listening before its restart")
+	upB, versionB := probeServer(localBaseURL(addrB))
+	assert.True(t, upB, "updating server A must not stop server B")
+	assert.Equal(t, current, versionB)
+	assert.Equal(t, fakeChorusBinary(current), mustReadFile(t, exeB))
+
+	assert.Equal(t, http.StatusAccepted, update(addrB))
+	select {
+	case got := <-doneB:
+		require.NoError(t, got.err)
+		assert.Equal(t, exeB, got.next)
+	case <-time.After(15 * time.Second):
+		t.Fatal("server B did not shut down for its restart")
+	}
+}
+
+// TestServiceExecutable verifies that service files name Homebrew's stable
+// bin/chorus link rather than a versioned Cellar path, given either path, and
+// keep any other executable path as it is.
+func TestServiceExecutable(t *testing.T) {
+	prefix, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	cellar := filepath.Join(prefix, "Cellar", "chorus", "0.9.0", "bin", "chorus")
+	writeExecutable(t, cellar, fakeChorusBinary("0.9.0"))
+	link := filepath.Join(prefix, "bin", "chorus")
+	require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
+	require.NoError(t, os.Symlink(cellar, link))
+	plain := filepath.Join(t.TempDir(), "chorus")
+	writeExecutable(t, plain, fakeChorusBinary("0.9.0"))
+
+	assert.Equal(t, link, serviceExecutable(cellar))
+	assert.Equal(t, link, serviceExecutable(link))
+	assert.Equal(t, plain, serviceExecutable(plain))
 }
 
 // TestServeArgsPersistence verifies that the flags "chorus up" saved are the
@@ -680,6 +756,14 @@ func writeExecutable(t *testing.T, path string, content []byte) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, content, 0o755))
+}
+
+// mustReadFile returns the content of path.
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return content
 }
 
 // unusedAddr returns a loopback address nothing listens on.

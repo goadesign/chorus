@@ -126,7 +126,7 @@ func runUp(args []string, out io.Writer) error {
 		return fmt.Errorf("resolve chorus executable path: %w", err)
 	}
 
-	if err := startBackgroundService(homeDir, exePath, cfg); err != nil {
+	if err := startBackgroundService(homeDir, serviceExecutable(exePath), cfg); err != nil {
 		return err
 	}
 	if err := saveServeArgs(homeDir, cfg); err != nil {
@@ -513,6 +513,24 @@ func loadServeArgs(homeDir string) ([]string, error) {
 		return nil, fmt.Errorf("read saved server flags %s: %w (run 'chorus down' to clear them)", path, err)
 	}
 	return args, nil
+}
+
+// serviceExecutable returns the path runUp records in the launchd plist,
+// systemd unit, or detached command line for the binary at exePath. For a
+// Homebrew install it is Homebrew's stable bin/chorus link (such as
+// /home/linuxbrew/.linuxbrew/bin/chorus) instead of the versioned Cellar path
+// os.Executable resolves to on Linux, which "brew upgrade" deletes. A server
+// updated in place by POST /update keeps its service file, so the file must
+// keep naming a binary that exists after the next crash or reboot.
+func serviceExecutable(exePath string) string {
+	realExe, err := filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return exePath
+	}
+	if prefix, ok := homebrewPrefix(realExe); ok {
+		return filepath.Join(prefix, "bin", "chorus")
+	}
+	return exePath
 }
 
 // buildServeArgs constructs the CLI argument list for "chorus serve" from cfg,

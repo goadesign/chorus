@@ -101,20 +101,19 @@ type (
 
 	// updateHandler serves GET and POST /update for the server runServe
 	// started: the dashboard and "chorus update" call it. A POST installs the
-	// requested release and restarts this server on it; only one runs at a
-	// time.
+	// requested release and restarts this server process in place on it;
+	// only one runs at a time.
 	updateHandler struct {
 		// releases finds and downloads releases.
 		releases releaseSource
 		// exe is the path this server was started from (os.Executable).
 		exe string
-		// cfg holds this server's flags and Redis password; the restarted
-		// server keeps them.
-		cfg serverConfig
-		// restart starts "<exe> up" with cfg's flags and password in a
-		// process that outlives this server; startRestart in production, a
-		// recorder in tests.
-		restart func(exe string, cfg serverConfig) error
+		// addr is this server's listen address, which the new binary's setup
+		// registers with the coding agents.
+		addr string
+		// restart asks runServe to shut down and restart this process on the
+		// binary at exe; a recorder in tests.
+		restart func(exe string)
 		// busy is held from the start of a POST until the restart begins, or
 		// until the POST fails, so concurrent POSTs answer 409.
 		busy sync.Mutex
@@ -538,56 +537,6 @@ func timeoutHint(ctx context.Context, err error) error {
 	return err
 }
 
-// startRestart starts "<exe> up" with cfg's flags so that it outlives this
-// server, which "up" stops before starting the new one. cfg's Redis password
-// is handed over in the process environment as REDIS_PASSWORD, never on the
-// command line or on disk. Under systemd, stopping chorus.service ends every
-// process in the service, including children in a new session, so the
-// restart runs as its own transient unit through systemd-run; "chorus up"
-// only creates that unit for servers without a password. Otherwise it runs
-// in a new session, which launchd does not stop with the job and which
-// survives the server's exit. Its output is appended to ~/.chorus/chorus.log.
-func startRestart(exe string, cfg serverConfig) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
-	}
-	logPath := filepath.Join(homeDir, ".chorus", "chorus.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file %s: %w", logPath, err)
-	}
-	defer func() {
-		if err := logFile.Close(); err != nil {
-			slog.Debug("close chorus log after starting the restart", "path", logPath, "error", err)
-		}
-	}()
-
-	upArgs := append([]string{"up"}, buildServeArgs(cfg)[1:]...)
-	var cmd *exec.Cmd
-	if runtime.GOOS == "linux" && os.Getenv("INVOCATION_ID") != "" && cfg.redisPassword == "" {
-		cmd = exec.Command("systemd-run", append([]string{"--user", "--collect", "--quiet", "--setenv=PATH=" + daemonPathEnv(), "--", exe}, upArgs...)...)
-	} else {
-		cmd = exec.Command(exe, upArgs...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		cmd.Env = os.Environ()
-		if cfg.redisPassword != "" {
-			cmd.Env = append(cmd.Env, "REDIS_PASSWORD="+cfg.redisPassword)
-		}
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start %s up: %w", exe, err)
-	}
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			slog.Debug("restart command exited", "exe", exe, "error", err)
-		}
-	}()
-	return nil
-}
-
 // loopbackPeer returns middleware that answers 403 unless the request's TCP
 // peer is on this machine. chorus.LocalOnly checks headers a non-browser
 // client can set freely; the peer address cannot be forged, so a server
@@ -737,8 +686,9 @@ func (h *updateHandler) status(w http.ResponseWriter, r *http.Request) {
 // requested version is newer than this server, it installs exactly that
 // version, runs the new binary's "setup -global" so skills, MCP
 // registrations, and the Herdr launcher match it, answers 202 with the
-// version, and only then starts the restart, so the response reaches the
-// caller before this server stops. It answers 200 "up_to_date" when this
+// version, and only then asks runServe to restart, so the response reaches
+// the caller before this server shuts down and replaces itself with the new
+// binary (see serve). It answers 200 "up_to_date" when this
 // server already runs the version, 400 for a missing or malformed body
 // (including anything after the JSON object), 409
 // for an older version (a downgrade) or while another update runs, 502 when
@@ -792,7 +742,7 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, updateError{Error: timeoutHint(ctx, err).Error()})
 		return
 	}
-	if err := runChorus(ctx, next, &output, "setup", "-global", "-addr", h.cfg.addr); err != nil {
+	if err := runChorus(ctx, next, &output, "setup", "-global", "-addr", h.addr); err != nil {
 		slog.Error("set up updated chorus", "version", req.Version, "error", err, "output", output.String())
 		writeJSON(w, http.StatusInternalServerError, updateError{Error: fmt.Sprintf("%v: %s", timeoutHint(ctx, err), strings.TrimSpace(output.String()))})
 		return
@@ -802,10 +752,7 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 	if err := http.NewResponseController(w).Flush(); err != nil {
 		slog.Error("flush /update response", "error", err)
 	}
-	if err := h.restart(next, h.cfg); err != nil {
-		slog.Error("restart chorus on the updated binary", "version", req.Version, "error", err)
-		return
-	}
+	// The lock stays held: this server stops accepting updates as it shuts down.
 	restarting = true
-	slog.Info("restarting chorus on the updated binary", "version", req.Version, "exe", next)
+	h.restart(next)
 }

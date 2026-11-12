@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -113,7 +114,7 @@ func dispatch(args []string, out io.Writer) error {
 				}
 				return runUpdate(args[1:], os.Stdin, out, defaultReleaseSource(), exe)
 			case "serve":
-				return runServe(args[1:], defaultReleaseSource())
+				return serve(args[1:])
 			case "who", "join", "leave", "send", "read":
 				return fmt.Errorf("%q is a Chorus MCP tool, not a CLI subcommand; call the %q Chorus MCP tool directly (use 'chorus watch <agent>' only for background shell listening)", args[0], args[0])
 			default:
@@ -121,17 +122,42 @@ func dispatch(args []string, out io.Writer) error {
 			}
 		}
 	}
-	return runServe(args, defaultReleaseSource())
+	return serve(args)
+}
+
+// serve runs the server with args until it stops. When it stopped because
+// POST /update installed a new binary, serve replaces this process with that
+// binary, keeping the process ID, the original command-line arguments
+// (os.Args), and the environment, so the server comes back with exactly the
+// same flags and Redis password under the same terminal, launchd job, or
+// systemd unit. An exec failure is returned, so the process exits nonzero
+// and a service manager restarts it.
+func serve(args []string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve chorus executable path: %w", err)
+	}
+	next, err := runServe(args, defaultReleaseSource(), exe)
+	if err != nil || next == "" {
+		return err
+	}
+	slog.Info("restarting chorus on the updated binary", "exe", next)
+	if err := syscall.Exec(next, append([]string{next}, os.Args[1:]...), os.Environ()); err != nil {
+		return fmt.Errorf("restart chorus on %s: %w", next, err)
+	}
+	return nil
 }
 
 // runServe parses server flags, connects to (or auto-starts) Redis, and serves
 // the Chorus MCP endpoint and dashboard until interrupted. It also serves
-// GET and POST /update, which let the dashboard update this server to the
-// latest release from releases and restart it.
-func runServe(args []string, releases releaseSource) error {
+// GET and POST /update, which let the dashboard and "chorus update" update
+// this server, started from exe, to a release from releases. After a
+// successful POST /update, runServe shuts down exactly as on SIGTERM and
+// returns the path of the binary to restart on; otherwise it returns "".
+func runServe(args []string, releases releaseSource, exe string) (string, error) {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -145,12 +171,12 @@ func runServe(args []string, releases releaseSource) error {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 	redisDataDir := filepath.Join(homeDir, ".chorus", "redis")
 
 	if err := connectOrStartRedis(context.Background(), rdb, cfg.redisAddr, redisDataDir); err != nil {
-		return err
+		return "", err
 	}
 
 	svc, err := chorus.New(
@@ -160,7 +186,7 @@ func runServe(args []string, releases releaseSource) error {
 		chorus.WithOnlineWindow(cfg.onlineWindow),
 	)
 	if err != nil {
-		return fmt.Errorf("create chorus service: %w", err)
+		return "", fmt.Errorf("create chorus service: %w", err)
 	}
 	defer func() {
 		_ = svc.Close()
@@ -177,20 +203,24 @@ func runServe(args []string, releases releaseSource) error {
 		}
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve chorus executable path: %w", err)
-	}
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	// serveCtx ends on SIGINT, SIGTERM, or a restart requested by
+	// POST /update, which first records the binary to restart on in next.
+	serveCtx, stopServing := context.WithCancel(sigCtx)
+	defer stopServing()
+	var next atomic.Pointer[string]
+
 	updates := chorus.LocalOnly(origins...)(loopbackPeer(&updateHandler{
 		releases: releases,
 		exe:      exe,
-		cfg:      cfg,
-		restart:  startRestart,
+		addr:     cfg.addr,
+		restart: func(exe string) {
+			next.Store(&exe)
+			stopServing()
+		},
 	}))
 	routes := chorus.NewHTTPHandler(svc, origins...)
-
-	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 
 	httpServer := &http.Server{
 		Addr: cfg.addr,
@@ -205,7 +235,7 @@ func runServe(args []string, releases releaseSource) error {
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
-			return sigCtx
+			return serveCtx
 		},
 	}
 
@@ -232,15 +262,21 @@ func runServe(args []string, releases releaseSource) error {
 
 	select {
 	case serveErr := <-errCh:
-		return serveErr
-	case <-sigCtx.Done():
+		return "", serveErr
+	case <-serveCtx.Done():
 		slog.Info("shutting down chorus MCP server")
 		shutCtx, cancelShut := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancelShut()
 		if shutErr := httpServer.Shutdown(shutCtx); shutErr != nil {
-			return fmt.Errorf("shutdown http server: %w", shutErr)
+			return "", fmt.Errorf("shutdown http server: %w", shutErr)
 		}
-		return <-errCh
+		if serveErr := <-errCh; serveErr != nil {
+			return "", serveErr
+		}
+		if restartOn := next.Load(); restartOn != nil {
+			return *restartOn, nil
+		}
+		return "", nil
 	}
 }
 
