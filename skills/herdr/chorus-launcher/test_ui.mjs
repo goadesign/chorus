@@ -199,6 +199,24 @@ test('update failure shows the CLI error without losing rows or automatically re
   assert.equal(h.launches.length, 0);
 });
 
+test('a legacy server exposes its manual restart instruction and never reports completion', async () => {
+  const manual = "installed chorus v0.10.0 and refreshed integrations, but the running server cannot update itself; finish the update by running 'chorus up' with the flags and REDIS_PASSWORD it was started with";
+  const h = harness({ commandResult(command, args) {
+    if (command !== 'chorus' || args[0] !== 'update') return;
+    return args.includes('-check')
+      ? { code: 0, stdout: 'Update available: chorus v0.9.0 -> v0.10.0', stderr: '' }
+      : { code: 1, stdout: '', stderr: manual };
+  } });
+  await h.settle();
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  assert.equal(h.view.update.status, 'error');
+  assert.ok(h.view.update.message.includes(manual));
+  assert.equal(h.closed.length, 0);
+  assert.equal(h.launches.length, 0);
+});
+
 test('duplicate clicks while Herdr is updating execute the installer once', async () => {
   let complete;
   const h = harness({ commandResult(command, args) {

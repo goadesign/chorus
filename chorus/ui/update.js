@@ -93,7 +93,9 @@
     render();
     try {
       const response = await fetch("/update", {
-        method: "POST", headers: { Accept: "application/json" },
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ version: available.latest_version }),
       });
       if (!response.ok) {
         const message = response.headers.get("Content-Type")?.includes("application/json")

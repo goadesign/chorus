@@ -275,7 +275,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, skills, and the Herdr launcher stay) |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
 | `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
-| `chorus update` | Check for a newer release, show the versions and release link, and ask before installing it. Refresh bundled skills, MCP configs, and the Herdr launcher, then restart the running server using its saved settings. Use `-check` to report availability without installing, `-yes` (or `-y`) to approve without a prompt, and `-addr` to select the server |
+| `chorus update` | Check for a newer release, show the versions and release link, and ask before installing it. Refresh bundled skills, MCP configs, and the Herdr launcher, then ask the running server to restart with its current settings. A server without the update endpoint stays running and needs a manual restart. Use `-check` to report availability without installing, `-yes` (or `-y`) to approve without a prompt, and `-addr` to select the server |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex, and install the Chorus launcher for Herdr when Herdr's settings directory exists) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
@@ -300,13 +300,20 @@ Run `chorus update` to check the latest release and approve installation. The
 updater uses Homebrew for Homebrew installations; other installations receive
 the release binary after its SHA-256 checksum has been verified. It refreshes
 the bundled integrations and restarts the running server at the selected
-address using its saved settings.
+address using its current settings, including its Redis connection.
 `chorus update -check` only reports availability. It does not install or restart.
+
+Servers from before the update endpoint was added, including v0.9.0, cannot
+restart themselves through it. The CLI installs the binary and refreshes global
+integrations, leaves the old server running, and prints how to finish with
+the new binary's `chorus up`. Supply the original server flags and
+`REDIS_PASSWORD` when restarting; the updater does not guess missing settings
+or save the password on disk.
 
 The web dashboard checks for a release when the page opens. When one is
 available, **Release notes** opens its details and **Update & Restart** approves
-installation. The page waits up to 30 seconds for the target server version to
-become healthy, then offers **Reload**. It keeps your unsent message and timeline
+installation of the displayed version. The page waits up to 30 seconds for that
+server version to become healthy, then offers **Reload**. It keeps your unsent message and timeline
 selection during the update and reconnects automatically. Reload is your
 choice: clicking it loads a fresh page and discards an unsent draft. If the
 server is still starting after 30 seconds, **Check again** checks its health

@@ -72,12 +72,29 @@ test('approval installs once, waits through a disconnect and old version, then o
   await h.click('btn-update-chorus');
   assert.equal(health, 3);
   assert.equal(h.calls.filter(call => call.options.method === 'POST').length, 1);
+  const approved = h.calls.find(call => call.options.method === 'POST').options;
+  assert.equal(approved.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(approved.body), { version: '0.10.0' });
   assert.equal(h.elements.get('btn-reload-ui').hidden, false);
   assert.match(h.elements.get('update-message').textContent, /v0.10.0 is running/);
   assert.equal(h.elements.get('send-text').value, 'Keep this unsent instruction');
   assert.equal(h.reloads, 0);
   h.click('btn-reload-ui');
   assert.equal(h.reloads, 1);
+});
+
+test('the approved version stays bound to the notice when another release appears before the click', async () => {
+  let latest = '0.10.0';
+  let target;
+  const h = harness((_url, options) => {
+    if (!options.method) return response(200, { ...available, latest_version: latest });
+    target = JSON.parse(options.body).version;
+    return response(200, { status: 'up_to_date', version: target });
+  });
+  await h.controller.start();
+  latest = '0.11.0';
+  await h.click('btn-update-chorus');
+  assert.equal(target, '0.10.0');
 });
 
 test('a changed dashboard keeps its existing Reload notice instead of offering installation', async () => {
