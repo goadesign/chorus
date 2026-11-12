@@ -225,10 +225,14 @@ def write_claude_mcp_config(app_home: Path, space: str, handle: str, connections
     payload = (json.dumps({"mcpServers": servers}, indent=2) + "\n").encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.fchmod(fd, 0o600)
-        os.write(fd, payload)
-    finally:
-        os.close(fd)
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
     return path
 
 

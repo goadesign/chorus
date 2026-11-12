@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import launch
 
@@ -962,6 +963,54 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual([(t["address"], t["state"]) for t in owner.terminals if t["state"] == "live"], [("t1", "live"), ("t2", "live")])
             self.assertFalse(reviewer_mcp.exists())
             self.assertTrue(guide_mcp.exists())
+
+    def test_roster_write_claude_mcp_config_unlinks_file_on_close_or_write_failure_after_bytes_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home, root = Path(directory) / "herdr", Path(directory) / "project"
+            root.mkdir()
+            token_file = Path(directory) / "claude.token"
+            token_file.write_bytes(b"secret-claude-token-close-fail\n")
+            conn = [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(token_file)}]
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {"role": "guide", "title": "Guide", "handle": "guide", "folder": str(root), "first_message": "Guide.", "connections": conn, "place": None},
+                    {"role": "builder", "title": "Builder", "handle": "builder", "folder": str(root), "first_message": "Build.", "connections": conn, "place": {"beside": "guide", "direction": "right"}},
+                ],
+            }))
+            mcp_dir = app_home / "data" / "chorus-launcher" / "mcp"
+            guide_mcp, builder_mcp = mcp_dir / "sp1--guide.json", mcp_dir / "sp1--builder.json"
+            claude_row = lambda rid: {"id": f"role:{rid}", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False}
+            real_close = os.close
+
+            # (1) First role fails on os.close after writing bytes -> zero panes and no remaining file.
+            def close_then_fail_always(fd):
+                real_close(fd)
+                raise OSError(5, "Input/output error on close")
+
+            owner_first = Herdr()
+            with mock.patch("launch.os.close", side_effect=close_then_fail_always):
+                with self.assertRaisesRegex(OSError, "Input/output error on close"):
+                    launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [claude_row("guide"), claude_row("builder")]}, owner_first.app, owner_first.core, app_home)
+            self.assertEqual(owner_first.terminals, [])
+            self.assertFalse(guide_mcp.exists())
+
+            # (2) Second role fails on os.close after writing bytes -> first pane and its MCP file remain untouched; zero new panes and no remaining file for builder.
+            def close_then_fail_on_builder(fd):
+                real_close(fd)
+                if builder_mcp.exists():
+                    raise OSError(5, "Input/output error on close")
+
+            owner = Herdr()
+            with mock.patch("launch.os.close", side_effect=close_then_fail_on_builder):
+                with self.assertRaisesRegex(OSError, "Input/output error on close"):
+                    launch.launch_team({"space": "sp1", "root": str(root), "swarm": "proj", "agents": [claude_row("guide"), claude_row("builder")]}, owner.app, owner.core, app_home)
+            self.assertEqual([(t["address"], t["state"]) for t in owner.terminals], [("t1", "live")])
+            self.assertTrue(guide_mcp.exists())
+            self.assertFalse(builder_mcp.exists())
 
     def test_roster_rejects_crlf_and_padded_credentials_and_delivers_identical_bytes_to_claude_and_codex(self):
         with tempfile.TemporaryDirectory() as directory:
