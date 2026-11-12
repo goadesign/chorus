@@ -1,7 +1,7 @@
 {
     "name": "Chorus Architecture",
     "description": "Views and visual styles for the Chorus multi-agent coordination architecture.",
-    "version": "0.9.0",
+    "version": "0.10.0",
     "model": {
         "softwareSystems": [
             {
