@@ -1,7 +1,7 @@
 <svg id="graph" width="1429.34375" height="1622.7354583740234" viewBox="0 0 1429.34375 1622.7354583740234" xmlns="http://www.w3.org/2000/svg"><script type="application/json"><![CDATA[{
   "name": "Chorus Multi-Agent Coordination Architecture",
   "description": "How LLM coding agents coordinate through the Chorus Goa-AI MCP server and Pulse primitives in Redis.",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "elements": [
     {
       "id": "17lwoy0",
