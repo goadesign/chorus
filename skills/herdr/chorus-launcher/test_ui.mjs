@@ -66,7 +66,7 @@ function catalogFor(key) {
 }
 
 // Native rendering is checked by Herdr; this host records interactive callbacks.
-function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/project', sharedStore = {}, commandResult } = {}) {
+function harness({ initial = [], roster = null, agents = DEFAULT_AGENTS.slice(0, 2), root = '/project', sharedStore = {}, commandResult } = {}) {
   const controls = new Map();
   const focus = [];
   const scrolls = [];
@@ -116,14 +116,20 @@ function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/p
   view.helper = async (action, request) => {
     if (action === 'inspect') {
       inspects += 1;
+      if (roster) return { roster: true, root: roster.root, swarm: roster.swarm, tab: roster.tab ?? null, rows: saved, session: 'session' };
       return { rows: saved, session: 'session', tab: saved.length ? 'tab' : null, swarm: saved.length ? 'project' : null };
     }
     if (action === 'models') return catalogFor(request.key);
     launches.push(JSON.parse(JSON.stringify(request)));
     let created = 0;
     for (const row of request.agents) {
-      if (saved.some(old => old.id === row.id)) continue;
-      saved = [...saved, { ...row, terminal: `t${saved.length + 1}` }];
+      if (saved.some(old => old.id === row.id && old.terminal)) continue;
+      const existingRole = saved.find(old => old.id === row.id);
+      if (existingRole) {
+        Object.assign(existingRole, row, { terminal: `t${created + 1}` });
+      } else {
+        saved = [...saved, { ...row, terminal: `t${saved.length + 1}` }];
+      }
       if (++created === failAfter) throw new Error('Injected partial launch failure');
     }
     return { created, reused: request.agents.length - created };
@@ -632,4 +638,86 @@ test('removing every new row gives an empty team and disables launch', async () 
   h.view.start(h.cx);
   await h.settle();
   assert.equal(h.launches.length, 0);
+});
+
+test('roster space loads project and role rows without running git, locks swarm and row list, and launches roles', async () => {
+  const h = harness({
+    agents: DEFAULT_AGENTS,
+    root: '/other/focused-worktree',
+    roster: { root: '/non-git/surla-project', swarm: 'surla-proj', tab: 'tb1' },
+    initial: [
+      { id: 'role:guide', role: 'guide', title: 'Guide', handle: 'guide', has_connections: true, key: 'claude', terminal: 't1', model: 'claude-opus-5-5', thinking: 'high', yolo: false },
+      { id: 'role:builder', role: 'builder', title: 'Builder', handle: 'builder', has_connections: false, key: null, terminal: null, model: null, thinking: null, yolo: null },
+      { id: 'role:test-writer', role: 'test-writer', title: 'Test writer', handle: 'test-writer', has_connections: false, key: null, terminal: null, model: null, thinking: null, yolo: null },
+    ],
+  });
+  await h.settle();
+  h.render();
+  assert.equal(h.execCalls.some(call => call.command === 'git'), false);
+  assert.equal(h.view.rosterMode, true);
+  assert.equal(h.view.root, '/non-git/surla-project');
+  assert.equal(h.view.swarm, 'surla-proj');
+  assert.equal(h.controls.has('chorus-add'), false);
+  assert.equal(h.controls.has('chorus-all'), false);
+  assert.equal(h.controls.has('role:builder-remove'), false);
+  assert.equal(h.controls.has('role:test-writer-remove'), false);
+  assert.deepEqual(h.view.rows.map(row => [row.id, row.title, row.terminal]), [
+    ['role:guide', 'Guide', 't1'],
+    ['role:builder', 'Builder', null],
+    ['role:test-writer', 'Test writer', null],
+  ]);
+
+  // Add agent and Add all installed are no-ops in roster mode.
+  h.view.addAgent(h.cx);
+  h.view.addAll(h.cx);
+  assert.equal(h.view.rows.length, 3);
+
+  // Switch Builder to Codex and launch; Guide is sent as a reference while Builder and Test writer launch with their role IDs.
+  h.view.rows[1].agentPicker.index = 1; // codex
+  h.click('role:builder-agent', 'on_confirm');
+  assert.equal(h.view.rows[1].key, 'codex');
+  assert.equal(h.view.ready(), true);
+  h.view.start(h.cx);
+  await h.settle();
+  assert.equal(h.launches.length, 1);
+  assert.equal(h.launches[0].root, '/non-git/surla-project');
+  assert.equal(h.launches[0].swarm, 'surla-proj');
+  assert.deepEqual(h.launches[0].agents[0], { id: 'role:guide' });
+  assert.equal(h.launches[0].agents[1].id, 'role:builder');
+  assert.equal(h.launches[0].agents[1].key, 'codex');
+  assert.equal(h.launches[0].agents[2].id, 'role:test-writer');
+});
+
+test('roster row with connections blocks unsupported agent apps with a plain reason and enables launch when switched to Claude or Codex', async () => {
+  const h = harness({
+    agents: DEFAULT_AGENTS,
+    roster: { root: '/projects/orders', swarm: 'orders', tab: null },
+    initial: [
+      { id: 'role:guide', role: 'guide', title: 'Guide', handle: 'guide', has_connections: true, key: null, terminal: null, model: null, thinking: null, yolo: null },
+    ],
+  });
+  await h.settle();
+  h.render();
+  // Default selection for a connected role is Claude Code (supported).
+  assert.equal(h.view.rows[0].key, 'claude');
+  assert.equal(h.view.ready(), true);
+
+  // Switching Guide to Cursor or Antigravity blocks launch with the explicit connection reason.
+  for (const [index, expectedName] of [[3, 'Cursor'], [2, 'Antigravity']]) {
+    h.render();
+    h.view.rows[0].agentPicker.index = index;
+    h.click('role:guide-agent', 'on_confirm');
+    h.render();
+    assert.equal(h.view.ready(), false);
+    assert.equal(h.view.blockingReason(), `Guide (${expectedName}): this agent app cannot yet be given a role's connections.`);
+    assert.equal(h.controls.get('chorus-start').disabled[0], true);
+  }
+
+  // Switching Guide to Codex re-enables Open Chorus team.
+  h.view.rows[0].agentPicker.index = 1; // codex
+  h.click('role:guide-agent', 'on_confirm');
+  h.render();
+  assert.equal(h.view.blockingReason(), '');
+  assert.equal(h.view.ready(), true);
+  assert.equal(h.controls.get('chorus-start').disabled[0], false);
 });
