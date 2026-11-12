@@ -66,12 +66,13 @@ function catalogFor(key) {
 }
 
 // Native rendering is checked by Herdr; this host records interactive callbacks.
-function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/project', sharedStore = {} } = {}) {
+function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/project', sharedStore = {}, commandResult } = {}) {
   const controls = new Map();
   const focus = [];
   const scrolls = [];
   const closed = [];
   const notices = [];
+  const execCalls = [];
   function element(id) {
     const data = {};
     const el = new Proxy(data, { get(target, key) {
@@ -102,7 +103,10 @@ function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/p
     notify(item) { notices.push(item); },
     shared: key => sharedStore[key],
     setShared: (key, value) => { sharedStore[key] = JSON.parse(JSON.stringify(value)); },
-    exec: async command => ({ code: 0, stdout: command === 'git' ? `${root}\n` : 'Chorus is running', stderr: '' }) };
+    exec: async (command, args, options) => {
+      execCalls.push({ command, args, options });
+      return commandResult?.(command, args, options) ?? { code: 0, stdout: command === 'git' ? `${root}\n` : 'Chorus is running', stderr: '' };
+    } };
   vm.runInNewContext(source, context);
   const view = new context.Launcher();
   let saved = initial;
@@ -125,13 +129,93 @@ function harness({ initial = [], agents = DEFAULT_AGENTS.slice(0, 2), root = '/p
     return { created, reused: request.agents.length - created };
   };
   view.init({}, cx);
-  return { view, cx, controls, launches, focus, scrolls, closed, notices, sharedStore,
+  return { view, cx, controls, launches, focus, scrolls, closed, notices, sharedStore, execCalls,
     get inspects() { return inspects; },
     async settle() { while (tasks.length) await tasks.shift(); },
     partialAfter(count) { failAfter = count; },
     render() { view.render(cx); },
     click(id, event = 'on_click', value = {}) { controls.get(id)[event][0](value, cx); } };
 }
+
+for (const notice of ['Update available: chorus v0.9.0 -> v0.10.0 (https://github.com/goadesign/chorus/releases/tag/v0.10.0)', 'Restart needed: chorus binary is v0.10.0, running server is v0.9.0']) {
+  test(`${notice.split(':')[0]} requires a click and preserves existing conversations and launch choices`, async () => {
+    const h = harness({
+      initial: [{ id: 'existing', key: 'claude', terminal: 't1', model: 'sonnet', thinking: 'high', yolo: false }],
+      commandResult(command, args) {
+        if (command !== 'chorus' || args[0] !== 'update') return;
+        return { code: 0, stdout: args.includes('-check') ? notice : 'Chorus updated', stderr: '' };
+      },
+    });
+    await h.settle();
+    assert.equal(h.view.update.message, notice);
+    assert.equal(h.execCalls.some(call => call.args.includes('-yes')), false);
+    h.view.addAgent(h.cx);
+    const rows = h.view.rows.map(row => [row.id, row.terminal, row.model, row.thinking]);
+    h.render();
+    h.click('chorus-update');
+    assert.equal(h.view.update.status, 'installing');
+    await h.settle();
+    assert.equal(h.view.update.status, 'ready');
+    assert.deepEqual(h.view.rows.map(row => [row.id, row.terminal, row.model, row.thinking]), rows);
+    assert.equal(h.launches.length, 0);
+    assert.equal(h.closed.length, 0);
+    const approved = h.execCalls.filter(call => call.args.includes('-yes'));
+    assert.equal(approved.length, 1);
+    assert.equal(approved[0].options.cwd, '/project');
+    assert.ok(approved[0].options.timeout > 10 * 60 * 1000);
+  });
+}
+
+test('a pending update check does not hold up team discovery', async () => {
+  let complete;
+  const h = harness({ commandResult(command, args) {
+    if (command === 'chorus' && args.includes('-check')) return new Promise(resolve => { complete = resolve; });
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.view.loading, false);
+  assert.ok(h.view.ready());
+  complete({ code: 1, stdout: '', stderr: 'GitHub unavailable' });
+  await h.settle();
+  assert.equal(h.view.update, null);
+  assert.ok(h.view.ready());
+});
+
+test('update failure shows the CLI error without losing rows or automatically retrying', async () => {
+  const h = harness({ commandResult(command, args) {
+    if (command !== 'chorus' || args[0] !== 'update') return;
+    return args.includes('-check')
+      ? { code: 0, stdout: 'Update available: chorus v0.9.0 -> v0.10.0', stderr: '' }
+      : { code: 1, stdout: '', stderr: 'binary directory is not writable' };
+  } });
+  await h.settle();
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  assert.match(h.view.update.message, /binary directory is not writable/);
+  assert.equal(h.view.error, '');
+  assert.equal(h.view.update.status, 'error');
+  assert.ok(h.view.ready());
+  assert.equal(h.execCalls.filter(call => call.args.includes('-yes')).length, 1);
+  assert.equal(h.launches.length, 0);
+});
+
+test('duplicate clicks while Herdr is updating execute the installer once', async () => {
+  let complete;
+  const h = harness({ commandResult(command, args) {
+    if (command !== 'chorus' || args[0] !== 'update') return;
+    if (args.includes('-check')) return { code: 0, stdout: 'Restart needed: chorus binary is v0.10.0, running server is v0.9.0', stderr: '' };
+    return new Promise(resolve => { complete = resolve; });
+  } });
+  await h.settle();
+  h.render();
+  h.click('chorus-update');
+  await new Promise(resolve => setImmediate(resolve));
+  h.click('chorus-update');
+  assert.equal(h.execCalls.filter(call => call.args.includes('-yes')).length, 1);
+  complete({ code: 0, stdout: 'Chorus updated', stderr: '' });
+  await h.settle();
+  assert.equal(h.view.update.status, 'ready');
+});
 
 test('successful launch dismisses the dialog without a dead post-close inspect while duplicate rows retain independent choices', async () => {
   const h = harness();

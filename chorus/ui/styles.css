@@ -460,6 +460,7 @@ body[data-theme="light"] .provider-openai {
   align-items: center;
   justify-content: center;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 6px 16px;
   background: var(--accent-soft);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
@@ -467,6 +468,20 @@ body[data-theme="light"] .provider-openai {
   font-size: 13px;
   font-weight: 500;
   flex-shrink: 0;
+}
+
+.update-banner > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-banner > a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+.update-banner > [hidden] {
+  display: none;
 }
 
 .update-banner[hidden] {

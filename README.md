@@ -275,6 +275,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration; run it before `brew uninstall chorus` (saved data in `~/.chorus`, agent registrations, skills, and the Herdr launcher stay) |
 | `chorus status` | Check whether Chorus is responding at `http://localhost:9440/healthz` and print the running server's version with its dashboard and MCP addresses |
 | `chorus ui` | Open the dashboard (`http://localhost:9440/`) in your browser; if Chorus isn't running, it tells you to run `chorus up` |
+| `chorus update` | Check for a newer release, show the versions and release link, and ask before installing it. Refresh bundled skills, MCP configs, and the Herdr launcher, then restart the running server using its saved settings. Use `-check` to report availability without installing, `-yes` (or `-y`) to approve without a prompt, and `-addr` to select the server |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex, and install the Chorus launcher for Herdr when Herdr's settings directory exists) |
 | `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
@@ -292,6 +293,38 @@ works even when the shortcut is skipped. Unchanged files are left untouched so
 setup keeps an open launcher dialog intact. A symlinked launcher directory is updated at its
 target. Set `CHORUS_NO_SETUP=1` to skip integrations during `chorus up` or the
 curl install.
+
+### Updating Chorus
+
+Run `chorus update` to check the latest release and approve installation. The
+updater uses Homebrew for Homebrew installations; other installations receive
+the release binary after its SHA-256 checksum has been verified. It refreshes
+the bundled integrations and restarts the running server at the selected
+address using its saved settings. Running from a project that already has
+`.agents/skills/chorus/SKILL.md` also refreshes that project's installation.
+`chorus update -check` only reports availability. It does not install or restart.
+
+The web dashboard checks for a release when the page opens. When one is
+available, **Release notes** opens its details and **Update & Restart** approves
+installation. The page waits up to 30 seconds for the target server version to
+become healthy, then offers **Reload**. It keeps your unsent message and timeline
+selection during the update and reconnects automatically. Reload is your
+choice: clicking it loads a fresh page and discards an unsent draft. If the
+server is still starting after 30 seconds, **Check again** checks its health
+without repeating the installation. The existing **Dashboard updated / Reload**
+notice takes precedence when the page's UI files have already changed.
+
+The Herdr launcher also checks for updates without delaying team discovery.
+Its **Update & restart** button approves the same CLI operation, keeping
+existing panes and unopened team choices. Installation failures show the
+problem and let you retry. A failed availability check leaves both views usable.
+
+The dashboard's update action is available only through the standalone Chorus
+server on this machine. A Go application embedding `chorus.NewHTTPHandler`
+does not acquire installation or restart controls. After an update that changes
+the MCP tool definitions, reconnect your coding clients so they read the new
+definitions. Follow a release's upgrade instructions before crossing an
+incompatible shared-Redis format boundary, as described in the Tool Reference.
 
 #### CLI & Server Flags (`chorus` / `chorus serve` / `chorus up`)
 
@@ -352,7 +385,7 @@ func main() {
 
 ## Tool Reference
 
-All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (use an explicit name from the user or lead, otherwise keep the swarm already established for the task; only when neither is known, use the git repository root's basename or ask the user if outside Git), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the model the agent is running as exposed by its runtime or system prompt, kept as given (for example `Claude Opus 5.5`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Upgrading a running server from a version without this field drops each registration's saved role and model: existing registered participants show neither until they call `who` with `model` (and `role`, if they had one), preserving their current read positions (use `join` only to create or subscribe to missing channels, as `join` resets read watermarks to channel heads). Other calls (`send`, `read`) keep a registration's model but never add one. After upgrading, rerun the upgraded binary's `chorus setup` with the same `-addr` and `-global` flags used for your existing installation to refresh installed agent skills, then reconnect MCP clients so they re-read `tools/list`. For example, a person whose handle `@raphael` is already registered in swarm `auth` without a declared model can restore it with `who` (`{"swarm": "auth", "agent": "raphael", "model": "human", "role": "Product Lead"}`) and continue sending from the dashboard.
+All five tools are served at `POST /mcp`. Each tool accepts `agent` (your handle without `@`, required). `who` and `join` also require `swarm` (use an explicit name from the user or lead, otherwise keep the swarm already established for the task; only when neither is known, use the git repository root's basename or ask the user if outside Git), which binds `agent` to that swarm so `leave`, `send`, and `read` require only `agent`. `who` and `join` also require `model`: the model the agent is running as exposed by its runtime or system prompt, kept as given (for example `Claude Opus 5.5`; a person using the dashboard sends `human`). Chorus stores it with the agent and shows it in the dashboard. A call without it fails with a missing-field error for `model`. Upgrading a running server from a version without this field drops each registration's saved role and model: existing registered participants show neither until they call `who` with `model` (and `role`, if they had one), preserving their current read positions (use `join` only to create or subscribe to missing channels, as `join` resets read watermarks to channel heads). Other calls (`send`, `read`) keep a registration's model but never add one. `chorus update` refreshes installed integrations. If you replace the binary through a package manager or another manual installation, run the upgraded binary's `chorus up` to refresh integrations and restart the server, or `chorus setup` with the same `-addr` and `-global` flags for a setup-only refresh. Reconnect MCP clients so they re-read `tools/list`. For example, a person whose handle `@raphael` is already registered in swarm `auth` without a declared model can restore it with `who` (`{"swarm": "auth", "agent": "raphael", "model": "human", "role": "Product Lead"}`) and continue sending from the dashboard.
 
 Chorus `0.6.0` adopts Pulse `v1.11.0`, which changes the replicated-map change format and Chorus presence record layout, so every Chorus process sharing the same saved swarms and maps in Redis must cross this upgrade boundary together. Before starting any upgraded binary, stop every Chorus server and `chorus serve` instance connected to that shared Redis state; use the same stop-all-before-start ordering when downgrading across this boundary. Keep the existing Redis data in place—do not flush Redis, delete map metadata, or restore a stale snapshot—so messages, channel subscriptions, and read positions remain intact subject to the configured `-swarm-ttl`, `-stream-max-len`, and `-online-window` retention windows. After upgrading, existing participants call `who` with `model` and `role` (rather than `join`, which resets read positions to channel heads) to restore their declarations; after a downgrade, calling the older server's `who` restores roles.
 
