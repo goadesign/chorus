@@ -4,6 +4,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,21 +30,29 @@ class Herdr:
         if command == "tab.select":
             return {"ok": True}
         if command == "terminal.kill":
-            for tab in self.listing["spaces"][0]["tabs"]:
-                tab["terminals"] = [p for p in tab["terminals"] if p["terminal"] != args["terminal"]]
+            for space in self.listing["spaces"]:
+                for tab in space["tabs"]:
+                    tab["terminals"] = [p for p in tab["terminals"] if p["terminal"] != args["terminal"]]
             next(t for t in self.terminals if t["address"] == args["terminal"])["state"] = "exited"
             return {"ok": True}
         if command == "tab.new":
-            tab = {"id": "tb1", "terminals": []}
-            self.listing["spaces"][0]["tabs"].append(tab)
+            space = next(s for s in self.listing["spaces"] if s["id"] == args["space"])
+            tab_id = "tb1" if space["id"] == "sp1" else f"tb-{space['id']}"
+            tab = {"id": tab_id, "terminals": []}
+            space["tabs"].append(tab)
         elif command == "pane.split":
-            tab = next(t for t in self.listing["spaces"][0]["tabs"] if any(p["pane"] == args["pane"] for p in t["terminals"]))
+            space, tab = next(
+                (s, t)
+                for s in self.listing["spaces"]
+                for t in s["tabs"]
+                if any(p["pane"] == args["pane"] for p in t["terminals"])
+            )
         else:
             raise AssertionError(command)
         ordinal = len(self.terminals) + 1
         pane, terminal = f"p{ordinal}", f"t{ordinal}"
         tab["terminals"].append({"pane": pane, "terminal": terminal})
-        self.terminals.append({"address": terminal, "state": "live", "labels": {"herdr.space": "sp1", "herdr.tab": tab["id"]}})
+        self.terminals.append({"address": terminal, "state": "live", "labels": {"herdr.space": space["id"], "herdr.tab": tab["id"]}})
         return {"tab": tab["id"], "pane": pane, "terminal": terminal}
 
     def core(self, argv):
@@ -372,6 +381,549 @@ class LaunchTests(unittest.TestCase):
             result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
             self.assertEqual(json.loads(result.stdout), [str(root.resolve()), ["a 'quoted' prompt; $(touch nope)"]])
             self.assertFalse((root / "nope").exists())
+
+    def test_roster_three_roles_starts_handles_folders_messages_labels_and_placement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "payments"
+            builder_dir = root / "worktrees" / "builder"
+            tester_dir = root / "worktrees" / "test-writer"
+            for folder in (root, builder_dir, tester_dir):
+                folder.mkdir(parents=True)
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "payments",
+                "roles": [
+                    {
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": "guide",
+                        "folder": str(root),
+                        "first_message": "Shape the change with the user.",
+                        "connections": [],
+                        "place": None,
+                    },
+                    {
+                        "role": "builder",
+                        "title": "Builder",
+                        "handle": "builder",
+                        "folder": str(builder_dir),
+                        "first_message": "Implement the assigned package.",
+                        "connections": [],
+                        "place": {"beside": "guide", "direction": "right"},
+                    },
+                    {
+                        "role": "test-writer",
+                        "title": "Test writer",
+                        "handle": "test-writer",
+                        "folder": str(tester_dir),
+                        "first_message": "Write acceptance tests from the contract.",
+                        "connections": [],
+                        "place": {"beside": "builder", "direction": "down"},
+                    },
+                ],
+            }))
+            owner = Herdr()
+            inspected = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertTrue(inspected["roster"])
+            self.assertEqual(inspected["root"], str(root))
+            self.assertEqual(inspected["swarm"], "payments")
+            self.assertEqual([r["id"] for r in inspected["rows"]], ["role:guide", "role:builder", "role:test-writer"])
+            payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "payments",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "xhigh", "yolo": True},
+                    {"id": "role:test-writer", "key": "antigravity", "name": "Antigravity", "run": ["agy"], "model": "gemini-4-argon", "thinking": "high", "yolo": False},
+                ],
+            }
+            result = launch.launch_team(payload, owner.app, owner.core, app_home)
+            self.assertEqual(result, {"tab": "tb1", "created": 3, "reused": 0})
+            creations = [(name, args) for name, args in owner.commands if name in ("tab.new", "pane.split")]
+            self.assertEqual([name for name, _ in creations], ["tab.new", "pane.split", "pane.split"])
+            self.assertEqual(creations[0][1]["folder"], str(root))
+            self.assertEqual(creations[1][1]["pane"], "p1")
+            self.assertEqual(creations[1][1]["direction"], "right")
+            self.assertEqual(creations[1][1]["argv"][4], str(builder_dir))
+            self.assertEqual(creations[2][1]["pane"], "p2")
+            self.assertEqual(creations[2][1]["direction"], "down")
+            self.assertEqual(creations[2][1]["argv"][4], str(tester_dir))
+            self.assertIn("using handle 'guide' and role 'Guide'", creations[0][1]["argv"][-1])
+            self.assertIn("Shape the change with the user.", creations[0][1]["argv"][-1])
+            self.assertIn("using handle 'builder' and role 'Builder'", creations[1][1]["argv"][-1])
+            self.assertIn("Implement the assigned package.", creations[1][1]["argv"][-1])
+            self.assertIn("using handle 'test-writer' and role 'Test writer'", creations[2][1]["argv"][-1])
+            self.assertIn("Write acceptance tests from the contract.", creations[2][1]["argv"][-1])
+            self.assertEqual(
+                [(t["labels"]["chorus.handle"], t["labels"]["chorus.role"]) for t in owner.terminals],
+                [("guide", "guide"), ("builder", "builder"), ("test-writer", "test-writer")],
+            )
+            reinspected = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in reinspected["rows"]], ["t1", "t2", "t3"])
+            self.assertEqual([r["handle"] for r in reinspected["rows"]], ["guide", "builder", "test-writer"])
+            self.assertEqual([r["role"] for r in reinspected["rows"]], ["guide", "builder", "test-writer"])
+
+    def test_roster_adding_role_to_running_team_and_restarting_first_role_keep_one_tab(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roles = [
+                {
+                    "role": "guide",
+                    "title": "Guide",
+                    "handle": "guide",
+                    "folder": str(root),
+                    "first_message": "Lead the project.",
+                    "connections": [],
+                    "place": None,
+                },
+                {
+                    "role": "builder",
+                    "title": "Builder",
+                    "handle": "builder",
+                    "folder": str(root),
+                    "first_message": "Build the service.",
+                    "connections": [],
+                    "place": {"beside": "guide", "direction": "right"},
+                },
+            ]
+            roster_file.write_text(json.dumps({"root": str(root), "swarm": "proj", "roles": roles}))
+            owner = Herdr()
+            initial_payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": None, "thinking": None, "yolo": False},
+                ],
+            }
+            self.assertEqual(launch.launch_team(initial_payload, owner.app, owner.core, app_home), {"tab": "tb1", "created": 2, "reused": 0})
+            roles.append({
+                "role": "reviewer",
+                "title": "Reviewer",
+                "handle": "reviewer",
+                "folder": str(root),
+                "first_message": "Review the diff.",
+                "connections": [],
+                "place": {"beside": "builder", "direction": "down"},
+            })
+            roster_file.write_text(json.dumps({"root": str(root), "swarm": "proj", "roles": roles}))
+            add_payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide"},
+                    {"id": "role:builder"},
+                    {"id": "role:reviewer", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                ],
+            }
+            self.assertEqual(launch.launch_team(add_payload, owner.app, owner.core, app_home), {"tab": "tb1", "created": 1, "reused": 2})
+            self.assertEqual(sum(name == "tab.new" for name, _ in owner.commands), 1)
+            self.assertEqual(owner.commands[-1][0], "pane.split")
+            self.assertEqual(owner.commands[-1][1]["pane"], "p2")
+            self.assertEqual(owner.commands[-1][1]["direction"], "down")
+
+            # If the first role (place: null) exits while the team tab remains open, restarting it splits in the existing tab.
+            owner.app(["do", "terminal.kill", json.dumps({"terminal": "t1"})])
+            restart_first = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                    {"id": "role:builder"},
+                    {"id": "role:reviewer"},
+                ],
+            }
+            self.assertEqual(launch.launch_team(restart_first, owner.app, owner.core, app_home), {"tab": "tb1", "created": 1, "reused": 2})
+            self.assertEqual(sum(name == "tab.new" for name, _ in owner.commands), 1)
+            self.assertEqual(owner.commands[-1][0], "pane.split")
+            self.assertEqual(owner.commands[-1][1]["pane"], "p2")
+            self.assertEqual(owner.commands[-1][1]["direction"], "right")
+
+    def test_roster_supports_empty_non_git_folder_two_projects_in_one_repo_and_other_focused_worktree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            empty_non_git = Path(directory) / "empty-non-git"
+            monorepo = Path(directory) / "monorepo"
+            proj_a = monorepo / "services" / "orders"
+            proj_b = monorepo / "services" / "billing"
+            other_worktree = Path(directory) / "other-worktree"
+            for folder in (empty_non_git, proj_a, proj_b, other_worktree):
+                folder.mkdir(parents=True)
+            rosters_dir = app_home / "data" / "chorus-launcher" / "rosters"
+            rosters_dir.mkdir(parents=True)
+            for space_id, root_dir, swarm_name, handle in (
+                ("sp-empty", empty_non_git, "empty-proj", "guide-empty"),
+                ("sp-alpha", proj_a, "orders", "guide-orders"),
+                ("sp-beta", proj_b, "billing", "guide-billing"),
+            ):
+                (rosters_dir / f"{space_id}.json").write_text(json.dumps({
+                    "root": str(root_dir),
+                    "swarm": swarm_name,
+                    "roles": [{
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": handle,
+                        "folder": str(root_dir),
+                        "first_message": f"Start {swarm_name}.",
+                        "connections": [],
+                        "place": None,
+                    }],
+                }))
+            owner = Herdr()
+            owner.listing = {"spaces": [
+                {"id": "sp-empty", "tabs": []},
+                {"id": "sp-alpha", "tabs": []},
+                {"id": "sp-beta", "tabs": []},
+            ]}
+            for space_id, root_dir, swarm_name, handle, expected_tab in (
+                ("sp-empty", empty_non_git, "empty-proj", "guide-empty", "tb-sp-empty"),
+                ("sp-alpha", proj_a, "orders", "guide-orders", "tb-sp-alpha"),
+                ("sp-beta", proj_b, "billing", "guide-billing", "tb-sp-beta"),
+            ):
+                info = launch.inspect_team({"space": space_id, "root": ""}, owner.app, owner.core, app_home)
+                self.assertEqual(info["root"], str(root_dir))
+                self.assertEqual(info["swarm"], swarm_name)
+                res = launch.launch_team({
+                    "space": space_id,
+                    "root": str(root_dir),
+                    "swarm": swarm_name,
+                    "agents": [{"id": f"role:{handle}", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False}],
+                }, owner.app, owner.core, app_home)
+                self.assertEqual(res, {"tab": expected_tab, "created": 1, "reused": 0})
+
+            # Adding a second role in sp-alpha while another working copy is focused still uses sp-alpha's roster folders.
+            (rosters_dir / "sp-alpha.json").write_text(json.dumps({
+                "root": str(proj_a),
+                "swarm": "orders",
+                "roles": [
+                    {
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": "guide-orders",
+                        "folder": str(proj_a),
+                        "first_message": "Start orders.",
+                        "connections": [],
+                        "place": None,
+                    },
+                    {
+                        "role": "builder",
+                        "title": "Builder",
+                        "handle": "builder-orders",
+                        "folder": str(other_worktree),
+                        "first_message": "Build in worktree.",
+                        "connections": [],
+                        "place": {"beside": "guide-orders", "direction": "right"},
+                    },
+                ],
+            }))
+            inspected_alpha = launch.inspect_team({"space": "sp-alpha", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual(inspected_alpha["root"], str(proj_a))
+            self.assertEqual([r["terminal"] for r in inspected_alpha["rows"]], ["t2", None])
+            res_alpha = launch.launch_team({
+                "space": "sp-alpha",
+                "root": str(proj_a),
+                "swarm": "orders",
+                "agents": [
+                    {"id": "role:guide-orders"},
+                    {"id": "role:builder-orders", "key": "codex", "name": "Codex", "run": ["codex"], "model": None, "thinking": None, "yolo": False},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_alpha, {"tab": "tb-sp-alpha", "created": 1, "reused": 1})
+            self.assertEqual(owner.commands[-1][1]["argv"][4], str(other_worktree))
+
+    def test_roster_claude_and_codex_connections_keep_secrets_out_of_argv_labels_and_logs_and_clean_up_mcp_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            claude_secret = "secret-claude-token-998877"
+            codex_secret = "secret-codex-token-112233"
+            claude_token_file = Path(directory) / "guide.token"
+            codex_token_file = Path(directory) / "builder.token"
+            claude_token_file.write_text(claude_secret + "\n")
+            codex_token_file.write_text(codex_secret + "\n")
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": "guide",
+                        "folder": str(root),
+                        "first_message": "Coordinate the change.",
+                        "connections": [{
+                            "name": "surla",
+                            "url": "http://127.0.0.1:43127/mcp",
+                            "credential_file": str(claude_token_file),
+                        }],
+                        "place": None,
+                    },
+                    {
+                        "role": "builder",
+                        "title": "Builder",
+                        "handle": "builder",
+                        "folder": str(root),
+                        "first_message": "Build the change.",
+                        "connections": [{
+                            "name": "surla",
+                            "url": "http://127.0.0.1:43127/mcp",
+                            "credential_file": str(codex_token_file),
+                        }],
+                        "place": {"beside": "guide", "direction": "right"},
+                    },
+                ],
+            }))
+            owner = Herdr()
+            payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": None, "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["python3", "-c", "import os,sys,json; print(json.dumps([os.getcwd(), os.environ.get('CHORUS_MCP_TOKEN_0'), sys.argv[1:]]))"], "model": None, "thinking": None, "yolo": False},
+                ],
+            }
+            # If labeling fails on Claude's launch, the newly written MCP config file is unlinked immediately.
+            owner.fail_agent = "claude"
+            mcp_file = app_home / "data" / "chorus-launcher" / "mcp" / "sp1--guide.json"
+            with self.assertRaisesRegex(RuntimeError, "label failure"):
+                launch.launch_team(payload, owner.app, owner.core, app_home)
+            self.assertFalse(mcp_file.exists())
+
+            owner = Herdr()
+            res = launch.launch_team(payload, owner.app, owner.core, app_home)
+            self.assertEqual(res, {"tab": "tb1", "created": 2, "reused": 0})
+            self.assertTrue(mcp_file.is_file())
+            self.assertEqual(stat.S_IMODE(mcp_file.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(mcp_file.parent.stat().st_mode), 0o700)
+            mcp_payload = json.loads(mcp_file.read_text())
+            self.assertEqual(mcp_payload, {
+                "mcpServers": {
+                    "surla": {
+                        "type": "http",
+                        "url": "http://127.0.0.1:43127/mcp",
+                        "headers": {"Authorization": f"Bearer {claude_secret}"},
+                    }
+                }
+            })
+            creations = [(name, args) for name, args in owner.commands if name in ("tab.new", "pane.split")]
+            claude_argv = creations[0][1]["argv"]
+            self.assertIn("--mcp-config", claude_argv)
+            self.assertNotIn("--strict-mcp-config", claude_argv)
+            self.assertEqual(claude_argv[claude_argv.index("--mcp-config") + 1], str(mcp_file))
+            self.assertEqual(claude_argv[-2], "--")
+
+            # Verify neither secret appears anywhere in recorded commands or terminal labels.
+            serialized = json.dumps({"commands": owner.commands, "terminals": owner.terminals})
+            self.assertNotIn(claude_secret, serialized)
+            self.assertNotIn(codex_secret, serialized)
+
+            # Execute Codex's wrapped argv directly to prove the child receives CHORUS_MCP_TOKEN_0 in its env without exposing the token in argv.
+            codex_start_argv = creations[1][1]["argv"]
+            proc = subprocess.run(codex_start_argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
+            child_cwd, child_token, child_args = json.loads(proc.stdout)
+            self.assertEqual(child_cwd, str(root.resolve()))
+            self.assertEqual(child_token, codex_secret)
+            self.assertEqual(
+                child_args[:4],
+                ["-c", 'mcp_servers.surla.url="http://127.0.0.1:43127/mcp"', "-c", 'mcp_servers.surla.bearer_token_env_var="CHORUS_MCP_TOKEN_0"'],
+            )
+            self.assertEqual(child_args[4], "--")
+
+            # While guide's pane is live, inspect_team preserves sp1--guide.json; once guide's pane exits, inspect_team deletes it.
+            launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertTrue(mcp_file.exists())
+            owner.app(["do", "terminal.kill", json.dumps({"terminal": "t1"})])
+            launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertFalse(mcp_file.exists())
+
+            # Relaunching guide writes and overwrites sp1--guide.json with the updated token.
+            claude_token_file.write_text("rotated-claude-secret-445566\n")
+            relaunch_payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False},
+                    {"id": "role:builder"},
+                ],
+            }
+            launch.launch_team(relaunch_payload, owner.app, owner.core, app_home)
+            self.assertTrue(mcp_file.exists())
+            self.assertEqual(
+                json.loads(mcp_file.read_text())["mcpServers"]["surla"]["headers"]["Authorization"],
+                "Bearer rotated-claude-secret-445566",
+            )
+
+    def test_roster_rejects_unsupported_connection_clients_before_starting_anything(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            token_file = Path(directory) / "guide.token"
+            token_file.write_text("secret-token\n")
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [{
+                    "role": "guide",
+                    "title": "Guide",
+                    "handle": "guide",
+                    "folder": str(root),
+                    "first_message": "Guide the project.",
+                    "connections": [{
+                        "name": "surla",
+                        "url": "http://127.0.0.1:43127/mcp",
+                        "credential_file": str(token_file),
+                    }],
+                    "place": None,
+                }],
+            }))
+            for key, name in (("cursor", "Cursor"), ("antigravity", "Antigravity"), ("gemini", "Gemini"), ("opencode", "OpenCode")):
+                with self.subTest(client=key):
+                    owner = Herdr()
+                    payload = {
+                        "space": "sp1",
+                        "root": str(root),
+                        "swarm": "proj",
+                        "agents": [{"id": "role:guide", "key": key, "name": name, "run": [key], "model": None, "thinking": None, "yolo": False}],
+                    }
+                    with self.assertRaisesRegex(ValueError, "cannot yet be given a role's connections"):
+                        launch.launch_team(payload, owner.app, owner.core, app_home)
+                    self.assertEqual(owner.commands, [])
+
+    def test_roster_first_message_with_leading_dashes_and_quotes_arrives_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            tricky_message = "- check status --help 'single' \"double\" $(touch nope)"
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": "guide",
+                        "folder": str(root),
+                        "first_message": tricky_message,
+                        "connections": [],
+                        "place": None,
+                    },
+                    {
+                        "role": "builder",
+                        "title": "Builder",
+                        "handle": "builder",
+                        "folder": str(root),
+                        "first_message": tricky_message,
+                        "connections": [],
+                        "place": {"beside": "guide", "direction": "right"},
+                    },
+                ],
+            }))
+            owner = Herdr()
+            payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["python3", "-c", "import sys,json; print(json.dumps(sys.argv[1:]))"], "model": None, "thinking": None, "yolo": False},
+                    {"id": "role:builder", "key": "antigravity", "name": "Antigravity", "run": ["python3", "-c", "import sys,json; print(json.dumps(sys.argv[1:]))"], "model": None, "thinking": None, "yolo": False},
+                ],
+            }
+            launch.launch_team(payload, owner.app, owner.core, app_home)
+            creations = [(name, args) for name, args in owner.commands if name in ("tab.new", "pane.split")]
+            for _, args in creations:
+                proc = subprocess.run(args["argv"], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
+                received = json.loads(proc.stdout)
+                self.assertTrue(received[-1].endswith(tricky_message))
+            self.assertEqual(creations[0][1]["argv"][-2], "--")
+            self.assertEqual(creations[1][1]["argv"][-2], "--prompt-interactive")
+            self.assertFalse((root / "nope").exists())
+
+    def test_roster_invalid_or_missing_files_start_nothing_without_leaking_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            bad_token_file = Path(directory) / "bad.token"
+            bad_token_file.write_text("leaked-secret-line-1\nleaked-secret-line-2\n")
+            base_role = {
+                "role": "guide",
+                "title": "Guide",
+                "handle": "guide",
+                "folder": str(root),
+                "first_message": "Hello.",
+                "connections": [],
+                "place": None,
+            }
+            invalid_rosters = [
+                "{not-json",
+                json.dumps({"root": str(root / "missing"), "swarm": "proj", "roles": [base_role]}),
+                json.dumps({"root": str(root), "swarm": "proj", "roles": [{**base_role, "folder": str(root / "missing-folder")}]}),
+                json.dumps({"root": str(root), "swarm": "proj", "roles": [{**base_role, "connections": [{"name": "surla", "url": "http://127.0.0.1:8080/mcp", "credential_file": str(root / "missing.token")}]}]}),
+                json.dumps({"root": str(root), "swarm": "proj", "roles": [{**base_role, "connections": [{"name": "surla", "url": "http://127.0.0.1:8080/mcp", "credential_file": str(bad_token_file)}]}]}),
+                json.dumps({"root": str(root), "swarm": "proj", "roles": [{**base_role, "connections": [{"name": "chorus", "url": "http://127.0.0.1:8080/mcp", "credential_file": str(bad_token_file)}]}]}),
+                json.dumps({"root": str(root), "swarm": "proj", "roles": [{**base_role, "place": {"beside": "guide", "direction": "right"}}]}),
+            ]
+            for raw_text in invalid_rosters:
+                with self.subTest(roster=raw_text[:40]):
+                    roster_file.write_text(raw_text)
+                    owner = Herdr()
+                    with self.assertRaises(ValueError) as ctx:
+                        launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+                    self.assertNotIn("leaked-secret", str(ctx.exception))
+                    with self.assertRaises(ValueError) as ctx2:
+                        launch.launch_team({
+                            "space": "sp1",
+                            "root": str(root),
+                            "swarm": "proj",
+                            "agents": [{"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": None, "thinking": None, "yolo": False}],
+                        }, owner.app, owner.core, app_home)
+                    self.assertNotIn("leaked-secret", str(ctx2.exception))
+                    self.assertEqual(owner.commands, [])
+
+    def test_no_roster_path_records_byte_identical_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            (app_home / "data" / "chorus-launcher").mkdir(parents=True)
+            # Without a roster file, an initial empty-root inspect probe reports roster: False without touching Herdr.
+            probe_owner = Herdr()
+            self.assertEqual(launch.inspect_team({"space": "sp1", "root": ""}, probe_owner.app, probe_owner.core, app_home), {"roster": False})
+            self.assertEqual(probe_owner.commands, [])
+
+            owner_default, payload_default = Herdr(), request()
+            owner_with_home, payload_with_home = Herdr(), request()
+            res_default = launch.launch_team(payload_default, owner_default.app, owner_default.core, None)
+            res_with_home = launch.launch_team(payload_with_home, owner_with_home.app, owner_with_home.core, app_home)
+            self.assertEqual(res_default, res_with_home)
+
+            def scrub_uuid(obj):
+                return launch.re.sub(r"using handle '[0-9a-f]{32}'", "using handle '<uuid>'", json.dumps(obj, sort_keys=True))
+
+            self.assertEqual(scrub_uuid(owner_default.commands), scrub_uuid(owner_with_home.commands))
+            self.assertEqual(owner_default.terminals, owner_with_home.terminals)
 
 
 if __name__ == "__main__":

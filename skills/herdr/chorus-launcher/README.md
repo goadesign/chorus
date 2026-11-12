@@ -90,9 +90,93 @@ launched before those labels existed rather than guessing. **Reload team**
 refreshes the current pane list and keeps unopened rows.
 
 Herdr owns all tab, pane, and process records via terminal labels
-(`chorus.project`, `chorus.swarm`, `chorus.agent`, `chorus.row`, and
-`chorus.options`). A kernel lock serializes launches and is released if the
-helper exits.
+(`chorus.project`, `chorus.swarm`, `chorus.agent`, `chorus.row`,
+`chorus.options`, and for roster roles `chorus.handle` and `chorus.role`). A
+kernel lock serializes launches and is released if the helper exits.
+
+## Space rosters
+
+A caller such as Surla can supply a role roster for a Herdr space by writing
+`<herdrHome>/data/chorus-launcher/rosters/<space>.json`, where `<space>` is the
+space ID from `herdr-app ls`:
+
+```json
+{
+  "root": "/Users/alice/projects/payments",
+  "swarm": "payments",
+  "roles": [
+    {
+      "role": "guide",
+      "title": "Guide",
+      "handle": "guide",
+      "folder": "/Users/alice/projects/payments",
+      "first_message": "Help the user shape the change and coordinate the team.",
+      "connections": [
+        {
+          "name": "surla",
+          "url": "http://127.0.0.1:43127/mcp",
+          "credential_file": "/Users/alice/.surla/tokens/guide.token"
+        }
+      ],
+      "place": null
+    },
+    {
+      "role": "builder",
+      "title": "Builder",
+      "handle": "builder",
+      "folder": "/Users/alice/projects/payments/worktrees/builder",
+      "first_message": "Wait for the guide to assign implementation work.",
+      "connections": [],
+      "place": { "beside": "guide", "direction": "right" }
+    }
+  ]
+}
+```
+
+When a roster file exists for the focused space:
+- **Project and swarm come from the roster:** the dialog uses `root` and `swarm`
+  from `<space>.json` without running `git rev-parse --show-toplevel`, so an
+  empty project folder, multiple projects in one repository, or a focused pane
+  in another working copy still targets the space's project.
+- **One row per role in roster order:** each row displays its `title`, keeps
+  running roles read-only, and lets you choose the agent app, model, thinking
+  level, and YOLO setting for roles that are not running yet. **Add agent**,
+  **Add all installed**, and **Remove** are hidden because the caller owns the
+  role list.
+- **Explicit placement and prompts:** the first role opens the **Chorus ·
+  project** tab (`place: null`) in its `folder`; each subsequent role splits the
+  pane of the earlier `beside` handle (`right` or `down`) in its own `folder`.
+  Each new pane is labeled with `chorus.handle=<handle>` and
+  `chorus.role=<role>` and starts with a prompt that joins `#<swarm>` as
+  `<handle>` (`<title>`), keeps `CI=true chorus watch <handle> -wait 24h </dev/null`
+  running in the background, and then delivers `first_message`.
+- **Per-process role connections (Claude Code and Codex only):**
+  - **Claude Code (`claude`):** writes
+    `<herdrHome>/data/chorus-launcher/mcp/<space>--<handle>.json` with mode
+    `0600` inside `<herdrHome>/data/chorus-launcher/mcp` (`0700`) and passes
+    `--mcp-config <file>` without `--strict-mcp-config`, keeping the user's
+    existing MCP servers (including `chorus`) active. The file is overwritten on
+    each launch of that role and deleted when `inspect` next inspects the space
+    and that handle has no live pane (or immediately if labeling the new pane
+    fails). Its contents are never logged.
+  - **Codex (`codex`):** passes `-c mcp_servers.<name>.url="<url>"` and
+    `-c mcp_servers.<name>.bearer_token_env_var="CHORUS_MCP_TOKEN_<n>"` and
+    reads `credential_file` into only that process's environment at startup so
+    bearer tokens never appear in `argv`, process listings, terminal labels, or
+    error output.
+  - **Other agent apps:** if a role has `connections` and another client is
+    selected (such as Antigravity, Cursor, Gemini CLI, or OpenCode), the dialog
+    marks that row unavailable (`"This agent app cannot yet be given a role's
+    connections."`), disables **Open Chorus team**, and `launch.py` rejects the
+    launch before starting any process rather than launching without the role's
+    connections.
+  - **Connection names:** each connection `name` in a role must be distinct and
+    cannot be `"chorus"`. Same-name collision behavior against a user's own MCP
+    configuration is not verified from client help text; using distinct
+    service-specific connection names guards against collisions.
+
+When no roster file exists for the space, the launcher uses the focused Git
+checkout and ad-hoc team rows as described above.
 
 ## Updating Chorus
 

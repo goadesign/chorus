@@ -9,6 +9,9 @@ const SWARM = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 // Per-checkout launch preferences live in Herdr shared state; live terminals remain truth.
 const REPO_PREFIX = "chorus-launcher.repo:";
 
+// Only clients with verified per-process additive MCP flags may take role connections.
+const CONNECTION_CLIENTS = new Set(["claude", "codex"]);
+
 // Antigravity encodes effort suffixes directly into variant model IDs.
 const AGY_SUFFIX = /-(low|medium|high|xhigh|max)$/;
 
@@ -52,6 +55,7 @@ export default class ChorusLauncher extends View {
     this.rows = [];
     this.ordinal = 0;
     this.root = "";
+    this.rosterMode = false;
     this.error = "";
     this.busy = false;
     this.loading = true;
@@ -74,19 +78,31 @@ export default class ChorusLauncher extends View {
       try {
         if (!this.space || !this.folder) throw new Error("Focus a terminal in your project, then open Start Chorus again.");
         if (this.space.machine) throw new Error("This launcher supports local projects. Select a local terminal and try again.");
-        const [repo, agents, chorus] = await Promise.all([
-          exec("git", ["-C", this.folder, "rev-parse", "--show-toplevel"], { timeout: 10000 }),
+        const [initialTeam, agents, chorus] = await Promise.all([
+          this.helper("inspect", { space: this.space.id, root: "" }),
           knownAgents(),
           exec("chorus", ["status"], { timeout: 10000 }),
         ]);
-        if (repo.code !== 0) throw new Error("The focused terminal is outside a Git checkout. Open your project folder and try again.");
         if (chorus.code !== 0 || !chorus.stdout.includes(" is running")) throw new Error("Chorus is not running. Start it with chorus up, then open this launcher again.");
-        this.root = repo.stdout.replace(/\r?\n$/, "");
-        this.checkUpdate(cx);
         this.agents = agents.filter(a => a.installed);
-        await this.loadTeam(cx);
-        if (!this.rows.length) this.restoreOrAddAll(cx);
-        if (!this.agents.length && !this.rows.length) throw new Error("Herdr found no installed agent CLIs. Install an agent from Herdr's New Agent menu, then reopen Start Chorus.");
+        if (initialTeam?.roster) {
+          this.rosterMode = true;
+          this.root = initialTeam.root;
+          this.checkUpdate(cx);
+          this.applyTeam(initialTeam, cx);
+        } else {
+          const repo = await exec("git", ["-C", this.folder, "rev-parse", "--show-toplevel"], { timeout: 10000 });
+          if (repo.code !== 0) throw new Error("The focused terminal is outside a Git checkout. Open your project folder and try again.");
+          this.root = repo.stdout.replace(/\r?\n$/, "");
+          this.checkUpdate(cx);
+          if (Array.isArray(initialTeam?.rows)) {
+            this.applyTeam(initialTeam, cx);
+          } else {
+            await this.loadTeam(cx);
+          }
+          if (!this.rows.length) this.restoreOrAddAll(cx);
+        }
+        if (!this.agents.length && !this.rows.some(row => row.terminal)) throw new Error("Herdr found no installed agent CLIs. Install an agent from Herdr's New Agent menu, then reopen Start Chorus.");
       } catch (error) { this.error = String(error.message ?? error); }
       this.loading = false;
       cx.notify();
@@ -146,21 +162,56 @@ export default class ChorusLauncher extends View {
 
   // Keep the helper's output decoding and command failures at the process boundary.
   async helper(action, request) {
-    const reply = await exec("python3", [`${appHome()}/mods/chorus-launcher/launch.py`, appHome(), action, JSON.stringify(request)], { cwd: this.root, timeout: 120000 });
+    const reply = await exec("python3", [`${appHome()}/mods/chorus-launcher/launch.py`, appHome(), action, JSON.stringify(request)], { cwd: this.root || this.folder, timeout: 120000 });
     if (reply.code !== 0) throw new Error(reply.stderr.trim() || reply.stdout.trim() || "The launcher could not finish. Reload the team and try again.");
     return JSON.parse(reply.stdout);
   }
 
-  // Use the current terminals as truth, keeping only rows that have not opened yet.
-  async loadTeam(cx) {
-    const team = await this.helper("inspect", { space: this.space.id, root: this.root });
+  // Apply inspected team rows, keeping pending edits and caller roster order.
+  applyTeam(team, cx) {
     this.session ??= team.session;
+    if (team.roster) {
+      this.rosterMode = true;
+      this.root = team.root || this.root;
+      const previous = new Map(this.rows.map(row => [row.id, row]));
+      const savedPrefs = shared(`${REPO_PREFIX}${this.root}`);
+      const savedRoles = savedPrefs?.roles && typeof savedPrefs.roles === "object" ? savedPrefs.roles : {};
+      this.rows = team.rows.map(item => {
+        if (item.terminal) return this.newRow(item.key, cx, item);
+        const prior = previous.get(item.id);
+        if (prior && !prior.terminal) {
+          prior.role = item.role;
+          prior.title = item.title;
+          prior.handle = item.handle;
+          prior.hasConnections = Boolean(item.has_connections);
+          return prior;
+        }
+        const persisted = savedRoles[item.handle] ?? null;
+        const defaultKey = persisted && typeof persisted.key === "string" && this.agents.some(agent => agent.key === persisted.key)
+          ? persisted.key
+          : item.has_connections
+            ? (this.agents.find(agent => CONNECTION_CLIENTS.has(agent.key))?.key ?? this.agents[0]?.key ?? "claude")
+            : (this.agents[0]?.key ?? "claude");
+        return this.newRow(defaultKey, cx, item, persisted);
+      });
+      this.teamExists = true;
+      this.swarm = team.swarm;
+      this.input.set_value(this.swarm);
+      cx.notify();
+      return;
+    }
     const pending = this.rows.filter(row => !row.terminal && !team.rows.some(saved => saved.id === row.id));
     this.rows = [...team.rows.map(saved => this.newRow(saved.key, cx, saved)), ...pending];
     this.teamExists = Boolean(team.tab);
     this.swarm = team.swarm ?? (this.swarm || this.root.split("/").pop());
     this.input.set_value(this.swarm);
     cx.notify();
+  }
+
+  // Use the current terminals as truth, keeping only rows that have not opened yet.
+  async loadTeam(cx) {
+    const team = await this.helper("inspect", { space: this.space.id, root: this.root });
+    this.applyTeam(team, cx);
   }
 
   // Restore saved project preferences when no live team exists, falling back to installed defaults.
@@ -185,6 +236,24 @@ export default class ChorusLauncher extends View {
   // Persist only explicit user choices so failed or in-flight discovery never overwrites defaults.
   saveRepo() {
     if (!this.root) return;
+    if (this.rosterMode) {
+      const existing = shared(`${REPO_PREFIX}${this.root}`) ?? {};
+      const roles = { ...(existing.roles ?? {}) };
+      for (const row of this.rows) {
+        if (!row.handle || (row.terminal && !row.recorded)) continue;
+        const entry = { key: row.key, yolo: Boolean(row.yolo) };
+        if (row.terminal) {
+          entry.model = row.model;
+          if (row.key !== "cursor") entry.thinking = row.thinking;
+        } else {
+          if (row.chosenModel !== undefined && row.chosenModel !== "") entry.model = row.chosenModel;
+          if (row.key !== "cursor" && row.chosenThinking !== undefined) entry.thinking = row.chosenThinking;
+        }
+        roles[row.handle] = entry;
+      }
+      setShared(`${REPO_PREFIX}${this.root}`, { ...existing, swarm: this.swarm, roles });
+      return;
+    }
     const savable = this.rows.filter(row => !row.terminal || row.recorded);
     if (this.rows.length > 0 && savable.length === 0) return;
     setShared(`${REPO_PREFIX}${this.root}`, {
@@ -206,15 +275,20 @@ export default class ChorusLauncher extends View {
   // Retain input and focus state for one row; undefined chosen values inherit verified defaults.
   newRow(key, cx, saved = null, persisted = null) {
     const self = this;
+    const hasSaved = Boolean(saved?.terminal);
     const persistedModel = persisted && "model" in persisted && persisted.model !== "" ? (persisted.model ?? null) : undefined;
     const row = {
       id: saved?.id ?? `${this.session}-${++this.ordinal}`,
+      role: saved?.role ?? null,
+      title: saved?.title ?? null,
+      handle: saved?.handle ?? null,
+      hasConnections: Boolean(saved?.has_connections),
       key,
       terminal: saved?.terminal ?? null,
-      chosenModel: saved ? (saved.model || null) : persistedModel,
-      chosenThinking: key === "cursor" ? undefined : (saved ? (saved.thinking ?? null) : (persisted && "thinking" in persisted ? (persisted.thinking ?? null) : undefined)),
-      yolo: saved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
-      recorded: saved ? saved.yolo !== null : true,
+      chosenModel: hasSaved ? (saved.model || null) : persistedModel,
+      chosenThinking: key === "cursor" ? undefined : (hasSaved ? (saved.thinking ?? null) : (persisted && "thinking" in persisted ? (persisted.thinking ?? null) : undefined)),
+      yolo: hasSaved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
+      recorded: hasSaved ? saved.yolo !== null : true,
       custom: false,
       input: InputState.new({ placeholder: "Exact model ID" }),
       remove: cx.focus_handle(),
@@ -302,7 +376,7 @@ export default class ChorusLauncher extends View {
 
   // Repeated apps are intentional: each row starts a distinct conversation.
   addAgent(cx) {
-    if (!this.agents.length || this.busy || this.loading) return;
+    if (this.rosterMode || !this.agents.length || this.busy || this.loading) return;
     this.rows.push(this.newRow(this.agents[0].key, cx));
     this.saveRepo();
     cx.notify();
@@ -310,6 +384,7 @@ export default class ChorusLauncher extends View {
 
   // Preserve running and edited rows while filling missing installed apps once each.
   addAll(cx) {
+    if (this.rosterMode) return;
     for (const agent of this.agents) {
       if (!this.rows.some(row => row.key === agent.key)) this.rows.push(this.newRow(agent.key, cx));
     }
@@ -372,21 +447,25 @@ export default class ChorusLauncher extends View {
     for (let index = 0; index < this.rows.length; index += 1) {
       const row = this.rows[index];
       if (row.terminal) continue;
+      const label = row.title || `Agent ${index + 1}`;
       const agent = this.agents.find(item => item.key === row.key);
       const name = agent?.name ?? row.key;
       const details = agent?.details;
-      if (row.custom && !row.model) return `Agent ${index + 1} (${name}): enter a model ID or choose another model.`;
+      if (row.hasConnections && !CONNECTION_CLIENTS.has(row.key)) {
+        return `${label} (${name}): this agent app cannot yet be given a role's connections.`;
+      }
+      if (row.custom && !row.model) return `${label} (${name}): enter a model ID or choose another model.`;
       if (!details) return `Checking client options for ${name}…`;
       if ((row.chosenModel === undefined && !row.model && MODEL_DEFAULTS[row.key]?.id) || (row.model && !details.model_supported)) {
-        return `Agent ${index + 1} (${name}): retry client options or choose App default model.`;
+        return `${label} (${name}): retry client options or choose App default model.`;
       }
       const levels = this.thinkingLevels(row, details);
       const thinkingValid = !row.thinking || (row.key !== "cursor" && Boolean(details.thinking_supported) && levels.includes(row.thinking));
       if (!thinkingValid) {
-        return `Agent ${index + 1} (${name}): thinking level "${THINKING_NAMES[row.thinking] ?? row.thinking}" is unavailable for this model; choose another thinking level.`;
+        return `${label} (${name}): thinking level "${THINKING_NAMES[row.thinking] ?? row.thinking}" is unavailable for this model; choose another thinking level.`;
       }
       if (row.yolo && !details.yolo_flag) {
-        return `Agent ${index + 1} (${name}): YOLO mode could not be verified; retry client options or turn YOLO off.`;
+        return `${label} (${name}): YOLO mode could not be verified; retry client options or turn YOLO off.`;
       }
     }
     return "";
@@ -461,9 +540,11 @@ export default class ChorusLauncher extends View {
   // Show immutable launch settings for existing panes and editable controls for new ones.
   renderRow(row, index) {
     const t = theme();
+    const label = row.title || `Agent ${index + 1}`;
     const agent = this.agents.find(agent => agent.key === row.key);
     const details = agent?.details;
     const editable = !row.terminal && !this.busy;
+    const connectionBlocked = !row.terminal && row.hasConnections && !CONNECTION_CLIENTS.has(row.key);
     const entry = !row.custom ? this.modelEntry(row, details) : null;
     const selectedModelId = row.custom ? "__custom__" : entry ? entry.id : (row.model ?? "");
     const catalog = details?.models ?? [];
@@ -488,8 +569,8 @@ export default class ChorusLauncher extends View {
     const name = agent?.name ?? row.key;
     return v_flex().id(row.id).flex_none().gap(8).py(12).border_b_1().border_color(t.border)
       .child(h_flex().items_end().gap(10)
-        .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child(`Agent ${index + 1}`))
-          .child(row.terminal ? div().h(36).py(8).child(name) : this.select(`${row.id}-agent`, `Agent ${index + 1} client`, row.key,
+        .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child(label))
+          .child(row.terminal ? div().h(36).py(8).child(name) : this.select(`${row.id}-agent`, `${label} client`, row.key,
             this.agents.map(a => ({ id: a.key, name: a.name })), row.agentPicker,
             key => {
               row.key = key;
@@ -502,7 +583,7 @@ export default class ChorusLauncher extends View {
             }, editable)))
         .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Model"))
           .child(row.terminal ? div().h(36).py(8).truncate().child(row.recorded ? row.model ?? "App default at launch" : "Not recorded")
-            : this.select(`${row.id}-model`, `Agent ${index + 1} model`, selectedModelId, modelOptions, row.modelPicker,
+            : this.select(`${row.id}-model`, `${label} model`, selectedModelId, modelOptions, row.modelPicker,
               model => {
                 row.custom = model === "__custom__";
                 const prevVariant = row.key === "cursor" && !row.custom ? Object.entries(entry?.variants ?? {}).find(([, slug]) => slug === row.model)?.[0] : null;
@@ -518,7 +599,7 @@ export default class ChorusLauncher extends View {
               }, editable && Boolean(details))))
         .child(v_flex().w(170).min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Thinking"))
           .child(row.terminal ? div().h(36).py(8).truncate().child(row.recorded ? recordedThinking : "Not recorded")
-            : this.select(`${row.id}-thinking`, `Agent ${index + 1} thinking`, thinking.value, thinking.options, row.thinkingPicker,
+            : this.select(`${row.id}-thinking`, `${label} thinking`, thinking.value, thinking.options, row.thinkingPicker,
               level => {
                 if (row.key === "cursor") {
                   if (entry?.variants?.[level]) row.chosenModel = entry.variants[level];
@@ -527,15 +608,15 @@ export default class ChorusLauncher extends View {
                 }
                 this.saveRepo();
               }, editable && thinking.enabled)))
-        .when(!row.terminal, el => el.child(this.button(`${row.id}-remove`, "Remove", row.remove, cx => {
+        .when(!row.terminal && !this.rosterMode, el => el.child(this.button(`${row.id}-remove`, "Remove", row.remove, cx => {
           this.rows = this.rows.filter(item => item.id !== row.id);
           this.picker = null;
           this.saveRepo();
           cx.notify();
         }, editable))))
-      .when(row.custom && !row.terminal, el => el.child(Input.new(row.input).accessibility_label(`Agent ${index + 1} exact model ID`).w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background)))
+      .when(row.custom && !row.terminal, el => el.child(Input.new(row.input).accessibility_label(`${label} exact model ID`).w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background)))
       .child(h_flex().items_center().gap(9)
-        .when(!row.terminal, el => el.child(Checkbox.new(`${row.id}-yolo`).accessibility_label(`Agent ${index + 1} YOLO mode`).checked(row.yolo)
+        .when(!row.terminal, el => el.child(Checkbox.new(`${row.id}-yolo`).accessibility_label(`${label} YOLO mode`).checked(row.yolo)
           .disabled(!editable || (!details?.yolo_flag && !row.yolo)).on_change((checked, cx) => { row.yolo = checked; this.saveRepo(); cx.notify(); })
           .child(h_flex().gap(8).items_center()
             .child(div().size(16).border_1().rounded(3).border_color(row.yolo ? t.accent : t.input).bg(row.yolo ? t.accent : t.background)
@@ -544,6 +625,7 @@ export default class ChorusLauncher extends View {
         .child(div().text_size(12).text_color(t.muted).child(row.terminal
           ? `Existing pane · ${row.recorded ? row.yolo ? `YOLO · ${YOLO_EFFECT[row.key]}` : "Client settings at launch" : "Launch settings not recorded"}`
           : row.yolo ? details?.yolo_flag ? YOLO_EFFECT[row.key] : "YOLO not verified · retry or turn it off to continue" : agent?.loading || !details ? "Checking client options…" : details.yolo_flag ? "Off · use client settings" : "YOLO unavailable · use client settings")))
+      .when(connectionBlocked, el => el.child(div().text_size(12).text_color(t.blocked).child("This agent app cannot yet be given a role's connections.")))
       .when(!row.terminal && Boolean(details?.note), el => el.child(div().text_size(12).text_color(t.muted).child(details.note)))
       .when(!row.terminal && Boolean(details?.error), el => el.child(this.button(`${row.id}-retry`, "Retry client options", row.retry, cx => {
         cx.spawn(async cx => this.loadModels(agent, cx));
@@ -554,7 +636,7 @@ export default class ChorusLauncher extends View {
   render(cx) {
     const t = theme();
     const pending = this.rows.filter(row => !row.terminal);
-    const supported = pending.filter(row => row.yolo || this.agents.find(agent => agent.key === row.key)?.details?.yolo_flag);
+    const supported = pending.filter(row => (!row.hasConnections || CONNECTION_CLIENTS.has(row.key)) && (row.yolo || this.agents.find(agent => agent.key === row.key)?.details?.yolo_flag));
     const allYolo = supported.length > 0 && supported.every(row => row.yolo);
     const reason = !this.loading && !this.busy && !this.error && Boolean(this.root) && SWARM.test(this.swarm) && this.rows.length > 0 ? this.blockingReason() : "";
     return v_flex().id("chorus-launcher").size_full().p(22).gap(14).bg(t.popover).text_color(t.foreground).track_focus(this.handle)
@@ -568,11 +650,11 @@ export default class ChorusLauncher extends View {
         .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Project"))
           .child(div().text_size(13).truncate().child(this.root || this.folder || "Focus a project terminal")))
         .child(v_flex().w(210).gap(5).child(div().text_size(12).text_color(t.muted).child("Chorus name"))
-          .child(this.teamExists ? div().h(36).py(8).child(this.swarm) : Input.new(this.input).accessibility_label("Chorus name").w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background))))
+          .child(this.teamExists || this.rosterMode ? div().h(36).py(8).child(this.swarm) : Input.new(this.input).accessibility_label("Chorus name").w_full().h(36).px(10).rounded(6).border_1().border_color(t.input).bg(t.background))))
       .when(Boolean(this.swarm) && !SWARM.test(this.swarm), el => el.child(div().text_size(12).text_color(t.blocked).child("Use 1–32 letters, numbers, underscores or hyphens, starting with a letter or number.")))
       .child(h_flex().items_center().gap(8)
-        .child(this.button("chorus-add", "Add agent", this.buttons.add, cx => this.addAgent(cx), !this.loading && !this.busy && this.agents.length > 0))
-        .child(this.button("chorus-all", "Add all installed", this.buttons.all, cx => this.addAll(cx), !this.loading && !this.busy && this.agents.length > 0))
+        .when(!this.rosterMode, el => el.child(this.button("chorus-add", "Add agent", this.buttons.add, cx => this.addAgent(cx), !this.loading && !this.busy && this.agents.length > 0)))
+        .when(!this.rosterMode, el => el.child(this.button("chorus-all", "Add all installed", this.buttons.all, cx => this.addAll(cx), !this.loading && !this.busy && this.agents.length > 0)))
         .child(div().flex_1())
         .child(this.button("chorus-yolo-all", allYolo ? "Turn YOLO off for all" : "Apply YOLO to all", this.buttons["yolo-all"], cx => {
           for (const row of supported) row.yolo = !allYolo;
