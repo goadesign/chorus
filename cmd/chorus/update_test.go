@@ -12,11 +12,16 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,11 +61,14 @@ func TestNewerVersion(t *testing.T) {
 	}
 }
 
-// TestRunUpdate verifies "chorus update": the three -check reports, declining
-// the prompt, installing over the executable and then restarting a running
-// server with "up" (which reads the saved flags itself) or running
-// "setup -global" when no server answers, never running a project setup in
-// the working directory (which would write .mcp.json there), and leaving the executable untouched when the checksum does not match.
+// TestRunUpdate verifies "chorus update": the -check reports, never offering
+// to downgrade a server newer than the release, declining the prompt,
+// installing over the executable and then asking the running server to
+// update itself to the approved version, leaving a server without
+// POST /update running after a global setup, running "setup -global" when no
+// server answers, reporting a server's update error, never touching project
+// files in the working directory, and leaving the executable untouched when
+// the checksum does not match.
 func TestRunUpdate(t *testing.T) {
 	current := genchorus.APIVersion
 	next := nextMinorVersion(t)
@@ -72,17 +80,25 @@ func TestRunUpdate(t *testing.T) {
 		// serverVersion is the version of a server answering at the saved
 		// address; empty means no server answers there.
 		serverVersion string
+		// legacyServer makes that server answer 404 to POST /update, like v0.9.0.
+		legacyServer bool
+		// serverFailure makes that server's POST /update fail with this error.
+		serverFailure string
 		// input is what the user types at the prompt.
 		input string
 		// projectSkill creates .agents/skills/chorus/SKILL.md in the working
 		// directory, as in a repository that checks in the Chorus skill.
 		projectSkill bool
 		badSum       bool
+		// wantOut is the exact output; wantOutParts are lines it must contain.
 		wantOut      string
+		wantOutParts []string
 		wantErr      string
 		// wantRuns lists the commands run on the new binary, one per line,
 		// with ADDR standing for the saved server address.
-		wantRuns  string
+		wantRuns string
+		// wantPosts lists the versions sent to the server's POST /update.
+		wantPosts []string
 		installed bool
 	}{
 		{
@@ -107,11 +123,11 @@ func TestRunUpdate(t *testing.T) {
 			wantOut:       fmt.Sprintf("Restart needed: chorus binary is v%s, running server is v0.0.1\n", current),
 		},
 		{
-			name:          "newer server is not restarted",
-			args:          []string{"-check"},
-			latest:        current,
+			name:          "server newer than the release is left alone",
+			args:          []string{"-yes"},
+			latest:        next,
 			serverVersion: "99.0.0",
-			wantOut:       fmt.Sprintf("Chorus v%s is up to date\n", current),
+			wantOut:       fmt.Sprintf("Chorus v99.0.0 is running, newer than the latest release v%s\n", next),
 		},
 		{
 			name:          "declined prompt changes nothing",
@@ -121,11 +137,40 @@ func TestRunUpdate(t *testing.T) {
 			wantOut:       fmt.Sprintf("Update available: chorus v%s -> v%s (https://example.test/v%s)\nUpdate Chorus to v%s? [y/N]: Update cancelled\n", current, next, next, next),
 		},
 		{
-			name:          "accepted prompt installs and restarts the running server",
+			name:          "accepted prompt installs and the server updates itself",
 			latest:        next,
 			serverVersion: current,
 			input:         "yes\n",
-			wantRuns:      "up\n",
+			wantOutParts:  []string{fmt.Sprintf("Chorus v%s is running\n", next)},
+			wantPosts:     []string{next},
+			installed:     true,
+		},
+		{
+			name:          "needed restart asks the server for this binary's version",
+			args:          []string{"-y"},
+			latest:        current,
+			serverVersion: "0.0.1",
+			wantOutParts:  []string{fmt.Sprintf("Chorus v%s is running\n", current)},
+			wantPosts:     []string{current},
+		},
+		{
+			name:          "server without POST /update keeps running",
+			args:          []string{"-yes"},
+			latest:        next,
+			serverVersion: current,
+			legacyServer:  true,
+			wantOutParts:  []string{fmt.Sprintf("The running server (v%s at http://localhost:", current), "cannot update itself"},
+			wantRuns:      "setup -global -addr ADDR\n",
+			installed:     true,
+		},
+		{
+			name:          "server update error is reported",
+			args:          []string{"-yes"},
+			latest:        next,
+			serverVersion: current,
+			serverFailure: "setup failed",
+			wantErr:       "could not update: setup failed",
+			wantPosts:     []string{next},
 			installed:     true,
 		},
 		{
@@ -141,7 +186,7 @@ func TestRunUpdate(t *testing.T) {
 			latest:        next,
 			serverVersion: current,
 			projectSkill:  true,
-			wantRuns:      "up\n",
+			wantPosts:     []string{next},
 			installed:     true,
 		},
 		{
@@ -166,8 +211,9 @@ func TestRunUpdate(t *testing.T) {
 			}
 
 			addr := unusedAddr(t)
+			posts := func() []string { return nil }
 			if tc.serverVersion != "" {
-				addr = fakeChorus(t, tc.serverVersion)
+				addr, posts = fakeUpdatableChorus(t, tc.serverVersion, !tc.legacyServer, tc.serverFailure)
 			}
 			saved, err := parseServerFlags([]string{"-addr", addr})
 			require.NoError(t, err)
@@ -190,6 +236,10 @@ func TestRunUpdate(t *testing.T) {
 			if tc.wantOut != "" {
 				assert.Equal(t, tc.wantOut, out.String())
 			}
+			for _, part := range tc.wantOutParts {
+				assert.Contains(t, out.String(), part)
+			}
+			assert.Equal(t, tc.wantPosts, posts())
 
 			got, err := os.ReadFile(exe)
 			require.NoError(t, err)
@@ -214,6 +264,64 @@ func TestRunUpdate(t *testing.T) {
 			assert.Equal(t, strings.ReplaceAll(tc.wantRuns, "ADDR", addr), string(runs))
 		})
 	}
+}
+
+// TestUpdatePromptInterrupt verifies that Ctrl-C at the "chorus update"
+// prompt ends the command. It runs the prompt in a child copy of this test
+// binary whose input never ends, sends it SIGINT once the prompt appears,
+// and expects the child to exit.
+func TestUpdatePromptInterrupt(t *testing.T) {
+	if os.Getenv("CHORUS_TEST_UPDATE_PROMPT") == "1" {
+		releases := fakeReleases(t, nextMinorVersion(t), fakeChorusBinary("0.0.1"), false)
+		err := runUpdate([]string{"-addr", unusedAddr(t)}, os.Stdin, os.Stdout, releases, filepath.Join(t.TempDir(), "chorus"))
+		t.Logf("runUpdate returned %v", err)
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestUpdatePromptInterrupt$")
+	cmd.Env = append(os.Environ(), "CHORUS_TEST_UPDATE_PROMPT=1", "HOME="+t.TempDir())
+	// The input pipe stays open and empty, like a terminal nobody types in;
+	// cmd.Wait closes it.
+	_, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+
+	prompted := make(chan struct{})
+	drained := make(chan struct{})
+	go func(notify chan struct{}) {
+		defer close(drained)
+		var seen bytes.Buffer
+		buf := make([]byte, 256)
+		for {
+			n, err := stdout.Read(buf)
+			seen.Write(buf[:n])
+			if notify != nil && bytes.Contains(seen.Bytes(), []byte("[y/N]: ")) {
+				close(notify)
+				notify = nil
+			}
+			if err != nil {
+				return
+			}
+		}
+	}(prompted)
+	select {
+	case <-prompted:
+	case <-time.After(10 * time.Second):
+		assert.NoError(t, cmd.Process.Kill())
+		t.Fatal("the update prompt never appeared")
+	}
+
+	require.NoError(t, cmd.Process.Signal(os.Interrupt))
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		assert.NoError(t, cmd.Process.Kill())
+		<-drained
+		t.Fatal("the update prompt ignored SIGINT")
+	}
+	assert.Error(t, cmd.Wait(), "the interrupted child must not report success")
 }
 
 // TestInstallReleaseHomebrew verifies that a binary inside a Homebrew Cellar
@@ -272,42 +380,54 @@ func TestInstallReleaseHomebrew(t *testing.T) {
 
 // TestUpdateHandler verifies GET and POST /update behind the same
 // middleware runServe uses: requests from another machine or another website
-// are refused, GET reports the latest release, POST installs it, runs the new
-// binary's setup, answers 202 before restarting with this server's flags, and
-// reports up-to-date servers, concurrent updates, unavailable releases, and
-// install failures without restarting.
+// are refused, GET reports the latest release, and POST installs exactly the
+// requested version, runs the new binary's setup, and answers 202 before
+// restarting with this server's flags and Redis password. It also verifies
+// the answers for the running version, a downgrade, a malformed body, a
+// concurrent update, an unavailable release, and an install failure, none
+// of which restart the server.
 func TestUpdateHandler(t *testing.T) {
 	current := genchorus.APIVersion
 	next := nextMinorVersion(t)
-	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9440", "-swarm-ttl", "48h"})
+	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9440", "-swarm-ttl", "48h", "-redis-password", "secret"})
 	require.NoError(t, err)
+	nextBody := fmt.Sprintf(`{"version":%q}`, next)
 
 	cases := []struct {
 		name   string
 		method string
+		body   string
 		// remoteAddr is the TCP peer; empty means 127.0.0.1:50000.
 		remoteAddr string
 		origin     string
-		latest     string
-		badSum     bool
+		// published is the release the release source serves.
+		published string
+		badSum    bool
 		// busy holds the update lock as if another POST were running.
 		busy bool
 		// readOnlyDir makes the executable's directory unwritable.
 		readOnlyDir bool
 		wantStatus  int
 		wantBody    string
+		// wantError is a substring of the JSON error message.
+		wantError   string
 		wantRestart bool
 	}{
-		{name: "another machine is refused", method: http.MethodPost, remoteAddr: "192.0.2.7:50000", latest: next, wantStatus: http.StatusForbidden, wantBody: `{"error":"updates are only accepted from this machine"}`},
-		{name: "another website is refused", method: http.MethodPost, origin: "https://evil.example", latest: next, wantStatus: http.StatusForbidden},
-		{name: "GET reports the latest release", method: http.MethodGet, origin: "http://localhost:9440", latest: next, wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"current_version":%q,"latest_version":%q,"update_available":true,"release_url":"https://example.test/v%s"}`, current, next, next)},
-		{name: "GET never offers a downgrade", method: http.MethodGet, latest: "0.0.1", wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"current_version":%q,"latest_version":"0.0.1","update_available":false,"release_url":"https://example.test/v0.0.1"}`, current)},
-		{name: "POST on the latest release", method: http.MethodPost, latest: current, wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"status":"up_to_date","version":%q}`, current)},
-		{name: "POST installs and restarts", method: http.MethodPost, origin: "http://localhost:9440", latest: next, wantStatus: http.StatusAccepted, wantBody: fmt.Sprintf(`{"status":"restarting","version":%q}`, next), wantRestart: true},
-		{name: "concurrent POST is refused", method: http.MethodPost, latest: next, busy: true, wantStatus: http.StatusConflict, wantBody: `{"error":"an update is already in progress"}`},
-		{name: "checksum mismatch is a bad gateway", method: http.MethodPost, latest: next, badSum: true, wantStatus: http.StatusBadGateway},
-		{name: "install failure is a server error", method: http.MethodPost, latest: next, readOnlyDir: true, wantStatus: http.StatusInternalServerError},
-		{name: "other methods are not allowed", method: http.MethodPut, latest: next, wantStatus: http.StatusMethodNotAllowed},
+		{name: "another machine is refused", method: http.MethodPost, body: nextBody, remoteAddr: "192.0.2.7:50000", published: next, wantStatus: http.StatusForbidden, wantBody: `{"error":"updates are only accepted from this machine"}`},
+		{name: "another website is refused", method: http.MethodPost, body: nextBody, origin: "https://evil.example", published: next, wantStatus: http.StatusForbidden},
+		{name: "GET reports the latest release", method: http.MethodGet, origin: "http://localhost:9440", published: next, wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"current_version":%q,"latest_version":%q,"update_available":true,"release_url":"https://example.test/v%s"}`, current, next, next)},
+		{name: "GET never offers a downgrade", method: http.MethodGet, published: "0.0.1", wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"current_version":%q,"latest_version":"0.0.1","update_available":false,"release_url":"https://example.test/v0.0.1"}`, current)},
+		{name: "POST of the running version", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q}`, current), published: next, wantStatus: http.StatusOK, wantBody: fmt.Sprintf(`{"status":"up_to_date","version":%q}`, current)},
+		{name: "POST of an older version is a downgrade", method: http.MethodPost, body: `{"version":"0.0.1"}`, published: "0.0.1", wantStatus: http.StatusConflict, wantError: "would downgrade"},
+		{name: "POST installs the requested version and restarts", method: http.MethodPost, body: nextBody, origin: "http://localhost:9440", published: next, wantStatus: http.StatusAccepted, wantBody: fmt.Sprintf(`{"status":"restarting","version":%q}`, next), wantRestart: true},
+		{name: "POST without a body", method: http.MethodPost, published: next, wantStatus: http.StatusBadRequest, wantError: "send {\"version\""},
+		{name: "POST with a malformed version", method: http.MethodPost, body: `{"version":"v0.10"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "MAJOR.MINOR.PATCH"},
+		{name: "POST with an unknown field", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q,"force":true}`, next), published: next, wantStatus: http.StatusBadRequest, wantError: "unknown field"},
+		{name: "concurrent POST is refused", method: http.MethodPost, body: nextBody, published: next, busy: true, wantStatus: http.StatusConflict, wantBody: `{"error":"an update is already in progress"}`},
+		{name: "unpublished version is a bad gateway", method: http.MethodPost, body: nextBody, published: "0.0.1", wantStatus: http.StatusBadGateway, wantError: "404"},
+		{name: "checksum mismatch is a bad gateway", method: http.MethodPost, body: nextBody, published: next, badSum: true, wantStatus: http.StatusBadGateway, wantError: "SHA-256 mismatch"},
+		{name: "install failure is a server error", method: http.MethodPost, body: nextBody, published: next, readOnlyDir: true, wantStatus: http.StatusInternalServerError, wantError: "rerun with write access"},
+		{name: "other methods are not allowed", method: http.MethodPut, published: next, wantStatus: http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,11 +443,12 @@ func TestUpdateHandler(t *testing.T) {
 			}
 			var restarts []string
 			h := &updateHandler{
-				releases: fakeReleases(t, tc.latest, fakeChorusBinary(tc.latest), tc.badSum),
+				releases: fakeReleases(t, tc.published, fakeChorusBinary(tc.published), tc.badSum),
 				exe:      exe,
 				cfg:      cfg,
-				restart: func(next string, args []string) error {
-					restarts = append(restarts, next+" up "+strings.Join(args, " "))
+				restart: func(next string, restartCfg serverConfig) error {
+					assert.Equal(t, cfg, restartCfg, "the restart must keep this server's flags and password")
+					restarts = append(restarts, next)
 					return nil
 				},
 			}
@@ -336,7 +457,7 @@ func TestUpdateHandler(t *testing.T) {
 			}
 			handler := chorus.LocalOnly(loopbackOrigins(cfg.addr)...)(loopbackPeer(h))
 
-			req := httptest.NewRequest(tc.method, "http://localhost:9440/update", nil)
+			req := httptest.NewRequest(tc.method, "http://localhost:9440/update", strings.NewReader(tc.body))
 			req.RemoteAddr = "127.0.0.1:50000"
 			if tc.remoteAddr != "" {
 				req.RemoteAddr = tc.remoteAddr
@@ -351,10 +472,10 @@ func TestUpdateHandler(t *testing.T) {
 			if tc.wantBody != "" {
 				assert.JSONEq(t, tc.wantBody, rec.Body.String())
 			}
-			if rec.Code >= http.StatusBadRequest && tc.wantBody == "" && rec.Code != http.StatusForbidden {
+			if tc.wantError != "" {
 				var body updateError
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-				assert.NotEmpty(t, body.Error)
+				assert.Contains(t, body.Error, tc.wantError)
 			}
 			if !tc.wantRestart {
 				assert.Empty(t, restarts)
@@ -363,7 +484,7 @@ func TestUpdateHandler(t *testing.T) {
 				}
 				return
 			}
-			assert.Equal(t, []string{exe + " up " + strings.Join(buildServeArgs(cfg)[1:], " ")}, restarts)
+			assert.Equal(t, []string{exe}, restarts)
 			assert.Equal(t, next, binaryVersion(context.Background(), exe))
 			runs, err := os.ReadFile(runLog)
 			require.NoError(t, err)
@@ -371,6 +492,33 @@ func TestUpdateHandler(t *testing.T) {
 			assert.False(t, h.busy.TryLock(), "the lock stays held while the server restarts")
 		})
 	}
+}
+
+// TestStartRestart verifies that the restart runs "<exe> up" with the
+// server's flags in a separate process and hands it the Redis password
+// through REDIS_PASSWORD, never as an argument.
+func TestStartRestart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("REDIS_PASSWORD", "")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+	runLog := filepath.Join(t.TempDir(), "runs.log")
+	exe := filepath.Join(t.TempDir(), "chorus")
+	writeExecutable(t, exe, []byte(fmt.Sprintf("#!/bin/sh\necho \"$* password=$REDIS_PASSWORD\" > %q.tmp && mv %q.tmp %q\n", runLog, runLog, runLog)))
+	cfg, err := parseServerFlags([]string{"-addr", "127.0.0.1:9550", "-redis-db", "7", "-redis-password", "secret"})
+	require.NoError(t, err)
+
+	require.NoError(t, startRestart(exe, cfg))
+
+	var got []byte
+	require.Eventually(t, func() bool {
+		got, err = os.ReadFile(runLog)
+		return err == nil
+	}, 5*time.Second, 20*time.Millisecond)
+	want := "up " + strings.Join(buildServeArgs(cfg)[1:], " ") + " password=secret\n"
+	assert.Equal(t, want, string(got))
+	assert.NotContains(t, strings.TrimSuffix(string(got), " password=secret\n"), "secret")
 }
 
 // TestServeArgsPersistence verifies that the flags "chorus up" saved are the
@@ -402,6 +550,52 @@ func TestServeArgsPersistence(t *testing.T) {
 	_, err = loadServeArgs(home)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "run 'chorus down' to clear them")
+}
+
+// fakeUpdatableChorus starts a server that answers GET /healthz like a
+// running Chorus of version and returns its host:port with a function
+// listing the versions sent to its POST /update. When updatable is false,
+// POST /update answers 404 like v0.9.0. Otherwise it fails with failure when
+// set, or switches its version to the requested one and answers 202, as a
+// server that restarted on it would.
+func fakeUpdatableChorus(t *testing.T, version string, updatable bool, failure string) (string, func() []string) {
+	t.Helper()
+	var (
+		mu    sync.Mutex
+		posts []string
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("X-Chorus-Version", version)
+	})
+	mux.HandleFunc("POST /update", func(w http.ResponseWriter, r *http.Request) {
+		if !updatable {
+			http.NotFound(w, r)
+			return
+		}
+		var req updateRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		mu.Lock()
+		defer mu.Unlock()
+		posts = append(posts, req.Version)
+		if failure != "" {
+			writeJSON(w, http.StatusInternalServerError, updateError{Error: failure})
+			return
+		}
+		version = req.Version
+		writeJSON(w, http.StatusAccepted, updateResult{Status: "restarting", Version: req.Version})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	return u.Host, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(posts)
+	}
 }
 
 // fakeChorusBinary returns a shell script standing in for a chorus binary of

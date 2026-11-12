@@ -73,11 +73,20 @@ type (
 		ReleaseURL string `json:"release_url"`
 	}
 
+	// updateRequest is the JSON body of POST /update: the version the user
+	// approved, as shown by GET /update or "chorus update". The server
+	// installs exactly this version, so a release published after the
+	// approval is never installed by it.
+	updateRequest struct {
+		// Version is a release version without the leading "v", such as "0.10.0".
+		Version string `json:"version"`
+	}
+
 	// updateResult is the JSON body of a successful POST /update.
 	updateResult struct {
-		// Status is "restarting" when a newer release was installed and the
-		// server is about to restart on it, or "up_to_date" when the server
-		// already runs the latest release.
+		// Status is "restarting" when the requested version was installed and
+		// the server is about to restart on it, or "up_to_date" when the
+		// server already runs the requested version.
 		Status string `json:"status"`
 		// Version is the version the dashboard should wait for in the
 		// X-Chorus-Version header of GET /healthz.
@@ -90,19 +99,22 @@ type (
 		Error string `json:"error"`
 	}
 
-	// updateHandler serves GET and POST /update for the dashboard of the
-	// server runServe started. A POST installs the latest release and
-	// restarts this server on it; only one runs at a time.
+	// updateHandler serves GET and POST /update for the server runServe
+	// started: the dashboard and "chorus update" call it. A POST installs the
+	// requested release and restarts this server on it; only one runs at a
+	// time.
 	updateHandler struct {
 		// releases finds and downloads releases.
 		releases releaseSource
 		// exe is the path this server was started from (os.Executable).
 		exe string
-		// cfg holds this server's flags; the restarted server keeps them.
+		// cfg holds this server's flags and Redis password; the restarted
+		// server keeps them.
 		cfg serverConfig
-		// restart starts "<exe> up <args>" in a process that outlives this
-		// server; startRestart in production, a recorder in tests.
-		restart func(exe string, args []string) error
+		// restart starts "<exe> up" with cfg's flags and password in a
+		// process that outlives this server; startRestart in production, a
+		// recorder in tests.
+		restart func(exe string, cfg serverConfig) error
 		// busy is held from the start of a POST until the restart begins, or
 		// until the POST fails, so concurrent POSTs answer 409.
 		busy sync.Mutex
@@ -128,7 +140,7 @@ var (
 )
 
 // ServeHTTP answers GET /update with an updateStatus and POST /update by
-// installing the latest release and restarting this server on it. Other
+// installing the requested release and restarting this server on it. Other
 // methods get 405. runServe mounts it behind chorus.LocalOnly and
 // loopbackPeer, so only the dashboard and processes on this machine reach it.
 func (h *updateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -159,14 +171,22 @@ func defaultReleaseSource() releaseSource {
 //
 //	Update available: chorus v0.9.0 -> v0.10.0 (https://github.com/...)
 //	Restart needed: chorus binary is v0.10.0, running server is v0.9.0
+//	Chorus v0.11.0 is running, newer than the latest release v0.10.0
 //	Chorus v0.10.0 is up to date
 //
 // With -check it stops there. Otherwise it asks "Update Chorus to v0.10.0?
-// [y/N]: " (or whether to restart) on in unless -yes is given, installs the
-// release over exe or through Homebrew, and then either restarts the running server with "<new binary> up" and its saved
-// flags, or, when no server answers, runs "<new binary> setup -global". The
-// new binary's output is written to out. The whole update is bounded by
-// updateTimeout.
+// [y/N]: " (or whether to restart) on in unless -yes is given. Ctrl-C at the
+// prompt ends the command as usual; the update itself, which starts after
+// the answer, is bounded by updateTimeout and stops on SIGINT or SIGTERM.
+//
+// An update installs the release over exe or through Homebrew. A running
+// server is then asked to update itself with POST /update and the approved
+// version, because only that process knows the flags and Redis password it
+// runs with; runUpdate waits for GET /healthz to report the version and
+// writes the server's addresses. A server older than POST /update is left
+// running with instructions to restart it, and with no server running, the
+// new binary's "setup -global" refreshes the skills, MCP registrations, and
+// Herdr launcher. Output of the commands it runs is written to out.
 func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSource, exe string) error {
 	var (
 		addr  string
@@ -189,28 +209,21 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
-	saved, err := loadServeArgs(homeDir)
+	serveArgs, err := loadServeArgs(homeDir)
 	if err != nil {
 		return err
 	}
-	// The new binary's "up" reads the saved flags itself, so only an explicit
-	// -addr is passed on to it.
-	var upArgs []string
 	if addr != "" {
-		upArgs = []string{"-addr", addr}
+		serveArgs = append(serveArgs, "-addr", addr)
 	}
-	cfg, err := parseServerFlags(append(saved, upArgs...))
+	cfg, err := parseServerFlags(serveArgs)
 	if err != nil {
 		return err
 	}
+	baseURL := localBaseURL(cfg.addr)
 
-	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-	ctx, cancel := context.WithTimeout(sigCtx, updateTimeout)
-	defer cancel()
-
-	running, serverVersion := probeServer(localBaseURL(cfg.addr))
-	rel, err := releases.latest(ctx)
+	running, serverVersion := probeServer(baseURL)
+	rel, err := releases.latest(context.Background())
 	if err != nil {
 		return err
 	}
@@ -218,11 +231,19 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	if err != nil {
 		return err
 	}
-	restart := running && !newer && serverOlder(serverVersion)
+	// target is the version a running server should end up on: the release
+	// when it is newer than this binary, otherwise this binary's version.
+	target := genchorus.APIVersion
+	if newer {
+		target = rel.version
+	}
 	switch {
+	case running && versionBefore(rel.version, serverVersion):
+		fmt.Fprintf(out, "Chorus v%s is running, newer than the latest release v%s\n", serverVersion, rel.version)
+		return nil
 	case newer:
 		fmt.Fprintf(out, "Update available: chorus v%s -> v%s (%s)\n", genchorus.APIVersion, rel.version, rel.url)
-	case restart:
+	case running && versionBefore(serverVersion, target):
 		fmt.Fprintf(out, "Restart needed: chorus binary is v%s, running server is v%s\n", genchorus.APIVersion, serverVersion)
 	default:
 		fmt.Fprintf(out, "Chorus v%s is up to date\n", genchorus.APIVersion)
@@ -232,14 +253,21 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 		return nil
 	}
 
-	question := fmt.Sprintf("Update Chorus to v%s? [y/N]: ", rel.version)
+	question := fmt.Sprintf("Update Chorus to v%s? [y/N]: ", target)
 	if !newer {
-		question = fmt.Sprintf("Restart Chorus on v%s? [y/N]: ", genchorus.APIVersion)
+		question = fmt.Sprintf("Restart Chorus on v%s? [y/N]: ", target)
 	}
 	if !yes && !confirm(in, out, question) {
 		fmt.Fprintln(out, "Update cancelled")
 		return nil
 	}
+
+	// From here on the update changes files and processes, so it gets its
+	// own deadline and stops cleanly on SIGINT or SIGTERM.
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(sigCtx, updateTimeout)
+	defer cancel()
 
 	next := exe
 	if newer {
@@ -248,10 +276,76 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 		}
 		fmt.Fprintf(out, "Installed chorus v%s at %s\n", rel.version, next)
 	}
-	if running {
-		return timeoutHint(ctx, runChorus(ctx, next, out, append([]string{"up"}, upArgs...)...))
+	if !running {
+		return timeoutHint(ctx, runChorus(ctx, next, out, "setup", "-global", "-addr", cfg.addr))
 	}
-	return timeoutHint(ctx, runChorus(ctx, next, out, "setup", "-global", "-addr", cfg.addr))
+	return timeoutHint(ctx, updateServer(ctx, out, cfg.addr, next, serverVersion, target))
+}
+
+// updateServer asks the server at addr to update itself to version with
+// POST /update and waits up to 2*daemonReadyTimeout for GET /healthz to
+// report that version, then writes the server's addresses to out. A server
+// already on version gets a "setup -global" from next, so its skills and
+// MCP registrations match the binary just installed. A server without
+// POST /update (v0.9.0 and earlier) is left running after the same setup,
+// and out says how to restart it: its Redis password and flags are unknown
+// here, so stopping it could leave nothing running.
+func updateServer(ctx context.Context, out io.Writer, addr, next, serverVersion, version string) error {
+	baseURL := localBaseURL(addr)
+	body, err := json.Marshal(updateRequest{Version: version})
+	if err != nil {
+		return fmt.Errorf("encode update request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/update", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("ask chorus at %s to update: %w", baseURL, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ask chorus at %s to update: %w", baseURL, err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("close update response", "error", err)
+		}
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusAccepted:
+	case http.StatusOK:
+		if err := runChorus(ctx, next, out, "setup", "-global", "-addr", addr); err != nil {
+			return err
+		}
+		writeEndpoints(out, version, baseURL)
+		return nil
+	case http.StatusNotFound:
+		if err := runChorus(ctx, next, out, "setup", "-global", "-addr", addr); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "The running server (v%s at %s) cannot update itself. Finish the update by running '%s up' with the flags and REDIS_PASSWORD it was started with.\n", serverVersion, baseURL, next)
+		return nil
+	default:
+		var failure updateError
+		if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil || failure.Error == "" {
+			return fmt.Errorf("chorus at %s could not update: %s", baseURL, resp.Status)
+		}
+		return fmt.Errorf("chorus at %s could not update: %s", baseURL, failure.Error)
+	}
+
+	deadline := time.Now().Add(2 * daemonReadyTimeout)
+	for time.Now().Before(deadline) {
+		if ok, got := probeServer(baseURL); ok && got == version {
+			writeEndpoints(out, version, baseURL)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("chorus v%s did not become healthy at %s/healthz within %s; check 'chorus status' and ~/.chorus/chorus.log", version, baseURL, 2*daemonReadyTimeout)
 }
 
 // installRelease makes rel the chorus binary run next and returns its path.
@@ -401,11 +495,12 @@ func newerVersion(a, b string) (bool, error) {
 	return slices.Compare(pa[:], pb[:]) > 0, nil
 }
 
-// serverOlder reports whether a running server's X-Chorus-Version is older
-// than this binary. An unknown or malformed version is not reported as older.
-func serverOlder(serverVersion string) bool {
-	older, err := newerVersion(genchorus.APIVersion, serverVersion)
-	return err == nil && older
+// versionBefore reports whether version a is older than version b. A
+// malformed or unknown version (such as the empty X-Chorus-Version of a
+// server that predates the header) is never reported as older or newer.
+func versionBefore(a, b string) bool {
+	newer, err := newerVersion(b, a)
+	return err == nil && newer
 }
 
 // confirm writes question to out and reports whether the line read from in
@@ -441,14 +536,16 @@ func timeoutHint(ctx context.Context, err error) error {
 	return err
 }
 
-// startRestart starts "<exe> up <args>" so that it outlives this server,
-// which "up" stops before starting the new one. Under systemd, stopping
-// chorus.service ends every process in the service, including children in a
-// new session, so the restart runs as its own transient unit through
-// systemd-run. Otherwise it runs in a new session, which launchd does not
-// stop with the job and which survives the server's exit. Its output is
-// appended to ~/.chorus/chorus.log.
-func startRestart(exe string, args []string) error {
+// startRestart starts "<exe> up" with cfg's flags so that it outlives this
+// server, which "up" stops before starting the new one. cfg's Redis password
+// is handed over in the process environment as REDIS_PASSWORD, never on the
+// command line or on disk. Under systemd, stopping chorus.service ends every
+// process in the service, including children in a new session, so the
+// restart runs as its own transient unit through systemd-run; "chorus up"
+// only creates that unit for servers without a password. Otherwise it runs
+// in a new session, which launchd does not stop with the job and which
+// survives the server's exit. Its output is appended to ~/.chorus/chorus.log.
+func startRestart(exe string, cfg serverConfig) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
@@ -464,13 +561,17 @@ func startRestart(exe string, args []string) error {
 		}
 	}()
 
-	upArgs := append([]string{"up"}, args...)
+	upArgs := append([]string{"up"}, buildServeArgs(cfg)[1:]...)
 	var cmd *exec.Cmd
-	if runtime.GOOS == "linux" && os.Getenv("INVOCATION_ID") != "" {
+	if runtime.GOOS == "linux" && os.Getenv("INVOCATION_ID") != "" && cfg.redisPassword == "" {
 		cmd = exec.Command("systemd-run", append([]string{"--user", "--collect", "--quiet", "--setenv=PATH=" + daemonPathEnv(), "--", exe}, upArgs...)...)
 	} else {
 		cmd = exec.Command(exe, upArgs...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.Env = os.Environ()
+		if cfg.redisPassword != "" {
+			cmd.Env = append(cmd.Env, "REDIS_PASSWORD="+cfg.redisPassword)
+		}
 	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -630,15 +731,36 @@ func (h *updateHandler) status(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// update answers POST /update. When a newer release exists it installs it,
-// runs the new binary's "setup -global" so skills, MCP registrations, and the
-// Herdr launcher match it, answers 202 with the new version, and only then
-// starts the restart, so the response reaches the dashboard before this
-// server stops. It answers 200 "up_to_date" when this server already runs the
-// latest release, 409 while another update runs, 502 when the release cannot
-// be found, downloaded, or verified, and 500 when installing or setup fails.
-// The server keeps running after every error.
+// update answers POST /update with an updateRequest body. When the
+// requested version is newer than this server, it installs exactly that
+// version, runs the new binary's "setup -global" so skills, MCP
+// registrations, and the Herdr launcher match it, answers 202 with the
+// version, and only then starts the restart, so the response reaches the
+// caller before this server stops. It answers 200 "up_to_date" when this
+// server already runs the version, 400 for a missing or malformed body, 409
+// for an older version (a downgrade) or while another update runs, 502 when
+// the release cannot be downloaded or verified, and 500 when installing or
+// setup fails. The server keeps running after every error.
 func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
+	var req updateRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, updateError{Error: fmt.Sprintf(`send {"version":"MAJOR.MINOR.PATCH"}: %v`, err)})
+		return
+	}
+	if _, err := parseVersion(req.Version); err != nil {
+		writeJSON(w, http.StatusBadRequest, updateError{Error: err.Error()})
+		return
+	}
+	if req.Version == genchorus.APIVersion {
+		writeJSON(w, http.StatusOK, updateResult{Status: "up_to_date", Version: genchorus.APIVersion})
+		return
+	}
+	if versionBefore(req.Version, genchorus.APIVersion) {
+		writeJSON(w, http.StatusConflict, updateError{Error: fmt.Sprintf("v%s would downgrade the running v%s", req.Version, genchorus.APIVersion)})
+		return
+	}
 	if !h.busy.TryLock() {
 		writeJSON(w, http.StatusConflict, updateError{Error: "an update is already in progress"})
 		return
@@ -652,46 +774,31 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), updateTimeout)
 	defer cancel()
 
-	rel, err := h.releases.latest(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, updateError{Error: err.Error()})
-		return
-	}
-	newer, err := newerVersion(rel.version, genchorus.APIVersion)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, updateError{Error: err.Error()})
-		return
-	}
-	if !newer {
-		writeJSON(w, http.StatusOK, updateResult{Status: "up_to_date", Version: genchorus.APIVersion})
-		return
-	}
-
 	var output bytes.Buffer
-	next, err := installRelease(ctx, h.releases, rel, h.exe, &output)
+	next, err := installRelease(ctx, h.releases, release{version: req.Version}, h.exe, &output)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errReleaseUnavailable) {
 			status = http.StatusBadGateway
 		}
-		slog.Error("update chorus", "version", rel.version, "error", err, "output", output.String())
+		slog.Error("update chorus", "version", req.Version, "error", err, "output", output.String())
 		writeJSON(w, status, updateError{Error: timeoutHint(ctx, err).Error()})
 		return
 	}
 	if err := runChorus(ctx, next, &output, "setup", "-global", "-addr", h.cfg.addr); err != nil {
-		slog.Error("set up updated chorus", "version", rel.version, "error", err, "output", output.String())
+		slog.Error("set up updated chorus", "version", req.Version, "error", err, "output", output.String())
 		writeJSON(w, http.StatusInternalServerError, updateError{Error: fmt.Sprintf("%v: %s", timeoutHint(ctx, err), strings.TrimSpace(output.String()))})
 		return
 	}
 
-	writeJSON(w, http.StatusAccepted, updateResult{Status: "restarting", Version: rel.version})
+	writeJSON(w, http.StatusAccepted, updateResult{Status: "restarting", Version: req.Version})
 	if err := http.NewResponseController(w).Flush(); err != nil {
 		slog.Error("flush /update response", "error", err)
 	}
-	if err := h.restart(next, buildServeArgs(h.cfg)[1:]); err != nil {
-		slog.Error("restart chorus on the updated binary", "version", rel.version, "error", err)
+	if err := h.restart(next, h.cfg); err != nil {
+		slog.Error("restart chorus on the updated binary", "version", req.Version, "error", err)
 		return
 	}
 	restarting = true
-	slog.Info("restarting chorus on the updated binary", "version", rel.version, "exe", next)
+	slog.Info("restarting chorus on the updated binary", "version", req.Version, "exe", next)
 }
