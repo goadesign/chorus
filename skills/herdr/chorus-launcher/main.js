@@ -55,6 +55,7 @@ export default class ChorusLauncher extends View {
     this.error = "";
     this.busy = false;
     this.loading = true;
+    this.update = null;
     this.swarm = "";
     this.picker = null;
     this.input = InputState.new({ placeholder: "Chorus name" });
@@ -68,7 +69,7 @@ export default class ChorusLauncher extends View {
     this.input.on("submit", (_event, cx) => this.start(cx));
     this.handle = cx.focus_handle();
     this.handle.focus();
-    this.buttons = Object.fromEntries(["add", "all", "yolo-all", "reload", "close", "start"].map(key => [key, cx.focus_handle()]));
+    this.buttons = Object.fromEntries(["add", "all", "yolo-all", "reload", "close", "start", "update"].map(key => [key, cx.focus_handle()]));
     cx.spawn(async cx => {
       try {
         if (!this.space || !this.folder) throw new Error("Focus a terminal in your project, then open Start Chorus again.");
@@ -81,6 +82,7 @@ export default class ChorusLauncher extends View {
         if (repo.code !== 0) throw new Error("The focused terminal is outside a Git checkout. Open your project folder and try again.");
         if (chorus.code !== 0 || !chorus.stdout.includes(" is running")) throw new Error("Chorus is not running. Start it with chorus up, then open this launcher again.");
         this.root = repo.stdout.replace(/\r?\n$/, "");
+        this.checkUpdate(cx);
         this.agents = agents.filter(a => a.installed);
         await this.loadTeam(cx);
         if (!this.rows.length) this.restoreOrAddAll(cx);
@@ -90,6 +92,40 @@ export default class ChorusLauncher extends View {
       cx.notify();
       // Each client supplies its own catalog; a failed lookup leaves an explicit notice.
       await Promise.all(this.agents.map(agent => this.loadModels(agent, cx)));
+    });
+  }
+
+  // Checking releases runs independently of team/model discovery and never
+  // prevents opening a team when GitHub or an older CLI cannot answer.
+  checkUpdate(cx) {
+    cx.spawn(async cx => {
+      try {
+        const result = await exec("chorus", ["update", "-check"], { cwd: this.root, timeout: 20000 });
+        if (result.code === 0 && /^(Update available:|Restart needed:)/.test(result.stdout)) {
+          this.update = { status: "available", message: result.stdout.trim() };
+          cx.notify();
+        }
+      } catch {
+        // Availability is optional; existing panes and launch choices remain usable.
+      }
+    });
+  }
+
+  // Clicking this control approves the CLI's install/setup/restart operation.
+  // Herdr still owns running conversations; updating never recreates a pane.
+  updateChorus(cx) {
+    if (this.update?.status === "installing") return;
+    this.update = { status: "installing", message: "Updating Chorus and its integrations…" };
+    cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const result = await exec("chorus", ["update", "-yes"], { cwd: this.root, timeout: 660000 });
+        if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || "The update command failed.");
+        this.update = { status: "ready", message: "Chorus is ready. Existing panes remain available." };
+      } catch (error) {
+        this.update = { status: "error", message: `Could not update Chorus: ${error.message ?? error}. Try again when ready.` };
+      }
+      cx.notify();
     });
   }
 
@@ -510,6 +546,9 @@ export default class ChorusLauncher extends View {
       .on_key_down((event, cx) => { if (event.key === "escape" && !this.picker) { closeOverlay(props().overlay); cx.stop_propagation(); } })
       .child(div().text_size(20).font_semibold().child("Start Chorus"))
       .child(div().text_size(13).text_color(t.muted).child("Choose a client, model, and thinking level for each pane. New agents join and wait for work."))
+      .when(Boolean(this.update), el => el.child(v_flex().gap(6).p(10).rounded(6).border_1().border_color(t.border)
+        .child(div().text_size(13).text_color(this.update.status === "error" ? t.blocked : t.foreground).child(this.update.message))
+        .when(this.update.status !== "ready", el => el.child(this.button("chorus-update", this.update.status === "installing" ? "Updating…" : this.update.status === "error" ? "Try update again" : "Update & restart", this.buttons.update, cx => this.updateChorus(cx), this.update.status !== "installing")))))
       .child(h_flex().gap(20)
         .child(v_flex().flex_1().min_w(0).gap(5).child(div().text_size(12).text_color(t.muted).child("Project"))
           .child(div().text_size(13).truncate().child(this.root || this.folder || "Focus a project terminal")))

@@ -496,6 +496,9 @@ func TestDashboardCarriesUIBuild(t *testing.T) {
 	require.NotNil(t, match, "page must carry its dashboard identity")
 	loaded := string(match[1])
 	assert.Equal(t, "no-store", page.Header.Get("Cache-Control"))
+	assert.Contains(t, string(body), `id="btn-update-chorus" hidden`)
+	assert.Contains(t, string(body), `id="update-release"`)
+	assert.Contains(t, string(body), `src="/ui/update.js"`)
 
 	list := viewRequest(t, base+"/swarms", nil)
 	list.Body.Close()
@@ -528,6 +531,7 @@ func TestDashboardPageServed(t *testing.T) {
 		{name: "page", path: "/", wantStatus: http.StatusOK, wantType: "text/html; charset=utf-8", wantContent: "<html"},
 		{name: "timeline script", path: "/ui/timeline.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusTimeline"},
 		{name: "chat script", path: "/ui/chat.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusChat"},
+		{name: "update script", path: "/ui/update.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusUpdate"},
 		{name: "page under ui", path: "/ui/index.html", wantStatus: http.StatusNotFound},
 		{name: "missing file", path: "/ui/missing.js", wantStatus: http.StatusNotFound},
 		{name: "path escape", path: "/ui/..%2fui.go", wantStatus: http.StatusNotFound},
