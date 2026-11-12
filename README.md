@@ -106,10 +106,8 @@ The curl command installs the `chorus` binary, installs the model-agnostic [Chor
 
 *(Prefer Go? Run `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/) via `npx skills add goadesign/chorus --skill chorus`)*
 
-If you use Herdr, open it once before running `chorus up` to install the
-[Chorus launcher for Herdr](skills/herdr/chorus-launcher/). From a project
-terminal, run `herdr-app do mod.open --name chorus-launcher` to choose your team.
-On macOS, setup also adds **Command–Option–Shift–C** when that shortcut is free.
+If you use [Herdr](https://herdr.dev/), open it once before running `chorus up`
+so Chorus can install its team launcher (see [step 3](#3-or-launch-a-full-team-in-one-step-with-herdr)).
 
 ### 2. Start Chorus in Every Pane, Then Give the Goal to One
 
@@ -132,6 +130,38 @@ Now give the goal to **one** pane, for example: *"Lead this: add single-use chal
 To choose names yourself, say so in the prompt and your choice overrides the defaults: *"Use Chorus as `api` in swarm `auth`, channel `#passkeys`."* Channel names are limited to 32 characters after the `#`, so if the folder name is longer, the agent tells you and asks you to name a shorter channel instead. Agents working in separate clones (such as `~/src/auth-passkeys`) should be told the shared swarm name, because the folder name would otherwise put them in a swarm of their own.
 
 Every agent connects to the same `http://localhost:9440/mcp` endpoint in every repository—no per-agent or per-project config files.
+
+### 3. Or Launch a Full Team in One Step with Herdr
+
+If you use [Herdr](https://herdr.dev/), the launcher opens the whole team for
+you instead of step 2. When Herdr's settings folder exists (`$HERDR_APP_HOME`,
+otherwise `~/.config/herdr-app`, which Herdr creates on first launch),
+`chorus up` and `chorus setup -global` install the
+[Chorus launcher for Herdr](skills/herdr/chorus-launcher/) into its
+`mods/chorus-launcher` folder. On macOS, setup also binds
+**Command–Option–Shift–C** when no existing Herdr shortcut uses it.
+
+From a terminal in your repository, press **Command–Option–Shift–C** or run:
+
+```bash
+herdr-app do mod.open --name chorus-launcher
+```
+
+The launcher shows one row per installed agent app (Claude Code, Codex, Cursor,
+Antigravity). For each row, choose the model, the thinking level, and whether to
+turn on YOLO mode (the client's own skip-permissions flag). It offers only the
+models, levels, and flags each installed client reports, and remembers your rows
+for that repository. **Open Chorus team** then opens a **Chorus · \<project\>**
+tab with one pane per row. Each pane starts its agent with the Chorus skill,
+which joins the swarm and channel shown in the launcher (the repository's folder
+name by default, for example swarm `auth` and channel `#auth`) under its own
+unique handle, starts `chorus watch`, and waits. Give the goal to one pane, as in
+step 2.
+
+Reopen the launcher in the same repository to see the running team's panes and
+add more. When a newer Chorus release is available, the launcher also offers
+**Update & restart**, which installs exactly the version it shows and restarts
+Chorus (see [Updating Chorus](#updating-chorus)).
 
 ---
 
@@ -160,7 +190,7 @@ Most multi-agent tools manage **where** agents run (new desktop IDEs, isolated g
 | Category | Examples | What It Owns | How Chorus Differs |
 | --- | --- | --- | --- |
 | **Agent IDEs & worktree runners** | [Orca](https://github.com/stablyai/orca), Superset, Conductor, Claude Squad | Desktop IDE + isolated git worktrees that fan one prompt across solo runs so a human can compare and merge diffs | Keeps your existing editors and terminals (Cursor, Antigravity, Claude Code, Codex); agents share a `#channel`, a pinned plan, and `@agent` DMs to divide one task instead of racing on copies |
-| **Terminal multiplexers & PTY spawners** | [Herdr (`hc`)](https://herdr.dev/core/), cmux, tmux scripts | Persistent pseudo-terminals that spawn CLI child processes, inject text into `stdin` (`hc send`), and read raw terminal scrollback (`hc read --lines 60`) | Structured MCP message bus over HTTP: IDE agents and CLI agents join the same swarm, receive only unseen messages since their server watermark (instead of scraping terminal scrollback), and can even run inside Herdr or tmux |
+| **Terminal multiplexers & PTY spawners** | [Herdr (`hc`)](https://herdr.dev/core/), cmux, tmux scripts | Persistent pseudo-terminals that spawn CLI child processes, inject text into `stdin` (`hc send`), and read raw terminal scrollback (`hc read --lines 60`) | Structured MCP message bus over HTTP: IDE agents and CLI agents join the same swarm, receive only unseen messages since their server watermark (instead of scraping terminal scrollback), and can even run inside Herdr or tmux. The built-in [Herdr launcher](skills/herdr/chorus-launcher/) (`chorus-launcher`) opens a **Chorus · \<project\>** tab and joins every pane to the swarm automatically |
 | **Built-in subagents** | Claude Code subagents, Codex subagents | Short-lived hierarchical child workers inside a single vendor and session | Connects independent long-lived peer sessions across different model families so Claude, Codex, and Gemini can challenge assumptions and review each other's diffs before merge |
 | **Chat bridges & JSON MCPs** | Slack/Discord MCPs, A2A, CRUD JSON chat servers | Wrappers around human chat APIs or verbose JSON schemas | Server-held read watermarks in `pulse/rmap`, piggybacked unread replies on `send`, `0` model tokens while waiting in `chorus watch`, and compact 1-line wire text (`~12–52 tokens/msg`) |
 
@@ -442,13 +472,17 @@ Chorus `0.6.0` adopts Pulse `v1.11.0`, which changes the replicated-map change f
 ├── cmd/
 │   └── chorus/
 │       ├── main.go        # Standalone CLI server binary & Redis bootstrap
-│       └── daemon.go      # Background service manager (up, down, status) & MCP setup
+│       ├── daemon.go      # Background service manager (up, down, status) & watch listener
+│       ├── setup.go       # MCP registration, skill install, and Herdr launcher install
+│       └── update.go      # chorus update and the dashboard's GET/POST /update routes
 ├── scripts/
 │   ├── homebrew-formula.sh # Renders the Homebrew formula from a release's checksums.txt
 │   └── install.sh         # One-line binary release & skill installer
 ├── skills/
-│   └── chorus/
-│       └── SKILL.md       # Agent skill for installing and coordinating with Chorus
+│   ├── chorus/
+│   │   └── SKILL.md       # Agent skill for installing and coordinating with Chorus
+│   └── herdr/
+│       └── chorus-launcher/ # Herdr team launcher (mod.json, main.js, launch.py, README.md)
 ├── .agents/
 │   └── skills/            # Contributor skills (chorus, editing-model-diagrams, chorus-release)
 ├── Makefile               # Code generation, diagram rendering, testing, and release automation
