@@ -3,12 +3,14 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -65,8 +67,8 @@ func TestNewerVersion(t *testing.T) {
 
 // TestRunUpdate verifies "chorus update": the -check reports, never offering
 // to downgrade a server newer than the release, declining the prompt,
-// installing over the executable and then asking the running server to
-// update itself to the approved version, leaving a server without
+// letting a running server install and restart itself on the approved
+// version, installing locally and running setup for a server already on it, leaving a server without
 // POST /update running after a global setup and failing with how to restart
 // it, running "setup -global" when no
 // server answers, reporting a server's update error, never touching project
@@ -142,12 +144,21 @@ func TestRunUpdate(t *testing.T) {
 			wantOut:       fmt.Sprintf("Update available: chorus v%s -> v%s (https://example.test/v%s)\nUpdate Chorus to v%s? [y/N]: Update cancelled\n", current, next, next, next),
 		},
 		{
-			name:          "accepted prompt installs and the server updates itself",
+			name:          "accepted prompt lets the server install and restart itself",
 			latest:        next,
 			serverVersion: current,
 			input:         "yes\n",
+			wantOutParts:  []string{fmt.Sprintf("is installing v%s and restarting\n", next), fmt.Sprintf("Chorus v%s is running\n", next)},
+			wantPosts:     []string{next},
+		},
+		{
+			name:          "server already on the release gets the local binary and setup",
+			args:          []string{"-yes"},
+			latest:        next,
+			serverVersion: next,
 			wantOutParts:  []string{fmt.Sprintf("Chorus v%s is running\n", next)},
 			wantPosts:     []string{next},
+			wantRuns:      "setup -global -addr ADDR\n",
 			installed:     true,
 		},
 		{
@@ -176,7 +187,6 @@ func TestRunUpdate(t *testing.T) {
 			serverFailure: "setup failed",
 			wantErr:       "could not update: setup failed",
 			wantPosts:     []string{next},
-			installed:     true,
 		},
 		{
 			name:      "no running server runs global setup",
@@ -192,31 +202,27 @@ func TestRunUpdate(t *testing.T) {
 			serverVersion: current,
 			projectSkill:  true,
 			wantPosts:     []string{next},
-			installed:     true,
 		},
 		{
-			name:          "release reporting another version leaves the binary",
-			args:          []string{"-yes"},
-			latest:        next,
-			serverVersion: current,
-			releasedBin:   fakeChorusBinary("0.0.7"),
-			wantErr:       fmt.Sprintf(`the v%s release binary reports "0.0.7"`, next),
+			name:        "release reporting another version leaves the binary",
+			args:        []string{"-yes"},
+			latest:      next,
+			releasedBin: fakeChorusBinary("0.0.7"),
+			wantErr:     fmt.Sprintf(`the v%s release binary reports "0.0.7"`, next),
 		},
 		{
-			name:          "release that cannot run leaves the binary",
-			args:          []string{"-yes"},
-			latest:        next,
-			serverVersion: current,
-			releasedBin:   []byte("not a program"),
-			wantErr:       fmt.Sprintf(`the v%s release binary reports ""`, next),
+			name:        "release that cannot run leaves the binary",
+			args:        []string{"-yes"},
+			latest:      next,
+			releasedBin: []byte("not a program"),
+			wantErr:     fmt.Sprintf(`the v%s release binary reports ""`, next),
 		},
 		{
-			name:          "checksum mismatch leaves the binary",
-			args:          []string{"-yes"},
-			latest:        next,
-			serverVersion: current,
-			badSum:        true,
-			wantErr:       "SHA-256 mismatch",
+			name:    "checksum mismatch leaves the binary",
+			args:    []string{"-yes"},
+			latest:  next,
+			badSum:  true,
+			wantErr: "SHA-256 mismatch",
 		},
 	}
 	for _, tc := range cases {
@@ -405,6 +411,52 @@ func TestInstallReleaseHomebrew(t *testing.T) {
 	}
 }
 
+// TestInstallReleaseNeverDowngrades verifies the check at the binary's
+// directory: an install whose release is older than the binary on disk is
+// refused and leaves the file alone, and an install waiting for another
+// install's lock rereads the version once it gets the lock, so a stale
+// approval cannot overwrite the newer binary the other install wrote.
+func TestInstallReleaseNeverDowngrades(t *testing.T) {
+	next := nextMinorVersion(t)
+	releases := fakeReleases(t, next, fakeChorusBinary(next), false)
+
+	t.Run("newer binary on disk", func(t *testing.T) {
+		exe := filepath.Join(t.TempDir(), "chorus")
+		writeExecutable(t, exe, fakeChorusBinary("99.0.0"))
+		_, err := installRelease(context.Background(), releases, release{version: next}, exe, io.Discard)
+		require.ErrorIs(t, err, errWouldDowngrade)
+		assert.Equal(t, fakeChorusBinary("99.0.0"), mustReadFile(t, exe))
+	})
+
+	t.Run("newer binary installed while waiting for the lock", func(t *testing.T) {
+		exe := filepath.Join(t.TempDir(), "chorus")
+		writeExecutable(t, exe, fakeChorusBinary(genchorus.APIVersion))
+		unlock, err := lockDir(context.Background(), filepath.Dir(exe))
+		require.NoError(t, err)
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := installRelease(context.Background(), releases, release{version: next}, exe, io.Discard)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("install finished while another install held the lock: %v", err)
+		case <-time.After(3 * installLockPoll):
+		}
+		writeExecutable(t, exe, fakeChorusBinary("99.0.0"))
+		require.NoError(t, unlock())
+
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, errWouldDowngrade)
+		case <-time.After(10 * time.Second):
+			t.Fatal("install did not resume after the lock was released")
+		}
+		assert.Equal(t, fakeChorusBinary("99.0.0"), mustReadFile(t, exe))
+	})
+}
+
 // TestUpdateHandler verifies GET and POST /update behind the same
 // middleware runServe uses: requests from another machine or another website
 // are refused, GET reports the latest release, and POST installs exactly the
@@ -434,6 +486,9 @@ func TestUpdateHandler(t *testing.T) {
 		busy bool
 		// readOnlyDir makes the executable's directory unwritable.
 		readOnlyDir bool
+		// diskVersion is the version the executable on disk reports; empty
+		// means this server's own version.
+		diskVersion string
 		wantStatus  int
 		wantBody    string
 		// wantError is a substring of the JSON error message.
@@ -455,6 +510,7 @@ func TestUpdateHandler(t *testing.T) {
 		{name: "concurrent POST is refused", method: http.MethodPost, body: nextBody, published: next, busy: true, wantStatus: http.StatusConflict, wantBody: `{"error":"an update is already in progress"}`},
 		{name: "unpublished version is a bad gateway", method: http.MethodPost, body: nextBody, published: "0.0.1", wantStatus: http.StatusBadGateway, wantError: "404"},
 		{name: "checksum mismatch is a bad gateway", method: http.MethodPost, body: nextBody, published: next, badSum: true, wantStatus: http.StatusBadGateway, wantError: "SHA-256 mismatch"},
+		{name: "POST never downgrades a newer binary on disk", method: http.MethodPost, body: nextBody, published: next, diskVersion: "99.0.0", wantStatus: http.StatusConflict, wantError: "is already chorus v99.0.0, newer than v" + next},
 		{name: "install failure is a server error", method: http.MethodPost, body: nextBody, published: next, readOnlyDir: true, wantStatus: http.StatusInternalServerError, wantError: "rerun with write access"},
 		{name: "other methods are not allowed", method: http.MethodPut, published: next, wantStatus: http.StatusMethodNotAllowed},
 	}
@@ -463,7 +519,8 @@ func TestUpdateHandler(t *testing.T) {
 			runLog := filepath.Join(t.TempDir(), "runs.log")
 			t.Setenv("CHORUS_FAKE_LOG", runLog)
 			exe := filepath.Join(t.TempDir(), "chorus")
-			writeExecutable(t, exe, fakeChorusBinary(current))
+			diskVersion := cmp.Or(tc.diskVersion, current)
+			writeExecutable(t, exe, fakeChorusBinary(diskVersion))
 			if tc.readOnlyDir {
 				require.NoError(t, os.Chmod(filepath.Dir(exe), 0o555))
 				t.Cleanup(func() {
@@ -506,6 +563,7 @@ func TestUpdateHandler(t *testing.T) {
 			}
 			if !tc.wantRestart {
 				assert.Empty(t, restarts)
+				assert.Equal(t, fakeChorusBinary(diskVersion), mustReadFile(t, exe), "a refused or failed POST leaves the binary on disk")
 				if !tc.busy {
 					assert.True(t, h.busy.TryLock(), "a failed or finished POST must release the update lock")
 				}
@@ -709,9 +767,9 @@ func TestServeArgsPersistence(t *testing.T) {
 // fakeUpdatableChorus starts a server that answers GET /healthz like a
 // running Chorus of version and returns its host:port with a function
 // listing the versions sent to its POST /update. When updatable is false,
-// POST /update answers 404 like v0.9.0. Otherwise it fails with failure when
-// set, or switches its version to the requested one and answers 202, as a
-// server that restarted on it would.
+// POST /update answers 404 like v0.9.0. Otherwise it answers 200 for its own
+// version, fails with failure when set, or switches its version to the
+// requested one and answers 202, as a server that restarted on it would.
 func fakeUpdatableChorus(t *testing.T, version string, updatable bool, failure string) (string, func() []string) {
 	t.Helper()
 	var (
@@ -734,6 +792,10 @@ func fakeUpdatableChorus(t *testing.T, version string, updatable bool, failure s
 		mu.Lock()
 		defer mu.Unlock()
 		posts = append(posts, req.Version)
+		if req.Version == version {
+			writeJSON(w, http.StatusOK, updateResult{Status: "up_to_date", Version: version})
+			return
+		}
 		if failure != "" {
 			writeJSON(w, http.StatusInternalServerError, updateError{Error: failure})
 			return
