@@ -739,7 +739,8 @@ func (h *updateHandler) status(w http.ResponseWriter, r *http.Request) {
 // registrations, and the Herdr launcher match it, answers 202 with the
 // version, and only then starts the restart, so the response reaches the
 // caller before this server stops. It answers 200 "up_to_date" when this
-// server already runs the version, 400 for a missing or malformed body, 409
+// server already runs the version, 400 for a missing or malformed body
+// (including anything after the JSON object), 409
 // for an older version (a downgrade) or while another update runs, 502 when
 // the release cannot be downloaded or verified, and 500 when installing or
 // setup fails. The server keeps running after every error.
@@ -749,6 +750,10 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, updateError{Error: fmt.Sprintf(`send {"version":"MAJOR.MINOR.PATCH"}: %v`, err)})
+		return
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, updateError{Error: `send only {"version":"MAJOR.MINOR.PATCH"}, with nothing after it`})
 		return
 	}
 	if _, err := parseVersion(req.Version); err != nil {

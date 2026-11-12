@@ -423,6 +423,8 @@ func TestUpdateHandler(t *testing.T) {
 		{name: "POST installs the requested version and restarts", method: http.MethodPost, body: nextBody, origin: "http://localhost:9440", published: next, wantStatus: http.StatusAccepted, wantBody: fmt.Sprintf(`{"status":"restarting","version":%q}`, next), wantRestart: true},
 		{name: "POST without a body", method: http.MethodPost, published: next, wantStatus: http.StatusBadRequest, wantError: "send {\"version\""},
 		{name: "POST with a malformed version", method: http.MethodPost, body: `{"version":"v0.10"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "MAJOR.MINOR.PATCH"},
+		{name: "POST of the running version with trailing data", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q} trailing-garbage`, current), published: next, wantStatus: http.StatusBadRequest, wantError: "nothing after it"},
+		{name: "POST of a newer version with trailing data", method: http.MethodPost, body: nextBody + `{"version":"99.0.0"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "nothing after it"},
 		{name: "POST with an unknown field", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q,"force":true}`, next), published: next, wantStatus: http.StatusBadRequest, wantError: "unknown field"},
 		{name: "concurrent POST is refused", method: http.MethodPost, body: nextBody, published: next, busy: true, wantStatus: http.StatusConflict, wantBody: `{"error":"an update is already in progress"}`},
 		{name: "unpublished version is a bad gateway", method: http.MethodPost, body: nextBody, published: "0.0.1", wantStatus: http.StatusBadGateway, wantError: "404"},
