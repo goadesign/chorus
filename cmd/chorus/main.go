@@ -46,6 +46,18 @@ type (
 		// origins is a comma-separated list of allowed Origin header values.
 		origins string
 	}
+
+	// restartTarget is the binary a successful POST /update installed, which
+	// serve replaces this process with after runServe shuts down, and the
+	// release of the install lock still held on its directory. The lock ends
+	// when the process replaces itself (its file is closed on exec) or when
+	// unlock is called after a failure.
+	restartTarget struct {
+		// exe is the installed binary to restart on.
+		exe string
+		// unlock releases the install lock.
+		unlock func() error
+	}
 )
 
 const (
@@ -137,12 +149,16 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve chorus executable path: %w", err)
 	}
-	next, err := runServe(args, defaultReleaseSource(), exe)
-	if err != nil || next == "" {
+	target, err := runServe(args, defaultReleaseSource(), exe)
+	if err != nil || target == nil {
 		return err
 	}
-	slog.Info("restarting chorus on the updated binary", "exe", next)
-	return restartProcess(next)
+	slog.Info("restarting chorus on the updated binary", "exe", target.exe)
+	if err := restartProcess(target.exe); err != nil {
+		releaseInstallLock(target.unlock)
+		return err
+	}
+	return nil
 }
 
 // runServe parses server flags, connects to (or auto-starts) Redis, and serves
@@ -150,11 +166,12 @@ func serve(args []string) error {
 // GET and POST /update, which let the dashboard and "chorus update" update
 // this server, started from exe, to a release from releases. After a
 // successful POST /update, runServe shuts down exactly as on SIGTERM and
-// returns the path of the binary to restart on; otherwise it returns "".
-func runServe(args []string, releases releaseSource, exe string) (string, error) {
+// returns the binary to restart on, with its install lock still held;
+// otherwise it returns nil.
+func runServe(args []string, releases releaseSource, exe string) (*restartTarget, error) {
 	cfg, err := parseServerFlags(args)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -168,12 +185,12 @@ func runServe(args []string, releases releaseSource, exe string) (string, error)
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 	redisDataDir := filepath.Join(homeDir, ".chorus", "redis")
 
 	if err := connectOrStartRedis(context.Background(), rdb, cfg.redisAddr, redisDataDir); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	svc, err := chorus.New(
@@ -183,7 +200,7 @@ func runServe(args []string, releases releaseSource, exe string) (string, error)
 		chorus.WithOnlineWindow(cfg.onlineWindow),
 	)
 	if err != nil {
-		return "", fmt.Errorf("create chorus service: %w", err)
+		return nil, fmt.Errorf("create chorus service: %w", err)
 	}
 	defer func() {
 		_ = svc.Close()
@@ -206,14 +223,14 @@ func runServe(args []string, releases releaseSource, exe string) (string, error)
 	// POST /update, which first records the binary to restart on in next.
 	serveCtx, stopServing := context.WithCancel(sigCtx)
 	defer stopServing()
-	var next atomic.Pointer[string]
+	var next atomic.Pointer[restartTarget]
 
 	updates := chorus.LocalOnly(origins...)(loopbackPeer(&updateHandler{
 		releases: releases,
 		exe:      exe,
 		addr:     cfg.addr,
-		restart: func(exe string) {
-			next.Store(&exe)
+		restart: func(exe string, unlock func() error) {
+			next.Store(&restartTarget{exe: exe, unlock: unlock})
 			stopServing()
 		},
 	}))
@@ -259,21 +276,23 @@ func runServe(args []string, releases releaseSource, exe string) (string, error)
 
 	select {
 	case serveErr := <-errCh:
-		return "", serveErr
+		return nil, serveErr
 	case <-serveCtx.Done():
 		slog.Info("shutting down chorus MCP server")
 		shutCtx, cancelShut := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancelShut()
-		if shutErr := httpServer.Shutdown(shutCtx); shutErr != nil {
-			return "", fmt.Errorf("shutdown http server: %w", shutErr)
+		restart := next.Load()
+		shutErr := httpServer.Shutdown(shutCtx)
+		if shutErr == nil {
+			shutErr = <-errCh
 		}
-		if serveErr := <-errCh; serveErr != nil {
-			return "", serveErr
+		if shutErr != nil {
+			if restart != nil {
+				releaseInstallLock(restart.unlock)
+			}
+			return nil, fmt.Errorf("shutdown http server: %w", shutErr)
 		}
-		if restartOn := next.Load(); restartOn != nil {
-			return *restartOn, nil
-		}
-		return "", nil
+		return restart, nil
 	}
 }
 
