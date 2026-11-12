@@ -50,6 +50,12 @@ func TestNewerVersion(t *testing.T) {
 		{a: "0.9", b: "0.9.0", wantErr: true},
 		{a: "0.9.0", b: "", wantErr: true},
 		{a: "0.-1.0", b: "0.9.0", wantErr: true},
+		{a: "0.+10.0", b: "0.9.0", wantErr: true},
+		{a: "0.010.0", b: "0.9.0", wantErr: true},
+		{a: "00.10.0", b: "0.9.0", wantErr: true},
+		{a: "0. 10.0", b: "0.9.0", wantErr: true},
+		{a: "0..0", b: "0.9.0", wantErr: true},
+		{a: "10.0.0", b: "0.9.0", want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.a+" vs "+tc.b, func(t *testing.T) {
@@ -168,6 +174,13 @@ func TestRunUpdate(t *testing.T) {
 			noLatest:      true,
 			serverVersion: "99.0.0",
 			wantErr:       fmt.Sprintf("v%s is older than the running server v99.0.0", next),
+		},
+		{
+			name:     "-version must be canonical MAJOR.MINOR.PATCH",
+			args:     []string{"-yes", "-version", "0.+10.0"},
+			latest:   next,
+			noLatest: true,
+			wantErr:  "is not MAJOR.MINOR.PATCH",
 		},
 		{
 			name:     "-check cannot be combined with -version",
@@ -448,6 +461,8 @@ func TestUpdateHandler(t *testing.T) {
 		{name: "POST installs the requested version and restarts", method: http.MethodPost, body: nextBody, origin: "http://localhost:9440", published: next, wantStatus: http.StatusAccepted, wantBody: fmt.Sprintf(`{"status":"restarting","version":%q}`, next), wantRestart: true},
 		{name: "POST without a body", method: http.MethodPost, published: next, wantStatus: http.StatusBadRequest, wantError: "send {\"version\""},
 		{name: "POST with a malformed version", method: http.MethodPost, body: `{"version":"v0.10"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "MAJOR.MINOR.PATCH"},
+		{name: "POST with a signed version part", method: http.MethodPost, body: `{"version":"0.+10.0"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "MAJOR.MINOR.PATCH"},
+		{name: "POST with a leading zero", method: http.MethodPost, body: `{"version":"0.010.0"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "MAJOR.MINOR.PATCH"},
 		{name: "POST of the running version with trailing data", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q} trailing-garbage`, current), published: next, wantStatus: http.StatusBadRequest, wantError: "nothing after it"},
 		{name: "POST of a newer version with trailing data", method: http.MethodPost, body: nextBody + `{"version":"99.0.0"}`, published: next, wantStatus: http.StatusBadRequest, wantError: "nothing after it"},
 		{name: "POST with an unknown field", method: http.MethodPost, body: fmt.Sprintf(`{"version":%q,"force":true}`, next), published: next, wantStatus: http.StatusBadRequest, wantError: "unknown field"},

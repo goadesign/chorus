@@ -670,7 +670,10 @@ func binaryVersion(ctx context.Context, exe string) string {
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "chorus v")
 }
 
-// parseVersion splits a MAJOR.MINOR.PATCH version such as "0.10.0".
+// parseVersion splits a MAJOR.MINOR.PATCH version such as "0.10.0". Each
+// part must be plain decimal digits without a sign or leading zeros (except
+// "0" itself), so every accepted version has exactly one spelling, the one
+// release tags and X-Chorus-Version use.
 func parseVersion(version string) ([3]int, error) {
 	var parsed [3]int
 	parts := strings.Split(version, ".")
@@ -678,8 +681,9 @@ func parseVersion(version string) ([3]int, error) {
 		return parsed, fmt.Errorf("version %q is not MAJOR.MINOR.PATCH", version)
 	}
 	for i, part := range parts {
+		canonical := part != "" && strings.Trim(part, "0123456789") == "" && (part == "0" || part[0] != '0')
 		n, err := strconv.Atoi(part)
-		if err != nil || n < 0 {
+		if !canonical || err != nil {
 			return parsed, fmt.Errorf("version %q is not MAJOR.MINOR.PATCH", version)
 		}
 		parsed[i] = n
