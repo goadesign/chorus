@@ -101,8 +101,9 @@ When it finds one, or the installed binary needs to restart the older running
 server, it offers **Update & restart**. Clicking approves `chorus update -yes`
 from the project folder. The CLI installs the release, refreshes its bundled
 skills, MCP configs, and launcher files, and restarts the server with its saved
-settings. Existing agent conversations remain in their panes, and unopened
-rows keep their selected options. If installation fails, the notice shows the
+settings. Existing agent conversations remain in their panes. The open dialog
+stays intact when the launcher's own files are unchanged; Herdr may reload it
+when those files change. If installation fails, the notice shows the
 CLI's error and lets you retry; an unavailable release check does not prevent
 opening a team. You can also run `chorus update` from a terminal to review the
 versions and approve there.

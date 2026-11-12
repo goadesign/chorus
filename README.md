@@ -300,8 +300,7 @@ Run `chorus update` to check the latest release and approve installation. The
 updater uses Homebrew for Homebrew installations; other installations receive
 the release binary after its SHA-256 checksum has been verified. It refreshes
 the bundled integrations and restarts the running server at the selected
-address using its saved settings. Running from a project that already has
-`.agents/skills/chorus/SKILL.md` also refreshes that project's installation.
+address using its saved settings.
 `chorus update -check` only reports availability. It does not install or restart.
 
 The web dashboard checks for a release when the page opens. When one is
@@ -315,8 +314,9 @@ without repeating the installation. The existing **Dashboard updated / Reload**
 notice takes precedence when the page's UI files have already changed.
 
 The Herdr launcher also checks for updates without delaying team discovery.
-Its **Update & restart** button approves the same CLI operation, keeping
-existing panes and unopened team choices. Installation failures show the
+Its **Update & restart** button approves the same CLI operation without
+disturbing existing panes (and keeps the open dialog intact when the launcher's
+own files are unchanged). Installation failures show the
 problem and let you retry. A failed availability check leaves both views usable.
 
 The dashboard's update action is available only through the standalone Chorus
