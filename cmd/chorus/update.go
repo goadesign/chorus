@@ -163,9 +163,7 @@ func defaultReleaseSource() releaseSource {
 //
 // With -check it stops there. Otherwise it asks "Update Chorus to v0.10.0?
 // [y/N]: " (or whether to restart) on in unless -yes is given, installs the
-// release over exe or through Homebrew, refreshes the project's Chorus files
-// when the working directory has .agents/skills/chorus/SKILL.md, and then
-// either restarts the running server with "<new binary> up" and its saved
+// release over exe or through Homebrew, and then either restarts the running server with "<new binary> up" and its saved
 // flags, or, when no server answers, runs "<new binary> setup -global". The
 // new binary's output is written to out. The whole update is bounded by
 // updateTimeout.
@@ -249,15 +247,6 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 			return timeoutHint(ctx, err)
 		}
 		fmt.Fprintf(out, "Installed chorus v%s at %s\n", rel.version, next)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("resolve working directory: %w", err)
-	}
-	if _, err := os.Stat(filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md")); err == nil {
-		if err := runChorus(ctx, next, out, "setup", "-addr", cfg.addr); err != nil {
-			return timeoutHint(ctx, err)
-		}
 	}
 	if running {
 		return timeoutHint(ctx, runChorus(ctx, next, out, append([]string{"up"}, upArgs...)...))
@@ -470,7 +459,9 @@ func startRestart(exe string, args []string) error {
 		return fmt.Errorf("open log file %s: %w", logPath, err)
 	}
 	defer func() {
-		_ = logFile.Close()
+		if err := logFile.Close(); err != nil {
+			slog.Debug("close chorus log after starting the restart", "path", logPath, "error", err)
+		}
 	}()
 
 	upArgs := append([]string{"up"}, args...)
@@ -487,7 +478,9 @@ func startRestart(exe string, args []string) error {
 		return fmt.Errorf("start %s up: %w", exe, err)
 	}
 	go func() {
-		_ = cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			slog.Debug("restart command exited", "exe", exe, "error", err)
+		}
 	}()
 	return nil
 }
@@ -533,7 +526,9 @@ func (s releaseSource) latest(ctx context.Context) (release, error) {
 		return release{}, fmt.Errorf("%w: check latest chorus release: %w", errReleaseUnavailable, err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("close release response", "error", err)
+		}
 	}()
 	if resp.StatusCode != http.StatusOK {
 		return release{}, fmt.Errorf("%w: check latest chorus release at %s: %s", errReleaseUnavailable, s.latestURL, resp.Status)
@@ -600,7 +595,9 @@ func (s releaseSource) fetch(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: download %s: %w", errReleaseUnavailable, url, err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("close release response", "error", err)
+		}
 	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: download %s: %s", errReleaseUnavailable, url, resp.Status)

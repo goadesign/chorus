@@ -25,80 +25,6 @@ import (
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 )
 
-// fakeChorusBinary returns a shell script standing in for a chorus binary of
-// version: "version" prints "chorus v<version>", and any other invocation
-// appends its arguments as one line to the file named by $CHORUS_FAKE_LOG, so
-// tests can see which commands an update ran on the new binary.
-func fakeChorusBinary(version string) []byte {
-	return []byte(fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = version ]; then echo \"chorus v%s\"; exit 0; fi\necho \"$*\" >> \"$CHORUS_FAKE_LOG\"\n", version))
-}
-
-// nextMinorVersion returns the release after this build's version, such as
-// "0.10.0" for "0.9.0".
-func nextMinorVersion(t *testing.T) string {
-	t.Helper()
-	v, err := parseVersion(genchorus.APIVersion)
-	require.NoError(t, err)
-	return fmt.Sprintf("%d.%d.0", v[0], v[1]+1)
-}
-
-// fakeReleases serves a latest release of version, published like a GitHub
-// release: an archive for this OS and CPU holding bin as "chorus", and a
-// checksums.txt listing it (with a wrong sum when badSum is set). It returns
-// a releaseSource reading from that server.
-func fakeReleases(t *testing.T, version string, bin []byte, badSum bool) releaseSource {
-	t.Helper()
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
-	for name, content := range map[string][]byte{"chorus": bin, "README.md": []byte("readme")} {
-		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}))
-		_, err := tw.Write(content)
-		require.NoError(t, err)
-	}
-	require.NoError(t, tw.Close())
-	require.NoError(t, gz.Close())
-
-	name := fmt.Sprintf("chorus_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-	sum := sha256.Sum256(archive.Bytes())
-	if badSum {
-		sum = sha256.Sum256([]byte("tampered"))
-	}
-	checksums := fmt.Sprintf("%s  chorus_%s_other_arch.tar.gz\n%s  %s\n", strings.Repeat("0", 64), version, hex.EncodeToString(sum[:]), name)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /latest", func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "application/vnd.github+json", r.Header.Get("Accept"))
-		fmt.Fprintf(w, `{"tag_name":"v%s","html_url":"https://example.test/v%s"}`, version, version)
-	})
-	mux.HandleFunc("GET /download/v"+version+"/checksums.txt", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(checksums))
-	})
-	mux.HandleFunc("GET /download/v"+version+"/"+name, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(archive.Bytes())
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return releaseSource{client: srv.Client(), latestURL: srv.URL + "/latest", downloadURL: srv.URL + "/download"}
-}
-
-// writeExecutable writes content as an executable file at path.
-func writeExecutable(t *testing.T, path string, content []byte) {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, content, 0o755))
-}
-
-// unusedAddr returns a loopback address nothing listens on.
-func unusedAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := ln.Addr().String()
-	require.NoError(t, ln.Close())
-	return addr
-}
-
 // TestNewerVersion verifies that versions compare numerically per part and
 // that anything other than MAJOR.MINOR.PATCH is rejected.
 func TestNewerVersion(t *testing.T) {
@@ -133,8 +59,8 @@ func TestNewerVersion(t *testing.T) {
 // TestRunUpdate verifies "chorus update": the three -check reports, declining
 // the prompt, installing over the executable and then restarting a running
 // server with "up" (which reads the saved flags itself) or running
-// "setup -global" when no server answers, refreshing a project's skill, and
-// leaving the executable untouched when the checksum does not match.
+// "setup -global" when no server answers, never running a project setup in
+// the working directory (which would write .mcp.json there), and leaving the executable untouched when the checksum does not match.
 func TestRunUpdate(t *testing.T) {
 	current := genchorus.APIVersion
 	next := nextMinorVersion(t)
@@ -148,7 +74,8 @@ func TestRunUpdate(t *testing.T) {
 		serverVersion string
 		// input is what the user types at the prompt.
 		input string
-		// projectSkill creates .agents/skills/chorus/SKILL.md in the working directory.
+		// projectSkill creates .agents/skills/chorus/SKILL.md in the working
+		// directory, as in a repository that checks in the Chorus skill.
 		projectSkill bool
 		badSum       bool
 		wantOut      string
@@ -209,12 +136,12 @@ func TestRunUpdate(t *testing.T) {
 			installed: true,
 		},
 		{
-			name:          "project skill is refreshed before the restart",
+			name:          "project files in the working directory are left alone",
 			args:          []string{"-yes"},
 			latest:        next,
 			serverVersion: current,
 			projectSkill:  true,
-			wantRuns:      "setup -addr ADDR\nup\n",
+			wantRuns:      "up\n",
 			installed:     true,
 		},
 		{
@@ -271,6 +198,12 @@ func TestRunUpdate(t *testing.T) {
 				assert.Contains(t, out.String(), fmt.Sprintf("Installed chorus v%s at %s\n", tc.latest, exe))
 			} else {
 				assert.Equal(t, oldBin, got)
+			}
+			if tc.projectSkill {
+				skill, err := os.ReadFile(filepath.Join(cwd, ".agents", "skills", "chorus", "SKILL.md"))
+				require.NoError(t, err)
+				assert.Equal(t, "old skill", string(skill))
+				assert.NoFileExists(t, filepath.Join(cwd, ".mcp.json"))
 			}
 			runs, err := os.ReadFile(runLog)
 			if tc.wantRuns == "" {
@@ -385,7 +318,7 @@ func TestUpdateHandler(t *testing.T) {
 			if tc.readOnlyDir {
 				require.NoError(t, os.Chmod(filepath.Dir(exe), 0o555))
 				t.Cleanup(func() {
-					_ = os.Chmod(filepath.Dir(exe), 0o755)
+					assert.NoError(t, os.Chmod(filepath.Dir(exe), 0o755))
 				})
 			}
 			var restarts []string
@@ -469,4 +402,80 @@ func TestServeArgsPersistence(t *testing.T) {
 	_, err = loadServeArgs(home)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "run 'chorus down' to clear them")
+}
+
+// fakeChorusBinary returns a shell script standing in for a chorus binary of
+// version: "version" prints "chorus v<version>", and any other invocation
+// appends its arguments as one line to the file named by $CHORUS_FAKE_LOG, so
+// tests can see which commands an update ran on the new binary.
+func fakeChorusBinary(version string) []byte {
+	return []byte(fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = version ]; then echo \"chorus v%s\"; exit 0; fi\necho \"$*\" >> \"$CHORUS_FAKE_LOG\"\n", version))
+}
+
+// nextMinorVersion returns the release after this build's version, such as
+// "0.10.0" for "0.9.0".
+func nextMinorVersion(t *testing.T) string {
+	t.Helper()
+	v, err := parseVersion(genchorus.APIVersion)
+	require.NoError(t, err)
+	return fmt.Sprintf("%d.%d.0", v[0], v[1]+1)
+}
+
+// fakeReleases serves a latest release of version, published like a GitHub
+// release: an archive for this OS and CPU holding bin as "chorus", and a
+// checksums.txt listing it (with a wrong sum when badSum is set). It returns
+// a releaseSource reading from that server.
+func fakeReleases(t *testing.T, version string, bin []byte, badSum bool) releaseSource {
+	t.Helper()
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for name, content := range map[string][]byte{"chorus": bin, "README.md": []byte("readme")} {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}))
+		_, err := tw.Write(content)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+
+	name := fmt.Sprintf("chorus_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	sum := sha256.Sum256(archive.Bytes())
+	if badSum {
+		sum = sha256.Sum256([]byte("tampered"))
+	}
+	checksums := fmt.Sprintf("%s  chorus_%s_other_arch.tar.gz\n%s  %s\n", strings.Repeat("0", 64), version, hex.EncodeToString(sum[:]), name)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /latest", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/vnd.github+json", r.Header.Get("Accept"))
+		fmt.Fprintf(w, `{"tag_name":"v%s","html_url":"https://example.test/v%s"}`, version, version)
+	})
+	mux.HandleFunc("GET /download/v"+version+"/checksums.txt", func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write([]byte(checksums))
+		assert.NoError(t, err)
+	})
+	mux.HandleFunc("GET /download/v"+version+"/"+name, func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write(archive.Bytes())
+		assert.NoError(t, err)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return releaseSource{client: srv.Client(), latestURL: srv.URL + "/latest", downloadURL: srv.URL + "/download"}
+}
+
+// writeExecutable writes content as an executable file at path.
+func writeExecutable(t *testing.T, path string, content []byte) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, content, 0o755))
+}
+
+// unusedAddr returns a loopback address nothing listens on.
+func unusedAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return addr
 }
