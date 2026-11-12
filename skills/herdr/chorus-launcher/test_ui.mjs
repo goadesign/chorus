@@ -148,6 +148,7 @@ for (const notice of ['Update available: chorus v0.9.0 -> v0.10.0 (https://githu
     });
     await h.settle();
     assert.equal(h.view.update.message, notice);
+    assert.equal(h.view.update.version, '0.10.0');
     assert.equal(h.execCalls.some(call => call.args.includes('-yes')), false);
     h.view.addAgent(h.cx);
     const rows = h.view.rows.map(row => [row.id, row.terminal, row.model, row.thinking]);
@@ -161,6 +162,7 @@ for (const notice of ['Update available: chorus v0.9.0 -> v0.10.0 (https://githu
     assert.equal(h.closed.length, 0);
     const approved = h.execCalls.filter(call => call.args.includes('-yes'));
     assert.equal(approved.length, 1);
+    assert.deepEqual(Array.from(approved[0].args), ['update', '-yes', '-version', '0.10.0']);
     assert.equal(approved[0].options.cwd, '/project');
     assert.ok(approved[0].options.timeout > 10 * 60 * 1000);
   });
@@ -179,6 +181,88 @@ test('a pending update check does not hold up team discovery', async () => {
   assert.equal(h.view.update, null);
   assert.ok(h.view.ready());
 });
+
+test('Herdr preserves the displayed approval when the available release changes before the click', async () => {
+  let latest = '0.10.0';
+  const h = harness({ commandResult(command, args) {
+    if (command !== 'chorus' || args[0] !== 'update') return;
+    return { code: 0, stdout: args.includes('-check') ? `Update available: chorus v0.9.0 -> v${latest}` : 'Chorus updated', stderr: '' };
+  } });
+  await h.settle();
+  latest = '0.11.0';
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  const approved = h.execCalls.find(call => call.args.includes('-yes'));
+  assert.deepEqual(Array.from(approved.args), ['update', '-yes', '-version', '0.10.0']);
+});
+
+test('an unrecognized target cannot offer an unbound update', async () => {
+  for (const notice of ['Update available: unknown target', 'Restart needed: chorus binary is vnext, running server is v0.9.0']) {
+    const h = harness({ commandResult(command, args) {
+      if (command === 'chorus' && args.includes('-check')) return { code: 0, stdout: notice, stderr: '' };
+    } });
+    await h.settle();
+    h.render();
+    assert.equal(h.view.update, null);
+    assert.equal(h.controls.has('chorus-update'), false);
+    h.view.updateChorus(h.cx);
+    await h.settle();
+    assert.equal(h.execCalls.some(call => call.args.includes('-yes')), false);
+  }
+});
+
+test('a failed update rechecks availability and requires new approval for a changed version', async () => {
+  let latest = '0.10.0';
+  const h = harness({ commandResult(command, args) {
+    if (command !== 'chorus' || args[0] !== 'update') return;
+    return args.includes('-check')
+      ? { code: 0, stdout: `Update available: chorus v0.9.0 -> v${latest}`, stderr: '' }
+      : { code: 1, stdout: '', stderr: 'the installed binary is newer than the approved version' };
+  } });
+  await h.settle();
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  assert.equal(h.view.update.status, 'error');
+  latest = '0.11.0';
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  assert.equal(h.view.update.status, 'available');
+  assert.equal(h.view.update.version, '0.11.0');
+  assert.equal(h.execCalls.filter(call => call.args.includes('-yes')).length, 1);
+  h.render();
+  h.click('chorus-update');
+  await h.settle();
+  const approvals = h.execCalls.filter(call => call.args.includes('-yes'));
+  assert.deepEqual(Array.from(approvals[1].args), ['update', '-yes', '-version', '0.11.0']);
+});
+
+for (const result of [
+  { code: 0, stdout: 'Chorus v0.11.0 is up to date', stderr: '' },
+  { code: 1, stdout: '', stderr: 'GitHub unavailable' },
+]) {
+  test(`rechecking after failure keeps the team usable when the check exits ${result.code}`, async () => {
+    let checks = 0;
+    const h = harness({ commandResult(command, args) {
+      if (command !== 'chorus' || args[0] !== 'update') return;
+      if (args.includes('-check')) return ++checks === 1
+        ? { code: 0, stdout: 'Update available: chorus v0.9.0 -> v0.10.0', stderr: '' } : result;
+      return { code: 1, stdout: '', stderr: 'update could not finish' };
+    } });
+    await h.settle();
+    h.render();
+    h.click('chorus-update');
+    await h.settle();
+    h.render();
+    h.click('chorus-update');
+    await h.settle();
+    assert.equal(h.view.update?.status ?? null, result.code ? 'error' : null);
+    assert.ok(h.view.ready());
+    assert.equal(h.execCalls.filter(call => call.args.includes('-yes')).length, 1);
+  });
+}
 
 test('update failure shows the CLI error without losing rows or automatically retrying', async () => {
   const h = harness({ commandResult(command, args) {
