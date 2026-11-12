@@ -112,8 +112,9 @@ type (
 		// registers with the coding agents.
 		addr string
 		// restart asks runServe to shut down and restart this process on the
-		// binary at exe; a recorder in tests.
-		restart func(exe string)
+		// binary at exe, handing over the install lock that unlock releases;
+		// a recorder in tests.
+		restart func(exe string, unlock func() error)
 		// busy is held from the start of a POST until the restart begins, or
 		// until the POST fails, so concurrent POSTs answer 409.
 		busy sync.Mutex
@@ -181,6 +182,13 @@ func defaultReleaseSource() releaseSource {
 //	Chorus v0.11.0 is running, newer than the latest release v0.10.0
 //	Chorus v0.10.0 is up to date
 //
+// The first two lines are a contract for callers such as the Herdr
+// launcher: the version after "->" or after "chorus binary is" is the one to
+// pass to -version. With -version, runUpdate skips the latest-release check
+// and updates to exactly that version, refusing one older than this binary
+// or the running server, so a caller's approval cannot be widened to a
+// release published after it showed the line.
+//
 // With -check it stops there. Otherwise it asks "Update Chorus to v0.10.0?
 // [y/N]: " (or whether to restart) on in unless -yes is given. Ctrl-C at the
 // prompt ends the command as usual; the update itself, which starts after
@@ -199,20 +207,25 @@ func defaultReleaseSource() releaseSource {
 // Herdr launcher. Output of the commands it runs is written to out.
 func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSource, exe string) error {
 	var (
-		addr  string
-		check bool
-		yes   bool
+		addr    string
+		check   bool
+		yes     bool
+		version string
 	)
 	fs := flag.NewFlagSet("chorus update", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", "", "Chorus HTTP listen address (default: the address 'chorus up' last used, else "+defaultListenAddr+")")
 	fs.BoolVar(&check, "check", false, "Only report whether an update or restart is available")
 	fs.BoolVar(&yes, "yes", false, "Update without asking for confirmation")
 	fs.BoolVar(&yes, "y", false, "Shorthand for -yes")
+	fs.StringVar(&version, "version", "", "Update to exactly this version (MAJOR.MINOR.PATCH, as reported by -check) instead of the latest release")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if version != "" && check {
+		return errors.New("-check looks up the latest release, so it cannot be combined with -version")
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -233,9 +246,22 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	baseURL := localBaseURL(cfg.addr)
 
 	running, serverVersion := probeServer(baseURL)
-	rel, err := releases.latest(context.Background())
-	if err != nil {
-		return err
+	var rel release
+	if version == "" {
+		if rel, err = releases.latest(context.Background()); err != nil {
+			return err
+		}
+	} else {
+		if _, err := parseVersion(version); err != nil {
+			return err
+		}
+		if versionBefore(version, genchorus.APIVersion) {
+			return fmt.Errorf("v%s is older than this chorus binary v%s", version, genchorus.APIVersion)
+		}
+		if running && versionBefore(version, serverVersion) {
+			return fmt.Errorf("v%s is older than the running server v%s", version, serverVersion)
+		}
+		rel = release{version: version}
 	}
 	newer, err := newerVersion(rel.version, genchorus.APIVersion)
 	if err != nil {
@@ -251,8 +277,10 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	case running && versionBefore(rel.version, serverVersion):
 		fmt.Fprintf(out, "Chorus v%s is running, newer than the latest release v%s\n", serverVersion, rel.version)
 		return nil
-	case newer:
+	case newer && rel.url != "":
 		fmt.Fprintf(out, "Update available: chorus v%s -> v%s (%s)\n", genchorus.APIVersion, rel.version, rel.url)
+	case newer:
+		fmt.Fprintf(out, "Update available: chorus v%s -> v%s\n", genchorus.APIVersion, rel.version)
 	case running && versionBefore(serverVersion, target):
 		fmt.Fprintf(out, "Restart needed: chorus binary is v%s, running server is v%s\n", genchorus.APIVersion, serverVersion)
 	default:
@@ -283,25 +311,39 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	// installs into its own executable instead, so this runs only when no
 	// server answers, the server already runs target, or it predates
 	// POST /update.
-	install := func() (string, error) {
+	install := func() (string, func() error, error) {
 		if !newer {
-			return exe, nil
+			return exe, func() error { return nil }, nil
 		}
-		next, err := installRelease(ctx, releases, rel, exe, out)
+		next, unlock, err := installRelease(ctx, releases, rel, exe, out)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		fmt.Fprintf(out, "Installed chorus v%s at %s\n", rel.version, next)
-		return next, nil
+		return next, unlock, nil
 	}
 	if running {
 		return timeoutHint(ctx, updateServer(ctx, out, cfg.addr, serverVersion, target, install))
 	}
-	next, err := install()
+	_, err = installAndSetUp(ctx, out, cfg.addr, install)
+	return timeoutHint(ctx, err)
+}
+
+// installAndSetUp runs install and then the installed binary's
+// "setup -global", so the skills, MCP registrations, and Herdr launcher
+// match it, and returns that binary's path. The install lock stays held
+// until setup finishes, so another update cannot replace the binary between
+// the two steps.
+func installAndSetUp(ctx context.Context, out io.Writer, addr string, install func() (string, func() error, error)) (string, error) {
+	next, unlock, err := install()
 	if err != nil {
-		return timeoutHint(ctx, err)
+		return "", err
 	}
-	return timeoutHint(ctx, runChorus(ctx, next, out, "setup", "-global", "-addr", cfg.addr))
+	defer releaseInstallLock(unlock)
+	if err := runChorus(ctx, next, out, "setup", "-global", "-addr", addr); err != nil {
+		return "", err
+	}
+	return next, nil
 }
 
 // updateServer asks the server at addr to update itself to version with
@@ -315,7 +357,7 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 // command exits nonzero while that server still runs the old version: its
 // Redis password and flags are unknown here, so stopping it could leave
 // nothing running.
-func updateServer(ctx context.Context, out io.Writer, addr, serverVersion, version string, install func() (string, error)) error {
+func updateServer(ctx context.Context, out io.Writer, addr, serverVersion, version string, install func() (string, func() error, error)) error {
 	baseURL := localBaseURL(addr)
 	body, err := json.Marshal(updateRequest{Version: version})
 	if err != nil {
@@ -340,11 +382,8 @@ func updateServer(ctx context.Context, out io.Writer, addr, serverVersion, versi
 	case http.StatusAccepted:
 		fmt.Fprintf(out, "Chorus at %s is installing v%s and restarting\n", baseURL, version)
 	case http.StatusOK, http.StatusNotFound:
-		next, err := install()
+		next, err := installAndSetUp(ctx, out, addr, install)
 		if err != nil {
-			return err
-		}
-		if err := runChorus(ctx, next, out, "setup", "-global", "-addr", addr); err != nil {
 			return err
 		}
 		if resp.StatusCode == http.StatusNotFound {
@@ -375,65 +414,95 @@ func updateServer(ctx context.Context, out io.Writer, addr, serverVersion, versi
 	return fmt.Errorf("chorus v%s did not become healthy at %s/healthz within %s; check 'chorus status' and ~/.chorus/chorus.log", version, baseURL, 2*daemonReadyTimeout)
 }
 
-// installRelease makes rel the chorus binary run next and returns its path.
-// A binary inside a Homebrew Cellar is upgraded with "brew upgrade", writing
-// Homebrew's output to out, and the returned path is Homebrew's bin/chorus.
-// Any other binary is replaced in place by the downloaded release, but only
-// after the downloaded file has run and reported rel's version, so a broken
-// or mislabeled release never overwrites a working binary. The replacement
-// happens under an exclusive lock on the binary's directory: a binary that
-// already reports rel's version is kept (for example after an earlier update
-// whose restart did not happen), and one reporting a newer version is left
-// alone with an error wrapping errWouldDowngrade.
-func installRelease(ctx context.Context, releases releaseSource, rel release, exe string, out io.Writer) (string, error) {
+// installRelease makes rel the chorus binary run next and returns its path
+// with the function that releases the install lock, which the caller holds
+// until it no longer needs that exact file: through setup, and for a server
+// until it has replaced itself with the file. Installs take an exclusive
+// lock on the directory of the file they write and read the version on disk
+// under it, so concurrent updates of one binary, including from two servers
+// sharing it, run one at a time: a binary already at rel's version is kept,
+// and one reporting a newer version is left alone with an error wrapping
+// errWouldDowngrade. A binary inside a Homebrew Cellar is upgraded through
+// Homebrew (see installHomebrew), and the returned path is Homebrew's
+// bin/chorus; any other binary is replaced in place (see installDirect).
+func installRelease(ctx context.Context, releases releaseSource, rel release, exe string, out io.Writer) (string, func() error, error) {
 	realExe, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		realExe = exe
 	}
-	if prefix, ok := homebrewPrefix(realExe); ok {
-		next := filepath.Join(prefix, "bin", "chorus")
-		installed := binaryVersion(ctx, next)
-		if installed == rel.version {
-			return next, nil
-		}
-		if versionBefore(rel.version, installed) {
-			return "", fmt.Errorf("%w: %s is already chorus v%s, newer than v%s", errWouldDowngrade, next, installed, rel.version)
-		}
-		cmd := exec.CommandContext(ctx, "brew", "upgrade", homebrewFormula)
-		cmd.Stdout = out
-		cmd.Stderr = out
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("brew upgrade %s: %w", homebrewFormula, err)
-		}
-		if got := binaryVersion(ctx, next); got != rel.version {
-			return "", fmt.Errorf("brew upgrade %s installed %q at %s, not v%s; run 'brew update' and try again", homebrewFormula, got, next, rel.version)
-		}
-		return next, nil
+	next, dir := exe, filepath.Dir(realExe)
+	prefix, homebrew := homebrewPrefix(realExe)
+	if homebrew {
+		next = filepath.Join(prefix, "bin", "chorus")
+		dir = filepath.Dir(next)
 	}
-
-	// Installs into the same directory run one at a time, and the version on
-	// disk is read under the lock, so an older release approved earlier never
-	// replaces a newer one another update installed in the meantime, even
-	// from another server sharing this binary.
-	unlock, err := lockDir(ctx, filepath.Dir(realExe))
+	unlock, err := lockDir(ctx, dir)
 	if err != nil {
-		return "", fmt.Errorf("install chorus v%s at %s: %w", rel.version, realExe, err)
+		return "", nil, fmt.Errorf("install chorus v%s: %w", rel.version, err)
 	}
-	defer func() {
-		if err := unlock(); err != nil {
-			slog.Debug("release install lock", "dir", filepath.Dir(realExe), "error", err)
-		}
-	}()
-	installed := binaryVersion(ctx, realExe)
+	if homebrew {
+		err = installHomebrew(ctx, rel, next, out)
+	} else {
+		err = installDirect(ctx, releases, rel, realExe)
+	}
+	if err != nil {
+		releaseInstallLock(unlock)
+		return "", nil, err
+	}
+	return next, unlock, nil
+}
+
+// installHomebrew makes Homebrew's bin/chorus at next report rel's version.
+// A Homebrew tap only offers its latest formula, so after "brew update" it
+// checks that the tap offers exactly rel's version and otherwise refuses,
+// before changing anything, with an error wrapping errReleaseUnavailable.
+// Every brew command runs with HOMEBREW_NO_AUTO_UPDATE=1, so "brew upgrade"
+// does not refresh the tap itself; a "brew update" run by another process
+// in between can still change the formula, which the version check after
+// the upgrade reports. Homebrew's output is written to out. The caller holds
+// the install lock.
+func installHomebrew(ctx context.Context, rel release, next string, out io.Writer) error {
+	installed := binaryVersion(ctx, next)
 	if installed == rel.version {
-		return exe, nil
+		return nil
 	}
 	if versionBefore(rel.version, installed) {
-		return "", fmt.Errorf("%w: %s is already chorus v%s, newer than v%s", errWouldDowngrade, realExe, installed, rel.version)
+		return fmt.Errorf("%w: %s is already chorus v%s, newer than v%s", errWouldDowngrade, next, installed, rel.version)
+	}
+	if err := runBrew(ctx, out, "update"); err != nil {
+		return err
+	}
+	offered, err := homebrewStableVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if offered != rel.version {
+		return fmt.Errorf("%w: Homebrew offers chorus v%s, not the approved v%s; check for updates again", errReleaseUnavailable, offered, rel.version)
+	}
+	if err := runBrew(ctx, out, "upgrade", homebrewFormula); err != nil {
+		return err
+	}
+	if got := binaryVersion(ctx, next); got != rel.version {
+		return fmt.Errorf("brew upgrade %s installed %q at %s, not v%s", homebrewFormula, got, next, rel.version)
+	}
+	return nil
+}
+
+// installDirect replaces the binary at realExe with rel's downloaded
+// release, but only after the downloaded file has run and reported rel's
+// version, so a broken or mislabeled release never overwrites a working
+// binary. The caller holds the install lock.
+func installDirect(ctx context.Context, releases releaseSource, rel release, realExe string) error {
+	installed := binaryVersion(ctx, realExe)
+	if installed == rel.version {
+		return nil
+	}
+	if versionBefore(rel.version, installed) {
+		return fmt.Errorf("%w: %s is already chorus v%s, newer than v%s", errWouldDowngrade, realExe, installed, rel.version)
 	}
 	bin, err := releases.download(ctx, rel.version)
 	if err != nil {
-		return "", err
+		return err
 	}
 	err = replaceExecutable(realExe, bin, func(candidate string) error {
 		if got := binaryVersion(ctx, candidate); got != rel.version {
@@ -442,12 +511,58 @@ func installRelease(ctx context.Context, releases releaseSource, rel release, ex
 		return nil
 	})
 	if errors.Is(err, errReleaseUnavailable) {
-		return "", err
+		return err
 	}
 	if err != nil {
-		return "", fmt.Errorf("install chorus v%s at %s: %w (rerun with write access to %s)", rel.version, realExe, err, filepath.Dir(realExe))
+		return fmt.Errorf("install chorus v%s at %s: %w (rerun with write access to %s)", rel.version, realExe, err, filepath.Dir(realExe))
 	}
-	return exe, nil
+	return nil
+}
+
+// runBrew runs "brew args..." with HOMEBREW_NO_AUTO_UPDATE=1, writing its
+// output to out, so only an explicit "brew update" refreshes the taps.
+func runBrew(ctx context.Context, out io.Writer, args ...string) error {
+	cmd := exec.CommandContext(ctx, "brew", args...)
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("brew %s: %w", strings.Join(args, " "), err)
+	}
+	return nil
+}
+
+// homebrewStableVersion returns the version the goadesign/tap/chorus formula
+// offers, from "brew info --json=v2".
+func homebrewStableVersion(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", homebrewFormula)
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
+	raw, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("brew info %s: %w", homebrewFormula, err)
+	}
+	var info struct {
+		// Formulae lists the requested formula.
+		Formulae []struct {
+			// Versions holds the formula's offered versions.
+			Versions struct {
+				// Stable is the version "brew upgrade" installs.
+				Stable string `json:"stable"`
+			} `json:"versions"`
+		} `json:"formulae"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil || len(info.Formulae) != 1 || info.Formulae[0].Versions.Stable == "" {
+		return "", fmt.Errorf("%w: brew info %s did not report a stable version", errReleaseUnavailable, homebrewFormula)
+	}
+	return info.Formulae[0].Versions.Stable, nil
+}
+
+// releaseInstallLock releases an install lock, logging a failure: the lock
+// is advisory and also ends when this process exits or replaces itself.
+func releaseInstallLock(unlock func() error) {
+	if err := unlock(); err != nil {
+		slog.Debug("release chorus install lock", "error", err)
+	}
 }
 
 // extractBinary returns the "chorus" file of a release .tar.gz archive.
@@ -822,7 +937,7 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var output bytes.Buffer
-	next, err := installRelease(ctx, h.releases, release{version: req.Version}, h.exe, &output)
+	next, unlock, err := installRelease(ctx, h.releases, release{version: req.Version}, h.exe, &output)
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
@@ -836,6 +951,7 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := runChorus(ctx, next, &output, "setup", "-global", "-addr", h.addr); err != nil {
+		releaseInstallLock(unlock)
 		slog.Error("set up updated chorus", "version", req.Version, "error", err, "output", output.String())
 		writeJSON(w, http.StatusInternalServerError, updateError{Error: fmt.Sprintf("%v: %s", timeoutHint(ctx, err), strings.TrimSpace(output.String()))})
 		return
@@ -845,7 +961,9 @@ func (h *updateHandler) update(w http.ResponseWriter, r *http.Request) {
 	if err := http.NewResponseController(w).Flush(); err != nil {
 		slog.Error("flush /update response", "error", err)
 	}
-	// The lock stays held: this server stops accepting updates as it shuts down.
+	// Both locks stay held: this server stops accepting updates as it shuts
+	// down, and the install lock keeps the installed file in place until
+	// this process has replaced itself with it.
 	restarting = true
-	h.restart(next)
+	h.restart(next, unlock)
 }
