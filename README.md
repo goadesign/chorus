@@ -302,6 +302,18 @@ the release binary after its SHA-256 checksum has been verified. It refreshes
 the bundled integrations and restarts the running server at the selected
 address using its current settings, including its Redis connection.
 `chorus update -check` only reports availability. It does not install or restart.
+An automation that already obtained approval for a release can pass
+`chorus update -yes -version 0.10.0` to keep that exact target, without checking
+for a different latest release. Older targets are refused. `-version` cannot
+be combined with `-check`.
+
+Callers consuming `-check` can read the target from these two line formats
+(versions and the release URL vary):
+
+```text
+Update available: chorus v<current> -> v<target> (<release URL>)
+Restart needed: chorus binary is v<target>, running server is v<server>
+```
 
 Servers from before the update endpoint was added, including v0.9.0, cannot
 restart themselves through it. The CLI installs the binary and refreshes global
@@ -323,10 +335,11 @@ If another update conflicts with your request, **Reload** fetches the current
 version before you approve again.
 
 The Herdr launcher also checks for updates without delaying team discovery.
-Its **Update & restart** button approves the same CLI operation without
-disturbing existing panes (and keeps the open dialog intact when the launcher's
+Its **Update & restart** button passes the displayed version to that CLI operation
+without disturbing existing panes (and keeps the open dialog intact when the launcher's
 own files are unchanged). Installation failures show the
-problem and let you retry. A failed availability check leaves both views usable.
+problem. **Check for updates** refreshes the notice before another approval.
+A failed availability check leaves both views usable.
 
 The dashboard's update action is available only through the standalone Chorus
 server on this machine. A Go application embedding `chorus.NewHTTPHandler`

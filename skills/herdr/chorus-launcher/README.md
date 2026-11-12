@@ -98,14 +98,16 @@ helper exits.
 
 The launcher checks for a newer Chorus release without delaying team discovery.
 When it finds one, or the installed binary needs to restart the older running
-server, it offers **Update & restart**. Clicking approves `chorus update -yes`
-from the project folder. The CLI installs the release, refreshes its bundled
-skills, MCP configs, and launcher files, and restarts the server with its current
+server, it offers **Update & restart**. Clicking approves the displayed version
+with `chorus update -yes -version <version>` from the project folder. The CLI
+installs that release, refreshes its bundled skills, MCP configs, and launcher
+files, and restarts the server with its current
 settings. Existing agent conversations remain in their panes. The open dialog
 stays intact when the launcher's own files are unchanged; Herdr may reload it
-when those files change. If installation fails, the notice shows the
-CLI's error and lets you retry; an unavailable release check does not prevent
-opening a team. You can also run `chorus update` from a terminal to review the
+when those files change. If installation fails, the notice shows the CLI's error.
+**Check for updates** refreshes the available version before you approve again;
+it does not repeat the failed installation. An unavailable release check does
+not prevent opening a team. You can also run `chorus update` from a terminal to review the
 versions and approve there.
 
 For older running servers without the update endpoint, including v0.9.0, the CLI
