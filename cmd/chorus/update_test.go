@@ -104,6 +104,11 @@ func TestRunUpdate(t *testing.T) {
 		releasedBin []byte
 		// noLatest makes the latest-release check fail, as -version must skip it.
 		noLatest bool
+		// noDownload makes release downloads fail, for cases that must not download.
+		noDownload bool
+		// diskVersion is the version the executable on disk reports; empty
+		// means this binary's own version.
+		diskVersion string
 		// wantOut is the exact output; wantOutParts are lines it must contain.
 		wantOut      string
 		wantOutParts []string
@@ -223,6 +228,26 @@ func TestRunUpdate(t *testing.T) {
 			wantPosts:     []string{current},
 		},
 		{
+			name:          "needed restart of a legacy server sets up the binary on disk without downloading",
+			args:          []string{"-yes"},
+			latest:        current,
+			serverVersion: "0.0.1",
+			legacyServer:  true,
+			noDownload:    true,
+			wantErr:       "cannot update itself",
+			wantRuns:      "setup -global -addr ADDR\n",
+		},
+		{
+			name:          "needed restart refuses a newer binary written while the prompt waited",
+			args:          []string{"-yes"},
+			latest:        current,
+			serverVersion: "0.0.1",
+			legacyServer:  true,
+			noDownload:    true,
+			diskVersion:   "99.0.0",
+			wantErr:       fmt.Sprintf("is already chorus v99.0.0, newer than v%s", current),
+		},
+		{
 			name:          "server without POST /update keeps running",
 			args:          []string{"-yes"},
 			latest:        next,
@@ -300,7 +325,7 @@ func TestRunUpdate(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
 			require.NoError(t, saveServeArgs(home, saved))
 
-			oldBin := fakeChorusBinary(current)
+			oldBin := fakeChorusBinary(cmp.Or(tc.diskVersion, current))
 			newBin := fakeChorusBinary(tc.latest)
 			if tc.releasedBin != nil {
 				newBin = tc.releasedBin
@@ -311,6 +336,9 @@ func TestRunUpdate(t *testing.T) {
 			releases := fakeReleases(t, tc.latest, newBin, tc.badSum)
 			if tc.noLatest {
 				releases.latestURL = "http://127.0.0.1:1/latest"
+			}
+			if tc.noDownload {
+				releases.downloadURL = "http://127.0.0.1:1/download"
 			}
 			var out bytes.Buffer
 			err = runUpdate(tc.args, strings.NewReader(tc.input), &out, releases, exe)

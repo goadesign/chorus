@@ -315,15 +315,17 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	// installs into its own executable instead, so this runs only when no
 	// server answers, the server already runs target, or it predates
 	// POST /update.
+	// Even when target is this binary's own version, installRelease checks
+	// the file under its lock, so a newer binary another update wrote while
+	// the prompt waited is refused instead of being set up unapproved.
 	install := func() (string, func() error, error) {
-		if !newer {
-			return exe, func() error { return nil }, nil
-		}
-		next, unlock, err := installRelease(ctx, releases, rel, exe, out)
+		next, unlock, err := installRelease(ctx, releases, release{version: target, url: rel.url}, exe, out)
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(out, "Installed chorus v%s at %s\n", rel.version, next)
+		if newer {
+			fmt.Fprintf(out, "Installed chorus v%s at %s\n", target, next)
+		}
 		return next, unlock, nil
 	}
 	if running {
