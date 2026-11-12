@@ -412,8 +412,9 @@ func (s *swarmHandle) channelSubscriptions(snap map[string]string, now time.Time
 	return subsByAgent
 }
 
-// reapExpiredAgents removes agent records, channel subscriptions, and read
-// cursors for any agent whose LastSeenUnix is older than onlineWindow, and
+// reapExpiredAgents removes agent records, channel subscriptions, and channel
+// read cursors for any agent whose LastSeenUnix is older than onlineWindow
+// (preserving direct-message cursors alongside retained DM streams), and
 // purges any channels left with zero live subscribers.
 func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (bool, error) {
 	snap := s.state.Map()
@@ -442,13 +443,8 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 			if !slices.Contains(candidateChannels, ch) {
 				candidateChannels = append(candidateChannels, ch)
 			}
-		}
-		cursorPrefix := prefixCursor + handle + ":"
-		for k := range snap {
-			if strings.HasPrefix(k, cursorPrefix) {
-				if _, err := s.state.Delete(ctx, k); err != nil {
-					return false, fmt.Errorf("delete expired cursor %s: %w", k, err)
-				}
+			if _, err := s.state.Delete(ctx, cursorMapKey(handle, ch)); err != nil {
+				return false, fmt.Errorf("delete expired cursor for %s: %w", ch, err)
 			}
 		}
 		if _, err := s.state.Delete(ctx, subMapKey(handle)); err != nil {
@@ -512,14 +508,6 @@ func (s *swarmHandle) leaveChannels(ctx context.Context, agent string, channels 
 	}
 
 	if len(remainingSubs) == 0 {
-		cursorPrefix := prefixCursor + agent + ":"
-		for k := range snap {
-			if strings.HasPrefix(k, cursorPrefix) {
-				if _, err := s.state.Delete(ctx, k); err != nil {
-					return "", fmt.Errorf("delete cursor %s: %w", k, err)
-				}
-			}
-		}
 		if _, err := s.state.Delete(ctx, subMapKey(agent)); err != nil {
 			return "", fmt.Errorf("delete empty subscription key for %q: %w", agent, err)
 		}

@@ -507,6 +507,12 @@ func TestRunWatch(t *testing.T) {
 	if got != want {
 		t.Fatalf("runWatch output = %q, want %q", got, want)
 	}
+	if defaultWatchWait != 24*time.Hour {
+		t.Fatalf("defaultWatchWait = %v, want 24h", defaultWatchWait)
+	}
+	if rearm := formatWatchRearmCommand("api", "", defaultWatchWait, true); rearm != "chorus watch api" {
+		t.Fatalf("formatWatchRearmCommand(defaultWatchWait) = %q, want %q", rearm, "chorus watch api")
+	}
 
 	// 3. When the server is unreachable and stays down, runWatch must fail
 	// bounded by watchReconnectWindow (or -wait when shorter) rather than hanging.

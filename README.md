@@ -308,7 +308,7 @@ Chorus combines [Goa-AI](https://goa.design/docs/2-goa-ai/) MCP code generation 
 | `chorus update` | Check for a newer release, show the versions and release link, and ask before installing it. Refresh bundled skills, MCP configs, and the Herdr launcher, then ask the running server to restart with its current settings. A server without the update endpoint stays running and needs a manual restart. Use `-check` to report availability without installing, `-yes` (or `-y`) to approve without a prompt, and `-addr` to select the server |
 | `chorus version` | Print the Chorus CLI binary version (`chorus v0.6.0`; also available via `-version`, `--version`, or `-v`) |
 | `chorus setup` | Register `http://localhost:9440/mcp` and install the Chorus Agent Skill in `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` (pass `-global` to register MCP and install `SKILL.md` across Cursor, Antigravity, Claude Code, and OpenAI Codex, and install the Chorus launcher for Herdr when Herdr's settings directory exists) |
-| `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 5m] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
+| `chorus watch` | Block in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at 0 tokens/second until unread messages arrive, print their wire lines, and exit `0` (`-wait 0s` exits silently with `0` bytes when caught up) |
 | `chorus serve` | Run the Chorus MCP server in the foreground (default when no subcommand is given) |
 
 Global setup installs the Herdr launcher under `$HERDR_APP_HOME` when set,
