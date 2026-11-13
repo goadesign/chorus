@@ -25,6 +25,36 @@ class Herdr:
         self.fail_agent = None
         self.fail_command = None
 
+    @staticmethod
+    def _agent_foreground(argv, folder, pid):
+        inner = list(argv)
+        cwd = folder or ""
+        if len(inner) >= 6 and inner[1] == "-lic":
+            cwd = inner[4]
+            if 'while [[ "$1" != "--" ]]' in inner[2] and "--" in inner[5:]:
+                sep = inner.index("--", 5)
+                inner = inner[sep + 1 :]
+            else:
+                inner = inner[5:]
+        if len(inner) > 1 and isinstance(inner[-1], str) and inner[-1].startswith("Use the installed chorus skill now."):
+            inner = inner[:-1]
+            if inner and inner[-1] in ("--", "--prompt-interactive", "--prompt"):
+                inner = inner[:-1]
+        prog = Path(inner[0]).name if inner else "sh"
+        name = "2.1.323" if prog == "claude" else prog
+        return {"pid": pid, "name": name, "argv": inner, "cwd": cwd}
+
+    def exit_to_shell(self, address, argv=None, name="zsh"):
+        terminal = next(t for t in self.terminals if t["address"] == address)
+        shell_argv = list(argv) if argv is not None else ["/bin/zsh", "-li"]
+        fg = terminal.get("foreground") or {"pid": 1000, "cwd": ""}
+        terminal["foreground"] = {
+            "pid": fg["pid"] + 500,
+            "name": name,
+            "argv": shell_argv,
+            "cwd": fg["cwd"],
+        }
+
     def app(self, argv):
         if argv == ["ls"]:
             return copy.deepcopy(self.listing)
@@ -38,7 +68,34 @@ class Herdr:
             for space in self.listing["spaces"]:
                 for tab in space["tabs"]:
                     tab["terminals"] = [p for p in tab["terminals"] if p["terminal"] != args["terminal"]]
-            next(t for t in self.terminals if t["address"] == args["terminal"])["state"] = "exited"
+            killed = next(t for t in self.terminals if t["address"] == args["terminal"])
+            killed["state"] = "exited"
+            killed["foreground"] = None
+            return {"ok": True}
+        if command == "pane.swap":
+            tab = next(
+                t
+                for s in self.listing["spaces"]
+                for t in s["tabs"]
+                if any(p["pane"] == args["pane"] for p in t["terminals"])
+                and any(p["pane"] == args["target"] for p in t["terminals"])
+            )
+            first = next(i for i, p in enumerate(tab["terminals"]) if p["pane"] == args["pane"])
+            second = next(i for i, p in enumerate(tab["terminals"]) if p["pane"] == args["target"])
+            tab["terminals"][first], tab["terminals"][second] = tab["terminals"][second], tab["terminals"][first]
+            return {"ok": True}
+        if command == "pane.close":
+            tab, entry = next(
+                (t, p)
+                for s in self.listing["spaces"]
+                for t in s["tabs"]
+                for p in t["terminals"]
+                if p["pane"] == args["pane"]
+            )
+            tab["terminals"] = [p for p in tab["terminals"] if p["pane"] != args["pane"]]
+            closed = next(t for t in self.terminals if t["address"] == entry["terminal"])
+            closed["state"] = "finished"
+            closed["foreground"] = None
             return {"ok": True}
         if command == "tab.new":
             space = next(s for s in self.listing["spaces"] if s["id"] == args["space"])
@@ -57,7 +114,12 @@ class Herdr:
         ordinal = len(self.terminals) + 1
         pane, terminal = f"p{ordinal}", f"t{ordinal}"
         tab["terminals"].append({"pane": pane, "terminal": terminal})
-        self.terminals.append({"address": terminal, "state": "live", "labels": {"herdr.space": space["id"], "herdr.tab": tab["id"]}})
+        self.terminals.append({
+            "address": terminal,
+            "state": "live",
+            "foreground": self._agent_foreground(args["argv"], args.get("folder", ""), 1000 + ordinal),
+            "labels": {"herdr.space": space["id"], "herdr.tab": tab["id"]},
+        })
         return {"tab": tab["id"], "pane": pane, "terminal": terminal}
 
     def core(self, argv):
@@ -537,7 +599,7 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual(owner.commands[-1][1]["pane"], "p2")
             self.assertEqual(owner.commands[-1][1]["direction"], "down")
 
-            # If the first role (place: null) exits while the team tab remains open, restarting it splits in the existing tab.
+            # If the first role (place: null) exits while the team tab remains open, restarting it splits the first pane and swaps back into first position.
             owner.app(["do", "terminal.kill", json.dumps({"terminal": "t1"})])
             restart_first = {
                 "space": "sp1",
@@ -551,9 +613,14 @@ class LaunchTests(unittest.TestCase):
             }
             self.assertEqual(launch.launch_team(restart_first, owner.app, owner.core, app_home), {"tab": "tb1", "created": 1, "reused": 2})
             self.assertEqual(sum(name == "tab.new" for name, _ in owner.commands), 1)
-            self.assertEqual(owner.commands[-1][0], "pane.split")
-            self.assertEqual(owner.commands[-1][1]["pane"], "p2")
-            self.assertEqual(owner.commands[-1][1]["direction"], "right")
+            self.assertEqual(owner.commands[-2][0], "pane.split")
+            self.assertEqual(owner.commands[-2][1]["pane"], "p2")
+            self.assertEqual(owner.commands[-2][1]["direction"], "right")
+            self.assertEqual(owner.commands[-1], ("pane.swap", {"pane": "p4", "target": "p2"}))
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p4", "terminal": "t4"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p2", "terminal": "t2"}],
+            )
 
     def test_roster_supports_empty_non_git_folder_two_projects_in_one_repo_and_other_focused_worktree(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1138,6 +1205,320 @@ class LaunchTests(unittest.TestCase):
 
             self.assertEqual(scrub_uuid(owner_default.commands), scrub_uuid(owner_with_home.commands))
             self.assertEqual(owner_default.terminals, owner_with_home.terminals)
+
+    def test_is_running_agent_shared_contract_distinguishes_idle_shells_wrappers_and_agents(self):
+        for shell_argv in (
+            ["/bin/zsh", "-l"],
+            ["/bin/zsh", "-li"],
+            ["/bin/zsh", "--rcs"],
+            ["zsh"],
+            ["-zsh"],
+            ["/bin/bash", "--login"],
+            ["/bin/bash", "--rcfile", "/etc/bashrc"],
+            ["/bin/bash", "--login", "--norc"],
+            ["bash"],
+            ["/bin/sh"],
+            ["-sh"],
+            ["fish", "-i"],
+            ["dash"],
+            ["ksh"],
+            ["csh"],
+            ["tcsh"],
+            ["nu"],
+            ["pwsh"],
+            ["xonsh"],
+            ["elvish"],
+        ):
+            with self.subTest(idle=shell_argv):
+                self.assertFalse(launch.is_running_agent({
+                    "state": "live",
+                    "foreground": {"pid": 100, "name": Path(shell_argv[0].lstrip("-")).name, "argv": shell_argv, "cwd": "/proj"},
+                }))
+        with mock.patch.dict(os.environ, {"SHELL": "/opt/custom/myshell"}):
+            self.assertFalse(launch.is_running_agent({
+                "state": "live",
+                "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "-l"], "cwd": "/proj"},
+            }))
+            self.assertFalse(launch.is_running_agent({
+                "state": "live",
+                "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "--rcfile", "/etc/rc"], "cwd": "/proj"},
+            }))
+            self.assertTrue(launch.is_running_agent({
+                "state": "live",
+                "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "-lic", "claude"], "cwd": "/proj"},
+            }))
+        for non_running in (
+            {"state": "finished", "foreground": {"pid": 100, "name": "claude", "argv": ["claude"], "cwd": "/proj"}},
+            {"state": "exited", "foreground": None},
+        ):
+            self.assertFalse(launch.is_running_agent(non_running))
+        # A live terminal for which Herdr reports no foreground program (key absent, null, or empty argv) counts as running.
+        for live_without_fg in (
+            {"state": "live"},
+            {"state": "live", "foreground": None},
+            {"state": "live", "foreground": {"pid": 100, "name": "claude", "argv": [], "cwd": "/proj"}},
+        ):
+            with self.subTest(live_without_fg=live_without_fg):
+                self.assertTrue(launch.is_running_agent(live_without_fg))
+        for running_fg in (
+            {"pid": 201, "name": "2.1.323", "argv": ["claude", "--dangerously-skip-permissions"], "cwd": "/proj"},
+            {"pid": 202, "name": "codex", "argv": ["/opt/homebrew/bin/codex", "--no-daemon"], "cwd": "/proj"},
+            {"pid": 203, "name": "agy", "argv": ["agy"], "cwd": "/proj"},
+            {"pid": 204, "name": "zsh", "argv": ["/bin/zsh", "-lic", 'cd -- "$1" || exit; shift; "$@"', "/bin/zsh", "/proj", "claude"], "cwd": "/proj"},
+            {"pid": 205, "name": "sh", "argv": ["/bin/sh", "-i", "-c", "codex"], "cwd": "/proj"},
+        ):
+            with self.subTest(running=running_fg["argv"]):
+                self.assertTrue(launch.is_running_agent({"state": "live", "foreground": running_fg}))
+
+    def test_no_roster_inspect_excludes_idle_shell_panes_and_preserves_tab_and_swarm(self):
+        owner, payload = Herdr(), request()
+        launch.launch_team(payload, owner.app, owner.core)
+        owner.exit_to_shell("t1", ["/bin/zsh", "-li"], "zsh")
+        owner.exit_to_shell("t3", ["/bin/bash", "--rcfile", "/etc/bashrc"], "bash")
+        inspected = launch.inspect_team({"space": "sp1", "root": payload["root"]}, owner.app, owner.core)
+        self.assertEqual(inspected["tab"], "tb1")
+        self.assertEqual(inspected["swarm"], "example")
+        self.assertEqual([r["terminal"] for r in inspected["rows"]], ["t2", "t4"])
+        self.assertEqual([r["key"] for r in inspected["rows"]], ["codex", "cursor"])
+
+        # When all panes in the non-roster Chorus tab hold idle shells, inspect_team still reports the tab and swarm with zero running rows.
+        owner.exit_to_shell("t2", ["-zsh"], "zsh")
+        owner.exit_to_shell("t4", ["/bin/sh"], "sh")
+        inspected_all_idle = launch.inspect_team({"space": "sp1", "root": payload["root"]}, owner.app, owner.core)
+        self.assertEqual(inspected_all_idle["tab"], "tb1")
+        self.assertEqual(inspected_all_idle["swarm"], "example")
+        self.assertEqual(inspected_all_idle["rows"], [])
+
+    def test_roster_idle_shell_pane_is_not_running_removes_mcp_copy_and_restarts_in_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_home = Path(directory) / "herdr"
+            root = Path(directory) / "project"
+            root.mkdir()
+            guide_token = Path(directory) / "guide.token"
+            builder_token = Path(directory) / "builder.token"
+            guide_token.write_text("guide-secret-token-111\n")
+            builder_token.write_text("builder-secret-token-222\n")
+            roster_file = app_home / "data" / "chorus-launcher" / "rosters" / "sp1.json"
+            roster_file.parent.mkdir(parents=True)
+            roster_file.write_text(json.dumps({
+                "root": str(root),
+                "swarm": "proj",
+                "roles": [
+                    {
+                        "role": "guide",
+                        "title": "Guide",
+                        "handle": "guide",
+                        "folder": str(root),
+                        "first_message": "Lead the team.",
+                        "connections": [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(guide_token)}],
+                        "place": None,
+                    },
+                    {
+                        "role": "builder",
+                        "title": "Builder",
+                        "handle": "builder",
+                        "folder": str(root),
+                        "first_message": "Implement the service.",
+                        "connections": [{"name": "surla", "url": "http://127.0.0.1:43127/mcp", "credential_file": str(builder_token)}],
+                        "place": {"beside": "guide", "direction": "right"},
+                    },
+                    {
+                        "role": "test-writer",
+                        "title": "Test writer",
+                        "handle": "test-writer",
+                        "folder": str(root),
+                        "first_message": "Write acceptance tests.",
+                        "connections": [],
+                        "place": {"beside": "builder", "direction": "down"},
+                    },
+                ],
+            }))
+            owner = Herdr()
+            initial_payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "xhigh", "yolo": True},
+                    {"id": "role:test-writer", "key": "antigravity", "name": "Antigravity", "run": ["agy"], "model": "gemini-4-argon", "thinking": "high", "yolo": False},
+                ],
+            }
+            self.assertEqual(launch.launch_team(initial_payload, owner.app, owner.core, app_home), {"tab": "tb1", "created": 3, "reused": 0})
+            self.assertEqual(owner.terminals[0]["foreground"]["name"], "2.1.323")
+            self.assertEqual(owner.terminals[0]["foreground"]["argv"][0], "claude")
+            self.assertEqual(owner.terminals[1]["foreground"]["argv"][0], "codex")
+            self.assertEqual(owner.terminals[2]["foreground"]["argv"][0], "agy")
+            guide_mcp = app_home / "data" / "chorus-launcher" / "mcp" / "sp1--guide.json"
+            self.assertTrue(guide_mcp.exists())
+
+            # When guide (t1) and builder (t2) exit to idle shells while test-writer (t3) keeps running agy:
+            # inspect_team treats guide and builder as not running (terminal: None) and removes guide's MCP credential copy.
+            for shell_argv, shell_name in (
+                (["/bin/zsh", "-li"], "zsh"),
+                (["-zsh"], "zsh"),
+                (["/bin/bash", "-l"], "bash"),
+                (["/bin/sh"], "sh"),
+            ):
+                owner.exit_to_shell("t1", shell_argv, shell_name)
+                owner.exit_to_shell("t2", ["-zsh"], "zsh")
+                inspected = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+                self.assertEqual([r["terminal"] for r in inspected["rows"]], [None, None, "t3"])
+                self.assertEqual([r["key"] for r in inspected["rows"]], [None, None, "antigravity"])
+            self.assertFalse(guide_mcp.exists())
+
+            # Even if a stale MCP credential copy is present before launch_team runs, launch_team removes it when the role is not running.
+            guide_mcp.write_text('{"stale": true}\n')
+            guide_token.write_text("guide-rotated-secret-333\n")
+            relaunch_payload = {
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                    {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "xhigh", "yolo": True},
+                    {"id": "role:test-writer"},
+                ],
+            }
+            before_cmds = len(owner.commands)
+            res = launch.launch_team(relaunch_payload, owner.app, owner.core, app_home)
+            self.assertEqual(res, {"tab": "tb1", "created": 2, "reused": 1})
+            new_cmds = owner.commands[before_cmds:]
+            self.assertEqual(
+                [name for name, _ in new_cmds],
+                ["tab.select", "pane.split", "pane.swap", "pane.close", "pane.split", "pane.swap", "pane.close"],
+            )
+            self.assertEqual(new_cmds[1][1]["pane"], "p1")
+            self.assertEqual(new_cmds[2], ("pane.swap", {"pane": "p4", "target": "p1"}))
+            self.assertEqual(new_cmds[3], ("pane.close", {"pane": "p1"}))
+            self.assertEqual(new_cmds[4][1]["pane"], "p2")
+            self.assertEqual(new_cmds[5], ("pane.swap", {"pane": "p5", "target": "p2"}))
+            self.assertEqual(new_cmds[6], ("pane.close", {"pane": "p2"}))
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p4", "terminal": "t4"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+            self.assertEqual(
+                [(t["address"], t["state"]) for t in owner.terminals if t["state"] == "live"],
+                [("t3", "live"), ("t4", "live"), ("t5", "live")],
+            )
+            self.assertTrue(guide_mcp.exists())
+            self.assertEqual(
+                json.loads(guide_mcp.read_text())["mcpServers"]["surla"]["headers"]["Authorization"],
+                "Bearer guide-rotated-secret-333",
+            )
+
+            # If guide exits to a shell and restarts with Codex (no Claude MCP file needed), launch_team deletes sp1--guide.json and leaves it absent.
+            owner.exit_to_shell("t4", ["/bin/zsh", "-l"], "zsh")
+            self.assertTrue(guide_mcp.exists())
+            res_codex = launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "high", "yolo": False},
+                    {"id": "role:builder"},
+                    {"id": "role:test-writer"},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_codex, {"tab": "tb1", "created": 1, "reused": 2})
+            self.assertFalse(guide_mcp.exists())
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+
+            # Live terminals without reported foreground (key absent or foreground=None) count as running, are not offered, and nothing is closed.
+            del owner.terminals[5]["foreground"]
+            owner.terminals[4]["foreground"] = None
+            inspected_no_fg = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_no_fg["rows"]], ["t6", "t5", "t3"])
+            before_no_fg_cmds = len(owner.commands)
+            res_no_fg = launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide"},
+                    {"id": "role:builder"},
+                    {"id": "role:test-writer"},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_no_fg, {"tab": "tb1", "created": 0, "reused": 3})
+            self.assertEqual(owner.commands[before_no_fg_cmds:], [("tab.select", {"id": "tb1"})])
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+
+            # If pane.swap fails while restarting an idle-shell role, the new terminal is killed, the credential copy is removed,
+            # the stale pane is kept, and the role is offered again.
+            owner.exit_to_shell("t6", ["/bin/zsh", "-li"], "zsh")
+            owner.fail_command = "pane.swap"
+            with self.assertRaisesRegex(RuntimeError, "pane.swap"):
+                launch.launch_team({
+                    "space": "sp1",
+                    "root": str(root),
+                    "swarm": "proj",
+                    "agents": [
+                        {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                        {"id": "role:builder"},
+                        {"id": "role:test-writer"},
+                    ],
+                }, owner.app, owner.core, app_home)
+            self.assertEqual(owner.commands[-1], ("terminal.kill", {"terminal": "t7"}))
+            self.assertFalse(guide_mcp.exists())
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+            owner.fail_command = None
+            inspected_after_swap_fail = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_after_swap_fail["rows"]], [None, "t5", "t3"])
+
+            # If pane.close fails after pane.swap succeeds, the stale shell pane remains alongside the new running agent under the same handle;
+            # inspect_team leaves pane p6 open, and the next launch_team closes it.
+            owner.fail_command = "pane.close"
+            with self.assertRaisesRegex(RuntimeError, "pane.close"):
+                launch.launch_team({
+                    "space": "sp1",
+                    "root": str(root),
+                    "swarm": "proj",
+                    "agents": [
+                        {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                        {"id": "role:builder"},
+                        {"id": "role:test-writer"},
+                    ],
+                }, owner.app, owner.core, app_home)
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p6", "terminal": "t6"}],
+            )
+            owner.fail_command = None
+            before_inspect_cmds = len(owner.commands)
+            inspected_after_close_fail = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_after_close_fail["rows"]], ["t8", "t5", "t3"])
+            self.assertEqual(owner.commands[before_inspect_cmds:], [])
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p6", "terminal": "t6"}],
+            )
+            res_cleanup_launch = launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide"},
+                    {"id": "role:builder"},
+                    {"id": "role:test-writer"},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_cleanup_launch, {"tab": "tb1", "created": 0, "reused": 3})
+            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p6"}))
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
 
 
 if __name__ == "__main__":
