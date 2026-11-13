@@ -141,13 +141,19 @@ When a roster file exists for the focused space:
 - **One row per role in roster order:** each row displays its `title`, keeps
   running roles read-only, and lets you choose the agent app, model, thinking
   level, and YOLO setting for roles that are not running yet (including roles
-  whose pane holds only an idle shell). **Add agent**, **Add all installed**,
-  and **Remove** are hidden because the caller owns the role list.
+  whose pane holds only an idle shell). An idle shell is a reported foreground
+  shell (`sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`, `tcsh`, `nu`,
+  `pwsh`, `xonsh`, `elvish`, or `$SHELL`) without `-c` or a single-dash `-...c...`
+  flag in its first two arguments; a live pane with no reported foreground
+  program still counts as running. **Add agent**, **Add all installed**, and
+  **Remove** are hidden because the caller owns the role list.
 - **Explicit placement and prompts:** the first role opens the **Chorus ·
   project** tab (`place: null`) in its `folder`; each subsequent role splits the
   pane of the earlier `beside` handle (`right` or `down`) in its own `folder`.
-  Starting a role whose pane holds only an idle shell replaces that pane in its
-  original position and closes the stale shell pane. Each new pane is labeled
+  Starting a role whose pane holds only an idle shell splits, swaps, and closes
+  the stale shell pane in its original position, and restarting the first role
+  when its pane was closed splits the first remaining pane and swaps the new
+  pane back to the left. Each new pane is labeled
   with `chorus.handle=<handle>` and `chorus.role=<role>` and starts with a
   prompt that joins `#<swarm>` as `<handle>` (`<title>`), keeps
   `CI=true chorus watch <handle> -wait 24h </dev/null` running in the

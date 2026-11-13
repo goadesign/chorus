@@ -584,21 +584,21 @@ def app_command(app: Command, command: str, **args: object) -> dict:
 def is_running_agent(terminal: dict) -> bool:
     """Return whether a terminal is running an agent rather than an idle shell.
 
-    Shared contract with Surla: a role is running when its terminal's state is
-    "live", it has a foreground program with a non-empty argv, and that program
-    is not an idle shell. An idle shell has the base name of argv[0] (leading
-    dashes removed) in IDLE_SHELLS or the base name of $SHELL, and neither
-    argv[1] nor argv[2] is -c or a single-dash flag group containing c (such as
-    -lic).
+    Shared contract with Surla: a live terminal for which Herdr reports no
+    foreground program counts as running; only a reported foreground that is an
+    idle shell makes a role not running. An idle shell has the base name of
+    argv[0] (leading dashes removed) in IDLE_SHELLS or the base name of $SHELL,
+    and neither argv[1] nor argv[2] is -c or a single-dash flag group containing
+    c (such as -lic).
     """
     if terminal.get("state") != "live":
         return False
     foreground = terminal.get("foreground")
     if not isinstance(foreground, dict):
-        return False
+        return True
     argv = foreground.get("argv")
     if not isinstance(argv, list) or not argv or not isinstance(argv[0], str) or not argv[0]:
-        return False
+        return True
     base = Path(argv[0].lstrip("-")).name.lstrip("-")
     env_shell = Path(os.environ.get("SHELL", "").lstrip("-")).name.lstrip("-")
     if base not in IDLE_SHELLS and (not env_shell or base != env_shell):
@@ -607,6 +607,37 @@ def is_running_agent(terminal: dict) -> bool:
         if isinstance(arg, str) and arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
             return True
     return False
+
+
+def close_replaced_stale_panes(
+    tabs: dict,
+    tab_id: str | None,
+    owned: list[dict],
+    stale: list[dict],
+    app: Command,
+) -> list[dict]:
+    """Close idle-shell panes whose role handle already has a running agent pane."""
+    if not tab_id or not stale:
+        return stale
+    running_handles = {
+        t["labels"].get("chorus.handle")
+        for t in owned
+        if isinstance(t["labels"].get("chorus.handle"), str) and t["labels"]["chorus.handle"]
+    }
+    if not running_handles:
+        return stale
+    tab_terminals = tabs[tab_id]["terminals"]
+    pane_by_terminal = {item["terminal"]: item["pane"] for item in tab_terminals}
+    remaining: list[dict] = []
+    for terminal in stale:
+        handle = terminal["labels"].get("chorus.handle")
+        pane_id = pane_by_terminal.get(terminal["address"])
+        if handle in running_handles and pane_id:
+            app_command(app, "pane.close", pane=pane_id)
+            tab_terminals[:] = [item for item in tab_terminals if item["pane"] != pane_id]
+        else:
+            remaining.append(terminal)
+    return remaining
 
 
 def saved_team(root: str, space: str, app: Command, core: Command) -> tuple:
@@ -715,10 +746,12 @@ def inspect_team(
     roster = load_roster(app_home, request["space"])
     if roster is not None:
         root = roster["root"]
-        _, tab, owned, stale = saved_team(root, request["space"], app, core)
+        tabs, tab, owned, stale = saved_team(root, request["space"], app, core)
         swarms = {t["labels"]["chorus.swarm"] for t in [*owned, *stale]}
         if len(swarms) > 1 or (swarms and next(iter(swarms)) != roster["swarm"]):
             raise RuntimeError("The Chorus tab contains different swarm names. Check its terminal labels before continuing.")
+        rows = roster_rows(roster, owned)
+        close_replaced_stale_panes(tabs, tab, owned, stale, app)
         live_handles = {
             t["labels"]["chorus.handle"]
             for t in owned
@@ -730,7 +763,7 @@ def inspect_team(
             "root": root,
             "tab": tab,
             "swarm": roster["swarm"],
-            "rows": roster_rows(roster, owned),
+            "rows": rows,
             "session": uuid.uuid4().hex,
         }
     if app_home is not None and request["root"] == "":
@@ -780,6 +813,7 @@ def launch_team(
     if roster is not None:
         if app_home is None:
             raise ValueError("Missing Herdr application directory for roster launch.")
+        stale = close_replaced_stale_panes(tabs, tab_id, owned, stale, app)
         tab_terminals = list(tabs[tab_id]["terminals"]) if tab_id else []
         pane_by_terminal = {item["terminal"]: item["pane"] for item in tab_terminals}
         pane_by_handle: dict[str, str] = {}

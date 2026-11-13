@@ -1210,9 +1210,12 @@ class LaunchTests(unittest.TestCase):
         for shell_argv in (
             ["/bin/zsh", "-l"],
             ["/bin/zsh", "-li"],
+            ["/bin/zsh", "--rcs"],
             ["zsh"],
             ["-zsh"],
             ["/bin/bash", "--login"],
+            ["/bin/bash", "--rcfile", "/etc/bashrc"],
+            ["/bin/bash", "--login", "--norc"],
             ["bash"],
             ["/bin/sh"],
             ["-sh"],
@@ -1236,16 +1239,27 @@ class LaunchTests(unittest.TestCase):
                 "state": "live",
                 "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "-l"], "cwd": "/proj"},
             }))
+            self.assertFalse(launch.is_running_agent({
+                "state": "live",
+                "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "--rcfile", "/etc/rc"], "cwd": "/proj"},
+            }))
             self.assertTrue(launch.is_running_agent({
                 "state": "live",
                 "foreground": {"pid": 101, "name": "myshell", "argv": ["/opt/custom/myshell", "-lic", "claude"], "cwd": "/proj"},
             }))
         for non_running in (
             {"state": "finished", "foreground": {"pid": 100, "name": "claude", "argv": ["claude"], "cwd": "/proj"}},
+            {"state": "exited", "foreground": None},
+        ):
+            self.assertFalse(launch.is_running_agent(non_running))
+        # A live terminal for which Herdr reports no foreground program (key absent, null, or empty argv) counts as running.
+        for live_without_fg in (
+            {"state": "live"},
             {"state": "live", "foreground": None},
             {"state": "live", "foreground": {"pid": 100, "name": "claude", "argv": [], "cwd": "/proj"}},
         ):
-            self.assertFalse(launch.is_running_agent(non_running))
+            with self.subTest(live_without_fg=live_without_fg):
+                self.assertTrue(launch.is_running_agent(live_without_fg))
         for running_fg in (
             {"pid": 201, "name": "2.1.323", "argv": ["claude", "--dangerously-skip-permissions"], "cwd": "/proj"},
             {"pid": 202, "name": "codex", "argv": ["/opt/homebrew/bin/codex", "--no-daemon"], "cwd": "/proj"},
@@ -1255,6 +1269,25 @@ class LaunchTests(unittest.TestCase):
         ):
             with self.subTest(running=running_fg["argv"]):
                 self.assertTrue(launch.is_running_agent({"state": "live", "foreground": running_fg}))
+
+    def test_no_roster_inspect_excludes_idle_shell_panes_and_preserves_tab_and_swarm(self):
+        owner, payload = Herdr(), request()
+        launch.launch_team(payload, owner.app, owner.core)
+        owner.exit_to_shell("t1", ["/bin/zsh", "-li"], "zsh")
+        owner.exit_to_shell("t3", ["/bin/bash", "--rcfile", "/etc/bashrc"], "bash")
+        inspected = launch.inspect_team({"space": "sp1", "root": payload["root"]}, owner.app, owner.core)
+        self.assertEqual(inspected["tab"], "tb1")
+        self.assertEqual(inspected["swarm"], "example")
+        self.assertEqual([r["terminal"] for r in inspected["rows"]], ["t2", "t4"])
+        self.assertEqual([r["key"] for r in inspected["rows"]], ["codex", "cursor"])
+
+        # When all panes in the non-roster Chorus tab hold idle shells, inspect_team still reports the tab and swarm with zero running rows.
+        owner.exit_to_shell("t2", ["-zsh"], "zsh")
+        owner.exit_to_shell("t4", ["/bin/sh"], "sh")
+        inspected_all_idle = launch.inspect_team({"space": "sp1", "root": payload["root"]}, owner.app, owner.core)
+        self.assertEqual(inspected_all_idle["tab"], "tb1")
+        self.assertEqual(inspected_all_idle["swarm"], "example")
+        self.assertEqual(inspected_all_idle["rows"], [])
 
     def test_roster_idle_shell_pane_is_not_running_removes_mcp_copy_and_restarts_in_place(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1393,6 +1426,117 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual(
                 owner.listing["spaces"][0]["tabs"][0]["terminals"],
                 [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+
+            # Live terminals without reported foreground (key absent or foreground=None) count as running, are not offered, and nothing is closed.
+            del owner.terminals[5]["foreground"]
+            owner.terminals[4]["foreground"] = None
+            inspected_no_fg = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_no_fg["rows"]], ["t6", "t5", "t3"])
+            before_no_fg_cmds = len(owner.commands)
+            res_no_fg = launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide"},
+                    {"id": "role:builder"},
+                    {"id": "role:test-writer"},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_no_fg, {"tab": "tb1", "created": 0, "reused": 3})
+            self.assertEqual(owner.commands[before_no_fg_cmds:], [("tab.select", {"id": "tb1"})])
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+
+            # If pane.swap fails while restarting an idle-shell role, the new terminal is killed, the credential copy is removed,
+            # the stale pane is kept, and the role is offered again.
+            owner.exit_to_shell("t6", ["/bin/zsh", "-li"], "zsh")
+            owner.fail_command = "pane.swap"
+            with self.assertRaisesRegex(RuntimeError, "pane.swap"):
+                launch.launch_team({
+                    "space": "sp1",
+                    "root": str(root),
+                    "swarm": "proj",
+                    "agents": [
+                        {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                        {"id": "role:builder"},
+                        {"id": "role:test-writer"},
+                    ],
+                }, owner.app, owner.core, app_home)
+            self.assertEqual(owner.commands[-1], ("terminal.kill", {"terminal": "t7"}))
+            self.assertFalse(guide_mcp.exists())
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p6", "terminal": "t6"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+            owner.fail_command = None
+            inspected_after_swap_fail = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_after_swap_fail["rows"]], [None, "t5", "t3"])
+
+            # If pane.close fails after pane.swap succeeds, the stale shell pane remains alongside the new running agent under the same handle;
+            # subsequent inspect_team and launch_team calls close that leftover idle-shell pane.
+            owner.fail_command = "pane.close"
+            with self.assertRaisesRegex(RuntimeError, "pane.close"):
+                launch.launch_team({
+                    "space": "sp1",
+                    "root": str(root),
+                    "swarm": "proj",
+                    "agents": [
+                        {"id": "role:guide", "key": "claude", "name": "Claude Code", "run": ["claude"], "model": "claude-opus-5-5", "thinking": "high", "yolo": False},
+                        {"id": "role:builder"},
+                        {"id": "role:test-writer"},
+                    ],
+                }, owner.app, owner.core, app_home)
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p6", "terminal": "t6"}],
+            )
+            owner.fail_command = None
+            inspected_after_close_fail = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
+            self.assertEqual([r["terminal"] for r in inspected_after_close_fail["rows"]], ["t8", "t5", "t3"])
+            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p6"}))
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+            )
+
+            # And if a subsequent launch_team runs directly after a failed pane.close (without inspect_team in between), launch_team also closes the leftover idle-shell pane.
+            owner.exit_to_shell("t5", ["/bin/zsh", "-li"], "zsh")
+            owner.fail_command = "pane.close"
+            with self.assertRaisesRegex(RuntimeError, "pane.close"):
+                launch.launch_team({
+                    "space": "sp1",
+                    "root": str(root),
+                    "swarm": "proj",
+                    "agents": [
+                        {"id": "role:guide"},
+                        {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "xhigh", "yolo": True},
+                        {"id": "role:test-writer"},
+                    ],
+                }, owner.app, owner.core, app_home)
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p9", "terminal": "t9"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p5", "terminal": "t5"}],
+            )
+            owner.fail_command = None
+            res_cleanup_launch = launch.launch_team({
+                "space": "sp1",
+                "root": str(root),
+                "swarm": "proj",
+                "agents": [
+                    {"id": "role:guide"},
+                    {"id": "role:builder"},
+                    {"id": "role:test-writer"},
+                ],
+            }, owner.app, owner.core, app_home)
+            self.assertEqual(res_cleanup_launch, {"tab": "tb1", "created": 0, "reused": 3})
+            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p5"}))
+            self.assertEqual(
+                owner.listing["spaces"][0]["tabs"][0]["terminals"],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p9", "terminal": "t9"}, {"pane": "p3", "terminal": "t3"}],
             )
 
 
