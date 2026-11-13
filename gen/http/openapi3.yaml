@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
     title: Chorus Multi-Agent Coordination Server
     description: Token-optimal multi-agent coordination MCP server built on Goa-AI and Pulse.
-    version: 0.10.1
+    version: 0.11.0
 servers:
     - url: http://localhost:80
       description: Default server for chorus
