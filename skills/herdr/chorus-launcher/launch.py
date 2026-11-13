@@ -35,6 +35,20 @@ CLIENTS = {
 
 # Only clients with verified per-process additive MCP flags may take role connections.
 CONNECTION_CLIENTS = {"claude", "codex"}
+IDLE_SHELLS = frozenset({
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    "nu",
+    "pwsh",
+    "xonsh",
+    "elvish",
+})
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}")
 
 # Antigravity and Cursor encode effort suffixes directly into variant model IDs.
@@ -567,8 +581,36 @@ def app_command(app: Command, command: str, **args: object) -> dict:
     return result
 
 
+def is_running_agent(terminal: dict) -> bool:
+    """Return whether a terminal is running an agent rather than an idle shell.
+
+    Shared contract with Surla: a role is running when its terminal's state is
+    "live", it has a foreground program with a non-empty argv, and that program
+    is not an idle shell. An idle shell has the base name of argv[0] (leading
+    dashes removed) in IDLE_SHELLS or the base name of $SHELL, and neither
+    argv[1] nor argv[2] is -c or a single-dash flag group containing c (such as
+    -lic).
+    """
+    if terminal.get("state") != "live":
+        return False
+    foreground = terminal.get("foreground")
+    if not isinstance(foreground, dict):
+        return False
+    argv = foreground.get("argv")
+    if not isinstance(argv, list) or not argv or not isinstance(argv[0], str) or not argv[0]:
+        return False
+    base = Path(argv[0].lstrip("-")).name.lstrip("-")
+    env_shell = Path(os.environ.get("SHELL", "").lstrip("-")).name.lstrip("-")
+    if base not in IDLE_SHELLS and (not env_shell or base != env_shell):
+        return True
+    for arg in argv[1:3]:
+        if isinstance(arg, str) and arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            return True
+    return False
+
+
 def saved_team(root: str, space: str, app: Command, core: Command) -> tuple:
-    """Load the project's team from live Herdr terminals, including older panes."""
+    """Load the project's running team and any idle-shell panes from Herdr."""
     listing = app(["ls"])
     target = next((s for s in listing["spaces"] if s["id"] == space), None)
     if target is None:
@@ -577,15 +619,21 @@ def saved_team(root: str, space: str, app: Command, core: Command) -> tuple:
     # ls filters on labels but omits them from its summaries; get owns full records.
     records = [core(["get", item["address"], "--json"]) for item in live["terminals"]]
     tabs = {tab["id"]: tab for tab in target["tabs"]}
-    owned = [t for t in records if t.get("state") == "live"
-             and t.get("labels", {}).get("chorus.project") == root
-             and t["labels"].get("herdr.space") == space
-             and t["labels"].get("herdr.tab") in tabs]
-    teams = {t["labels"]["herdr.tab"] for t in owned}
+    in_tabs = [
+        t
+        for t in records
+        if t.get("state") == "live"
+        and t.get("labels", {}).get("chorus.project") == root
+        and t["labels"].get("herdr.space") == space
+        and t["labels"].get("herdr.tab") in tabs
+    ]
+    teams = {t["labels"]["herdr.tab"] for t in in_tabs}
     if len(teams) > 1:
         raise RuntimeError("This project has more than one labeled Chorus tab. Close the unwanted team tab, then try again.")
     tab_id = next(iter(teams), None)
-    return tabs, tab_id, owned
+    owned = [t for t in in_tabs if is_running_agent(t)]
+    stale = [t for t in in_tabs if not is_running_agent(t)]
+    return tabs, tab_id, owned, stale
 
 
 def team_rows(owned: list[dict]) -> list[dict]:
@@ -667,8 +715,8 @@ def inspect_team(
     roster = load_roster(app_home, request["space"])
     if roster is not None:
         root = roster["root"]
-        _, tab, owned = saved_team(root, request["space"], app, core)
-        swarms = {t["labels"]["chorus.swarm"] for t in owned}
+        _, tab, owned, stale = saved_team(root, request["space"], app, core)
+        swarms = {t["labels"]["chorus.swarm"] for t in [*owned, *stale]}
         if len(swarms) > 1 or (swarms and next(iter(swarms)) != roster["swarm"]):
             raise RuntimeError("The Chorus tab contains different swarm names. Check its terminal labels before continuing.")
         live_handles = {
@@ -689,8 +737,8 @@ def inspect_team(
         return {"roster": False}
     if not request["root"] or not Path(request["root"]).is_absolute():
         raise ValueError("Reopen the launcher from a local project terminal.")
-    _, tab, owned = saved_team(request["root"], request["space"], app, core)
-    swarms = {t["labels"]["chorus.swarm"] for t in owned}
+    _, tab, owned, stale = saved_team(request["root"], request["space"], app, core)
+    swarms = {t["labels"]["chorus.swarm"] for t in [*owned, *stale]}
     if len(swarms) > 1:
         raise RuntimeError("The Chorus tab contains different swarm names. Check its terminal labels before continuing.")
     return {"tab": tab, "swarm": next(iter(swarms), None), "rows": team_rows(owned), "session": uuid.uuid4().hex}
@@ -710,8 +758,8 @@ def launch_team(
     )
     request = validate(request, roster)
     space, root, swarm, agents = (request[k] for k in ("space", "root", "swarm", "agents"))
-    tabs, tab_id, owned = saved_team(root, space, app, core)
-    if any(t["labels"].get("chorus.swarm") != swarm for t in owned):
+    tabs, tab_id, owned, stale = saved_team(root, space, app, core)
+    if any(t["labels"].get("chorus.swarm") != swarm for t in [*owned, *stale]):
         raise RuntimeError("This project's team already uses a different Chorus name. Use its existing name or close that team tab first.")
     if roster is not None:
         current_rows = roster_rows(roster, owned)
@@ -732,17 +780,20 @@ def launch_team(
     if roster is not None:
         if app_home is None:
             raise ValueError("Missing Herdr application directory for roster launch.")
-        pane_by_terminal = (
-            {item["terminal"]: item["pane"] for item in tabs[tab_id]["terminals"]}
-            if tab_id
-            else {}
-        )
+        tab_terminals = list(tabs[tab_id]["terminals"]) if tab_id else []
+        pane_by_terminal = {item["terminal"]: item["pane"] for item in tab_terminals}
         pane_by_handle: dict[str, str] = {}
         for terminal in owned:
             handle = terminal["labels"].get("chorus.handle")
             pane_id = pane_by_terminal.get(terminal["address"])
             if handle and pane_id:
                 pane_by_handle[handle] = pane_id
+        stale_pane_by_handle: dict[str, str] = {}
+        for terminal in stale:
+            handle = terminal["labels"].get("chorus.handle")
+            pane_id = pane_by_terminal.get(terminal["address"])
+            if handle and pane_id and handle not in pane_by_handle:
+                stale_pane_by_handle[handle] = pane_id
         cleanup_stale_mcp_files(app_home, space, set(pane_by_handle))
         for agent, role_entry in zip(agents, roster["roles"]):
             if agent["id"] in present:
@@ -750,6 +801,8 @@ def launch_team(
             handle = role_entry["handle"]
             role_id = role_entry["role"]
             folder = role_entry["folder"]
+            stale_pane = stale_pane_by_handle.get(handle)
+            swap_target: str | None = None
             wrote_mcp: Path | None = None
             terminal: str | None = None
             try:
@@ -770,16 +823,20 @@ def launch_team(
                     pane = None
                 else:
                     place = role_entry["place"]
-                    if place is None:
-                        existing_terminals = tabs.get(tab_id, {}).get("terminals", [])
+                    if stale_pane is not None:
+                        target_pane = stale_pane
+                        direction = "right"
+                        swap_target = stale_pane
+                    elif place is None:
                         target_pane = (
-                            existing_terminals[0]["pane"]
-                            if existing_terminals
+                            tab_terminals[0]["pane"]
+                            if tab_terminals
                             else next(iter(pane_by_handle.values()), None)
                         )
                         if not target_pane:
                             raise RuntimeError("The Chorus tab has no terminal pane to split. Close it and open the team again.")
                         direction = "right"
+                        swap_target = target_pane
                     else:
                         target_pane = pane_by_handle.get(place["beside"])
                         if not target_pane:
@@ -806,16 +863,31 @@ def launch_team(
                     f"chorus.role={role_id}",
                     f"chorus.options={options}",
                 ])
+                if swap_target is not None:
+                    app_command(app, "pane.swap", pane=pane, target=swap_target)
             except Exception:
                 if wrote_mcp is not None:
                     wrote_mcp.unlink(missing_ok=True)
                 if terminal is not None:
                     app_command(app, "terminal.kill", terminal=terminal)
                 raise
-            if pane is None:
+            if stale_pane is not None:
+                app_command(app, "pane.close", pane=stale_pane)
+                del stale_pane_by_handle[handle]
+                for item in tab_terminals:
+                    if item["pane"] == stale_pane:
+                        item["pane"] = pane
+                        item["terminal"] = terminal
+                        break
+            elif pane is None:
                 current = app(["ls"])
                 tab = next(t for s in current["spaces"] for t in s["tabs"] if t["id"] == tab_id)
                 pane = next(t["pane"] for t in tab["terminals"] if t["terminal"] == terminal)
+                tab_terminals = list(tab["terminals"])
+            elif swap_target is not None:
+                tab_terminals.insert(0, {"pane": pane, "terminal": terminal})
+            else:
+                tab_terminals.append({"pane": pane, "terminal": terminal})
             pane_by_handle[handle] = pane
             created += 1
         return {"tab": tab_id, "created": created, "reused": reused}

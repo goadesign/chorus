@@ -140,24 +140,26 @@ When a roster file exists for the focused space:
   in another working copy still targets the space's project.
 - **One row per role in roster order:** each row displays its `title`, keeps
   running roles read-only, and lets you choose the agent app, model, thinking
-  level, and YOLO setting for roles that are not running yet. **Add agent**,
-  **Add all installed**, and **Remove** are hidden because the caller owns the
-  role list.
+  level, and YOLO setting for roles that are not running yet (including roles
+  whose pane holds only an idle shell). **Add agent**, **Add all installed**,
+  and **Remove** are hidden because the caller owns the role list.
 - **Explicit placement and prompts:** the first role opens the **Chorus ·
   project** tab (`place: null`) in its `folder`; each subsequent role splits the
   pane of the earlier `beside` handle (`right` or `down`) in its own `folder`.
-  Each new pane is labeled with `chorus.handle=<handle>` and
-  `chorus.role=<role>` and starts with a prompt that joins `#<swarm>` as
-  `<handle>` (`<title>`), keeps `CI=true chorus watch <handle> -wait 24h </dev/null`
-  running in the background, and then delivers `first_message`.
+  Starting a role whose pane holds only an idle shell replaces that pane in its
+  original position and closes the stale shell pane. Each new pane is labeled
+  with `chorus.handle=<handle>` and `chorus.role=<role>` and starts with a
+  prompt that joins `#<swarm>` as `<handle>` (`<title>`), keeps
+  `CI=true chorus watch <handle> -wait 24h </dev/null` running in the
+  background, and then delivers `first_message`.
 - **Per-process role connections (Claude Code and Codex only):**
   - **Claude Code (`claude`):** writes
     `<herdrHome>/data/chorus-launcher/mcp/<space>--<handle>.json` with mode
     `0600` inside `<herdrHome>/data/chorus-launcher/mcp` (`0700`) and passes
     `--mcp-config <file>` without `--strict-mcp-config`, keeping the user's
     existing MCP servers (including `chorus`) active. The file is overwritten on
-    each launch of that role and deleted when `inspect` next inspects the space
-    and that handle has no live pane (or immediately if labeling the new pane
+    each launch of that role and deleted when `inspect` or `launch` sees that
+    the role is not running (or immediately if starting or labeling the new pane
     fails). Its contents are never logged.
   - **Codex (`codex`):** passes `-c mcp_servers.<name>.url="<url>"` and
     `-c mcp_servers.<name>.bearer_token_env_var="CHORUS_MCP_TOKEN_<n>"` and
