@@ -1477,7 +1477,7 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual([r["terminal"] for r in inspected_after_swap_fail["rows"]], [None, "t5", "t3"])
 
             # If pane.close fails after pane.swap succeeds, the stale shell pane remains alongside the new running agent under the same handle;
-            # subsequent inspect_team and launch_team calls close that leftover idle-shell pane.
+            # inspect_team leaves pane p6 open, and the next launch_team closes it.
             owner.fail_command = "pane.close"
             with self.assertRaisesRegex(RuntimeError, "pane.close"):
                 launch.launch_team({
@@ -1495,33 +1495,14 @@ class LaunchTests(unittest.TestCase):
                 [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p6", "terminal": "t6"}],
             )
             owner.fail_command = None
+            before_inspect_cmds = len(owner.commands)
             inspected_after_close_fail = launch.inspect_team({"space": "sp1", "root": ""}, owner.app, owner.core, app_home)
             self.assertEqual([r["terminal"] for r in inspected_after_close_fail["rows"]], ["t8", "t5", "t3"])
-            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p6"}))
+            self.assertEqual(owner.commands[before_inspect_cmds:], [])
             self.assertEqual(
                 owner.listing["spaces"][0]["tabs"][0]["terminals"],
-                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p6", "terminal": "t6"}],
             )
-
-            # And if a subsequent launch_team runs directly after a failed pane.close (without inspect_team in between), launch_team also closes the leftover idle-shell pane.
-            owner.exit_to_shell("t5", ["/bin/zsh", "-li"], "zsh")
-            owner.fail_command = "pane.close"
-            with self.assertRaisesRegex(RuntimeError, "pane.close"):
-                launch.launch_team({
-                    "space": "sp1",
-                    "root": str(root),
-                    "swarm": "proj",
-                    "agents": [
-                        {"id": "role:guide"},
-                        {"id": "role:builder", "key": "codex", "name": "Codex", "run": ["codex"], "model": "gpt-6.1-sol", "thinking": "xhigh", "yolo": True},
-                        {"id": "role:test-writer"},
-                    ],
-                }, owner.app, owner.core, app_home)
-            self.assertEqual(
-                owner.listing["spaces"][0]["tabs"][0]["terminals"],
-                [{"pane": "p8", "terminal": "t8"}, {"pane": "p9", "terminal": "t9"}, {"pane": "p3", "terminal": "t3"}, {"pane": "p5", "terminal": "t5"}],
-            )
-            owner.fail_command = None
             res_cleanup_launch = launch.launch_team({
                 "space": "sp1",
                 "root": str(root),
@@ -1533,10 +1514,10 @@ class LaunchTests(unittest.TestCase):
                 ],
             }, owner.app, owner.core, app_home)
             self.assertEqual(res_cleanup_launch, {"tab": "tb1", "created": 0, "reused": 3})
-            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p5"}))
+            self.assertEqual(owner.commands[-1], ("pane.close", {"pane": "p6"}))
             self.assertEqual(
                 owner.listing["spaces"][0]["tabs"][0]["terminals"],
-                [{"pane": "p8", "terminal": "t8"}, {"pane": "p9", "terminal": "t9"}, {"pane": "p3", "terminal": "t3"}],
+                [{"pane": "p8", "terminal": "t8"}, {"pane": "p5", "terminal": "t5"}, {"pane": "p3", "terminal": "t3"}],
             )
 
 

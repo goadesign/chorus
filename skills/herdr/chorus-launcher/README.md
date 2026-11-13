@@ -153,7 +153,8 @@ When a roster file exists for the focused space:
   Starting a role whose pane holds only an idle shell splits, swaps, and closes
   the stale shell pane in its original position, and restarting the first role
   when its pane was closed splits the first remaining pane and swaps the new
-  pane back to the left. Each new pane is labeled
+  pane back to the left. A launch closes an idle-shell pane whose handle already
+  has a running agent. Each new pane is labeled
   with `chorus.handle=<handle>` and `chorus.role=<role>` and starts with a
   prompt that joins `#<swarm>` as `<handle>` (`<title>`), keeps
   `CI=true chorus watch <handle> -wait 24h </dev/null` running in the

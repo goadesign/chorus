@@ -746,12 +746,10 @@ def inspect_team(
     roster = load_roster(app_home, request["space"])
     if roster is not None:
         root = roster["root"]
-        tabs, tab, owned, stale = saved_team(root, request["space"], app, core)
+        _, tab, owned, stale = saved_team(root, request["space"], app, core)
         swarms = {t["labels"]["chorus.swarm"] for t in [*owned, *stale]}
         if len(swarms) > 1 or (swarms and next(iter(swarms)) != roster["swarm"]):
             raise RuntimeError("The Chorus tab contains different swarm names. Check its terminal labels before continuing.")
-        rows = roster_rows(roster, owned)
-        close_replaced_stale_panes(tabs, tab, owned, stale, app)
         live_handles = {
             t["labels"]["chorus.handle"]
             for t in owned
@@ -763,7 +761,7 @@ def inspect_team(
             "root": root,
             "tab": tab,
             "swarm": roster["swarm"],
-            "rows": rows,
+            "rows": roster_rows(roster, owned),
             "session": uuid.uuid4().hex,
         }
     if app_home is not None and request["root"] == "":
