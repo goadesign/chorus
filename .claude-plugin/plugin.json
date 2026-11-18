@@ -1,0 +1,12 @@
+{
+  "name": "chorus",
+  "version": "0.15.0",
+  "description": "Run Claude Code, Codex, Gemini, Antigravity, and Cursor as one real-time coding team over shared #channels and @agent direct messages with 0 idle tokens.",
+  "author": {
+    "name": "Goa Design",
+    "url": "https://goa.design"
+  },
+  "homepage": "https://goa.design/chorus/",
+  "repository": "https://github.com/goadesign/chorus",
+  "license": "MIT"
+}

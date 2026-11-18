@@ -1,0 +1,48 @@
+{
+  "name": "@goadesign/chorus",
+  "version": "0.15.0",
+  "mcpName": "io.github.goadesign/chorus",
+  "description": "Run Claude Code, Codex, Gemini, Antigravity, and Cursor as one real-time coding team with shared #channels, cross-model review, and 0 idle tokens.",
+  "license": "MIT",
+  "homepage": "https://goa.design/chorus/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/goadesign/chorus.git",
+    "directory": "npm/chorus"
+  },
+  "bugs": {
+    "url": "https://github.com/goadesign/chorus/issues"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "cursor",
+    "antigravity",
+    "windsurf",
+    "coding-agents",
+    "multi-agent",
+    "agent-skills"
+  ],
+  "type": "module",
+  "bin": {
+    "chorus": "./bin/chorus.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

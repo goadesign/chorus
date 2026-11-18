@@ -61,13 +61,15 @@ brew install goadesign/tap/chorus
 chorus up
 ```
 
-Or in one command with `curl`:
+Or in one command with `curl` or `npx`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
+# or with Node.js >= 18:
+npx @goadesign/chorus up
 ```
 
-`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis (or Docker) is running, and registers Chorus across Claude Code, Codex, Cursor, Antigravity, and [Herdr](https://herdr.dev/). Run `chorus ui` anytime to open the dashboard. *(Open or restart already-running coding agents once after first setup · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
+`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis or Valkey (or Docker/Podman) is running, and registers Chorus across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and [Herdr](https://herdr.dev/). Run `chorus ui` anytime to open the dashboard. *(Open or restart already-running coding agents once after first setup · Claude Code plugin: `/plugin marketplace add goadesign/chorus` then `/plugin install chorus@goadesign-chorus` · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
 
 ### 2. Start Chorus in Each Agent, Then Prompt One
 
@@ -160,7 +162,7 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus status` | Check the managed server's `/healthz` and print its version, dashboard URL, and MCP endpoint; `-json` prints its `base_url` instead |
 | `chorus ui` | Open the managed server's live web dashboard in your browser |
 | `chorus update` | Check for a newer release, prompt for approval (`-yes` / `-y` for non-interactive, `-check` for read-only check, `-addr` to pick server), refresh skills/MCP/Herdr files, and restart the server with its current settings |
-| `chorus setup` | Write `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Cursor, Antigravity, Claude Code, Codex, and Herdr |
+| `chorus setup` | Write `./.mcp.json` (plus `.gemini/settings.json`, `.vscode/mcp.json`, and `.codex/config.toml` when present) and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and Herdr |
 | `chorus watch` | Listen in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at **0 LLM tokens/sec** until matching messages arrive, print them, and exit `0` |
 | `chorus team` | Inspect or launch caller-supplied Herdr role rosters from a terminal (`chorus team inspect --space <id> [--choices <file\|->]`, `chorus team launch --space <id> --choices <file\|->`); inspect names each pane and its reported status, and choices add the program's model and permission options |
 | `chorus version` | Print the binary version (`-version`, `--version`, `-v`) |
@@ -205,7 +207,7 @@ Global setup (`chorus up` or `chorus setup -global`) installs the launcher into 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-addr` | `127.0.0.1:9440` | HTTP listen address. Defaults to loopback because Chorus has no authentication—anyone who can reach the port can join under any handle and read every swarm. Pass `-addr :9440` only on a trusted network. (`9440` references **A440**, the 440 Hz concert tuning pitch.) |
-| `-redis-addr` | `localhost:6379` (`$REDIS_ADDR`) | Redis `host:port`; auto-starts local `redis-server` or `redis:7-alpine` Docker container on loopback |
+| `-redis-addr` | `localhost:6379` (`$REDIS_ADDR`) | Redis `host:port`; auto-starts local `redis-server`, `valkey-server`, or `docker.io/library/redis:7-alpine` container via Docker/Podman on loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
 | `-redis-db` | `0` | Redis database index |
 | `-swarm-ttl` | `24h` | Sliding expiration window for swarm state and message streams |
@@ -363,6 +365,10 @@ Chorus is built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`MCP 2026-07-2
 ├── skills/
 │   ├── chorus/SKILL.md           # Model-agnostic Chorus Agent Skill
 │   └── herdr/chorus-launcher/    # Herdr team launcher dialog & terminal role runner
+├── npm/chorus/                   # @goadesign/chorus npx binary launcher
+├── .claude-plugin/               # Claude Code plugin & marketplace manifests
+├── plugin.json                   # Antigravity plugin manifest (uses .mcp.json / mcp_config.json)
+├── server.json                   # Official MCP Registry server manifest
 ├── scripts/                      # One-line release installer & Homebrew formula generator
 ├── Makefile                      # Code generation, diagram rendering, tests, & release automation
 └── gen/                          # Generated Goa & Goa-AI MCP server/client packages

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/goadesign/chorus/skills"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
@@ -194,6 +195,7 @@ func TestSetupInstallsHerdrLauncher(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("HERDR_APP_HOME", "")
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("COPILOT_HOME", "")
 			bin := t.TempDir()
 			t.Setenv("PATH", bin)
 			herdrHome := filepath.Join(home, ".config", "herdr-app")
@@ -303,6 +305,7 @@ func TestRunSetupInstallsHerdrOnlyGlobally(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("HERDR_APP_HOME", "")
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("COPILOT_HOME", "")
 			t.Setenv("PATH", t.TempDir())
 			require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
 			require.NoError(t, saveServeArgs(home, serverConfig{addr: ":9550"}))
@@ -423,17 +426,19 @@ func TestMergeCodexConfigFile(t *testing.T) {
 	}
 }
 
-// TestMergeMCPConfigFile verifies that registering Chorus in a JSON MCP
-// configuration keeps unrelated keys and servers, starts missing or empty
-// files from an empty object, and refuses, without writing, files whose root
-// or mcpServers is not a JSON object.
-func TestMergeMCPConfigFile(t *testing.T) {
+// TestMergeJSONMCPConfigFile verifies that registering Chorus in a JSON MCP
+// configuration keeps unrelated keys and servers across both "mcpServers" and
+// "servers" roots, starts missing or empty files from an empty object, and
+// refuses, without writing, files whose root or servers map is not a JSON object.
+func TestMergeJSONMCPConfigFile(t *testing.T) {
 	const url = "http://localhost:9440/mcp"
 	cases := []struct {
-		name    string
-		before  string
-		want    string
-		wantErr string
+		name       string
+		serversKey string
+		entry      map[string]any
+		before     string
+		want       string
+		wantErr    string
 	}{
 		{name: "missing file", want: "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    }\n  }\n}\n"},
 		{name: "empty file", before: " \n", want: "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    }\n  }\n}\n"},
@@ -442,11 +447,18 @@ func TestMergeMCPConfigFile(t *testing.T) {
 			before: `{"theme":"dark","mcpServers":{"other":{"type":"http","url":"http://other/mcp"}}}`,
 			want:   "{\n  \"mcpServers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    },\n    \"other\": {\n      \"type\": \"http\",\n      \"url\": \"http://other/mcp\"\n    }\n  },\n  \"theme\": \"dark\"\n}\n",
 		},
+		{
+			name:       "vscode servers root",
+			serversKey: "servers",
+			before:     `{"inputs":[],"servers":{"other":{"type":"http","url":"http://other/mcp"}}}`,
+			want:       "{\n  \"inputs\": [],\n  \"servers\": {\n    \"chorus\": {\n      \"type\": \"http\",\n      \"url\": \"" + url + "\"\n    },\n    \"other\": {\n      \"type\": \"http\",\n      \"url\": \"http://other/mcp\"\n    }\n  }\n}\n",
+		},
 		{name: "null root", before: "null", wantErr: "must contain a JSON object"},
 		{name: "array root", before: "[]", wantErr: "parse JSON"},
 		{name: "null mcpServers", before: `{"mcpServers":null}`, wantErr: "mcpServers must be a JSON object"},
 		{name: "array mcpServers", before: `{"mcpServers":[]}`, wantErr: "mcpServers must be a JSON object"},
 		{name: "string mcpServers", before: `{"mcpServers":"x"}`, wantErr: "mcpServers must be a JSON object"},
+		{name: "null vscode servers", serversKey: "servers", before: `{"servers":null}`, wantErr: "servers must be a JSON object"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -454,7 +466,15 @@ func TestMergeMCPConfigFile(t *testing.T) {
 			if tc.before != "" {
 				require.NoError(t, os.WriteFile(path, []byte(tc.before), 0o600))
 			}
-			err := mergeMCPConfigFile(path, url)
+			entry := tc.entry
+			if entry == nil {
+				entry = map[string]any{"type": "http", "url": url}
+			}
+			err := mergeJSONMCPConfigFile(jsonMCPTarget{
+				path:       path,
+				serversKey: tc.serversKey,
+				entry:      entry,
+			})
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -503,6 +523,7 @@ func TestSetupRegistersClaudeCode(t *testing.T) {
 			root := filepath.Join(home, ".claude")
 			config := filepath.Join(home, ".claude.json")
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("COPILOT_HOME", "")
 			if tc.customDir {
 				root = filepath.Join(t.TempDir(), "claude-config")
 				require.NoError(t, os.MkdirAll(root, 0o755))
@@ -536,4 +557,197 @@ func TestSetupRegistersClaudeCode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSetupRegistersAdditionalAgents verifies client-specific MCP transport keys
+// and skill locations across Gemini CLI (httpUrl), Windsurf (serverUrl), GitHub
+// Copilot CLI (mcpServers), and Visual Studio Code (servers), both globally and
+// in project-scoped directories.
+func TestSetupRegistersAdditionalAgents(t *testing.T) {
+	const url = "http://localhost:9440/mcp"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("COPILOT_HOME", "")
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+
+	// Executable-only detection for Gemini CLI and GitHub Copilot CLI.
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "gemini"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "copilot"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	// Pre-populate Windsurf and VS Code global directories with unrelated settings.
+	windsurfDir := filepath.Join(home, ".codeium", "windsurf")
+	require.NoError(t, os.MkdirAll(windsurfDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(windsurfDir, "mcp_config.json"),
+		[]byte(`{"mcpServers":{"other":{"serverUrl":"https://other.example/mcp"}}}`),
+		0o600,
+	))
+
+	vscodeDir := vscodeUserDir(home)
+	if vscodeDir != "" {
+		require.NoError(t, os.MkdirAll(vscodeDir, 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(vscodeDir, "mcp.json"),
+			[]byte(`{"inputs":[],"servers":{"other":{"type":"http","url":"https://other.example/mcp"}}}`),
+			0o600,
+		))
+	}
+
+	updated, err := setupMCPConfigs("", home, url, true)
+	require.NoError(t, err)
+
+	// Gemini CLI must receive "httpUrl" (Streamable HTTP), never SSE "url".
+	geminiCfg := filepath.Join(home, ".gemini", "settings.json")
+	geminiSkill := filepath.Join(home, ".gemini", "skills", "chorus", "SKILL.md")
+	assert.Contains(t, updated, geminiCfg)
+	assert.Contains(t, updated, geminiSkill)
+	rawGemini, err := os.ReadFile(geminiCfg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{"chorus":{"httpUrl":"`+url+`"}}}`, string(rawGemini))
+	assert.FileExists(t, geminiSkill)
+
+	// Windsurf must receive "serverUrl" while keeping existing servers.
+	windsurfCfg := filepath.Join(windsurfDir, "mcp_config.json")
+	windsurfSkill := filepath.Join(windsurfDir, "skills", "chorus", "SKILL.md")
+	assert.Contains(t, updated, windsurfCfg)
+	assert.Contains(t, updated, windsurfSkill)
+	rawWindsurf, err := os.ReadFile(windsurfCfg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{"chorus":{"serverUrl":"`+url+`"},"other":{"serverUrl":"https://other.example/mcp"}}}`, string(rawWindsurf))
+	assert.FileExists(t, windsurfSkill)
+
+	// GitHub Copilot CLI receives standard mcpServers with required tools wildcard + skill.
+	copilotCfg := filepath.Join(home, ".copilot", "mcp-config.json")
+	copilotSkill := filepath.Join(home, ".copilot", "skills", "chorus", "SKILL.md")
+	assert.Contains(t, updated, copilotCfg)
+	assert.Contains(t, updated, copilotSkill)
+	rawCopilot, err := os.ReadFile(copilotCfg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{"chorus":{"type":"http","url":"`+url+`","tools":["*"]}}}`, string(rawCopilot))
+	assert.FileExists(t, copilotSkill)
+
+	// Directory-only detection (no executables on PATH) and custom COPILOT_HOME.
+	dirHome := t.TempDir()
+	t.Setenv("HOME", dirHome)
+	t.Setenv("PATH", t.TempDir())
+	customCopilot := filepath.Join(t.TempDir(), "custom-copilot")
+	t.Setenv("COPILOT_HOME", customCopilot)
+	require.NoError(t, os.MkdirAll(customCopilot, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dirHome, ".gemini", "skills"), 0o755))
+	dirUpdated, err := setupMCPConfigs("", dirHome, url, true)
+	require.NoError(t, err)
+	assert.Contains(t, dirUpdated, filepath.Join(dirHome, ".gemini", "settings.json"))
+	assert.Contains(t, dirUpdated, filepath.Join(customCopilot, "mcp-config.json"))
+	assert.NoDirExists(t, filepath.Join(dirHome, ".copilot"))
+	t.Setenv("COPILOT_HOME", "")
+
+	// Malformed existing Gemini CLI settings.json fails closed without overwriting.
+	badHome := t.TempDir()
+	t.Setenv("HOME", badHome)
+	require.NoError(t, os.MkdirAll(filepath.Join(badHome, ".gemini"), 0o755))
+	badSettings := filepath.Join(badHome, ".gemini", "settings.json")
+	require.NoError(t, os.WriteFile(badSettings, []byte(`{"mcpServers":[]}`), 0o600))
+	_, err = setupMCPConfigs("", badHome, url, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mcpServers must be a JSON object")
+
+	// VS Code receives top-level "servers" while keeping "inputs" and peer servers.
+	if vscodeDir != "" {
+		vscodeCfg := filepath.Join(vscodeDir, "mcp.json")
+		assert.Contains(t, updated, vscodeCfg)
+		rawVSCode, readErr := os.ReadFile(vscodeCfg)
+		require.NoError(t, readErr)
+		assert.JSONEq(t, `{"inputs":[],"servers":{"chorus":{"type":"http","url":"`+url+`"},"other":{"type":"http","url":"https://other.example/mcp"}}}`, string(rawVSCode))
+	}
+
+	// Project-local setup updates .gemini/settings.json and .vscode/mcp.json when those directories exist.
+	proj := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".gemini"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".vscode"), 0o755))
+	projUpdated, err := setupMCPConfigs(proj, home, url, false)
+	require.NoError(t, err)
+	assert.Contains(t, projUpdated, filepath.Join(proj, ".gemini", "settings.json"))
+	assert.Contains(t, projUpdated, filepath.Join(proj, ".vscode", "mcp.json"))
+	rawProjGemini, err := os.ReadFile(filepath.Join(proj, ".gemini", "settings.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{"chorus":{"httpUrl":"`+url+`"}}}`, string(rawProjGemini))
+	rawProjVSCode, err := os.ReadFile(filepath.Join(proj, ".vscode", "mcp.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"servers":{"chorus":{"type":"http","url":"`+url+`"}}}`, string(rawProjVSCode))
+}
+
+// TestRepositoryDistributionManifests verifies that the published plugin,
+// marketplace, MCP Registry, and npm package manifests parse cleanly, point to
+// existing repository assets without duplicating SKILL.md, and carry versions
+// matching the generated API version.
+func TestRepositoryDistributionManifests(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	versionedFiles := []string{
+		"plugin.json",
+		filepath.Join(".claude-plugin", "plugin.json"),
+		filepath.Join("npm", "chorus", "package.json"),
+		"server.json",
+	}
+	for _, rel := range versionedFiles {
+		raw, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		require.NoError(t, err, "read %s", rel)
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(raw, &doc), "parse %s", rel)
+		assert.Equal(t, genchorus.APIVersion, doc["version"], "%s version must match APIVersion", rel)
+	}
+
+	// Verify Antigravity plugin.json logo resolves to an existing SVG.
+	pluginRaw, err := os.ReadFile(filepath.Join(repoRoot, "plugin.json"))
+	require.NoError(t, err)
+	var pluginDoc struct {
+		Logo string `json:"logo"`
+	}
+	require.NoError(t, json.Unmarshal(pluginRaw, &pluginDoc))
+	assert.FileExists(t, filepath.Join(repoRoot, pluginDoc.Logo))
+
+	// Verify Claude Code marketplace.json points at "./" where skills/chorus/SKILL.md and .mcp.json live.
+	marketRaw, err := os.ReadFile(filepath.Join(repoRoot, ".claude-plugin", "marketplace.json"))
+	require.NoError(t, err)
+	var marketDoc struct {
+		Plugins []struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+			Source  string `json:"source"`
+		} `json:"plugins"`
+	}
+	require.NoError(t, json.Unmarshal(marketRaw, &marketDoc))
+	require.Len(t, marketDoc.Plugins, 1)
+	assert.Equal(t, "chorus", marketDoc.Plugins[0].Name)
+	assert.Equal(t, genchorus.APIVersion, marketDoc.Plugins[0].Version)
+	assert.Equal(t, "./", marketDoc.Plugins[0].Source)
+	assert.FileExists(t, filepath.Join(repoRoot, ".mcp.json"))
+	assert.FileExists(t, filepath.Join(repoRoot, "mcp_config.json"))
+	assert.FileExists(t, filepath.Join(repoRoot, "skills", "chorus", "SKILL.md"))
+
+	// Verify server.json schema invariants (description <= 100 chars, npm package version & mcpName match).
+	serverRaw, err := os.ReadFile(filepath.Join(repoRoot, "server.json"))
+	require.NoError(t, err)
+	var serverDoc struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Packages    []struct {
+			Identifier string `json:"identifier"`
+			Version    string `json:"version"`
+		} `json:"packages"`
+	}
+	require.NoError(t, json.Unmarshal(serverRaw, &serverDoc))
+	assert.LessOrEqual(t, len(serverDoc.Description), 100, "MCP Registry schema requires description <= 100 chars")
+	require.Len(t, serverDoc.Packages, 1)
+	assert.Equal(t, "@goadesign/chorus", serverDoc.Packages[0].Identifier)
+	assert.Equal(t, genchorus.APIVersion, serverDoc.Packages[0].Version)
+
+	npmRaw, err := os.ReadFile(filepath.Join(repoRoot, "npm", "chorus", "package.json"))
+	require.NoError(t, err)
+	var npmDoc struct {
+		MCPName string `json:"mcpName"`
+	}
+	require.NoError(t, json.Unmarshal(npmRaw, &npmDoc))
+	assert.Equal(t, serverDoc.Name, npmDoc.MCPName)
 }

@@ -27,27 +27,41 @@ import (
 	"github.com/goadesign/chorus/skills"
 )
 
-// codexURLEdit says where mergeCodexConfigFile writes mcp_servers.chorus.url
-// in a Codex config.toml document. At most one field is set; neither set means
-// the document has no Chorus entry and a new table is appended.
-type codexURLEdit struct {
-	// value is the byte range of the existing url string, quotes included.
-	value unstable.Range
-	// afterHeader is the byte offset just past the [mcp_servers.chorus]
-	// header line, used when that table has no url yet.
-	afterHeader int
-}
+type (
+	// codexURLEdit says where mergeCodexConfigFile writes mcp_servers.chorus.url
+	// in a Codex config.toml document. At most one field is set; neither set means
+	// the document has no Chorus entry and a new table is appended.
+	codexURLEdit struct {
+		// value is the byte range of the existing url string, quotes included.
+		value unstable.Range
+		// afterHeader is the byte offset just past the [mcp_servers.chorus]
+		// header line, used when that table has no url yet.
+		afterHeader int
+	}
 
-// herdrShortcutBinding describes an existing assignment of the launcher's first
-// keypress. Command arguments stay private to the keyboard file.
-type herdrShortcutBinding struct {
-	// section is the keyboard context that already uses the keypress.
-	section string
-	// command names the action without any arguments or terminal text.
-	command string
-	// opensLauncher is true only for a single keypress opening this launcher.
-	opensLauncher bool
-}
+	// herdrShortcutBinding describes an existing assignment of the launcher's first
+	// keypress. Command arguments stay private to the keyboard file.
+	herdrShortcutBinding struct {
+		// section is the keyboard context that already uses the keypress.
+		section string
+		// command names the action without any arguments or terminal text.
+		command string
+		// opensLauncher is true only for a single keypress opening this launcher.
+		opensLauncher bool
+	}
+
+	// jsonMCPTarget describes one JSON MCP configuration file together with the
+	// top-level server map key and Chorus entry shape expected by that client.
+	jsonMCPTarget struct {
+		// path is the configuration file to create or update.
+		path string
+		// serversKey names the top-level JSON object holding server entries
+		// ("mcpServers" for portable clients, "servers" for VS Code).
+		serversKey string
+		// entry is the JSON object written at serversKey["chorus"].
+		entry map[string]any
+	}
+)
 
 const (
 	// herdrLauncherShortcut opens the launcher without taking a common terminal key.
@@ -107,20 +121,43 @@ func runSetup(args []string, out io.Writer) error {
 }
 
 // setupMCPConfigs merges the Chorus MCP server entry into the project's
-// .mcp.json (and .codex/config.toml if .codex exists) and installs
+// .mcp.json (plus .gemini/settings.json, .vscode/mcp.json, and
+// .codex/config.toml when their directories exist) and installs
 // .agents/skills/chorus/SKILL.md when global is false, or updates detected
 // global agent MCP config files and skill directories under homeDir (Universal
-// .agents, Cursor, Antigravity, Claude Code, and OpenAI Codex) when global is
-// true. Herdr installation is a separate operation called by runSetup and
-// setupForUp, so these paths always describe MCP and skill files.
+// .agents, Cursor, Antigravity, Gemini CLI, Windsurf, Claude Code, OpenAI
+// Codex, GitHub Copilot CLI, and VS Code) when global is true. Herdr
+// installation is a separate operation called by runSetup and setupForUp, so
+// these paths always describe MCP and skill files.
 func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error) {
 	var (
-		jsonTargets  []string
+		jsonTargets  []jsonMCPTarget
 		tomlTargets  []string
 		skillTargets []string
 	)
+	httpEntry := func() map[string]any {
+		return map[string]any{"type": "http", "url": mcpURL}
+	}
 	if !global {
-		jsonTargets = append(jsonTargets, filepath.Join(cwd, ".mcp.json"))
+		jsonTargets = append(jsonTargets, jsonMCPTarget{
+			path:       filepath.Join(cwd, ".mcp.json"),
+			serversKey: "mcpServers",
+			entry:      httpEntry(),
+		})
+		if info, err := os.Stat(filepath.Join(cwd, ".gemini")); err == nil && info.IsDir() {
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       filepath.Join(cwd, ".gemini", "settings.json"),
+				serversKey: "mcpServers",
+				entry:      map[string]any{"httpUrl": mcpURL},
+			})
+		}
+		if info, err := os.Stat(filepath.Join(cwd, ".vscode")); err == nil && info.IsDir() {
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       filepath.Join(cwd, ".vscode", "mcp.json"),
+				serversKey: "servers",
+				entry:      httpEntry(),
+			})
+		}
 		if info, err := os.Stat(filepath.Join(cwd, ".codex")); err == nil && info.IsDir() {
 			tomlTargets = append(tomlTargets, filepath.Join(cwd, ".codex", "config.toml"))
 		}
@@ -128,26 +165,56 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 	} else {
 		skillTargets = append(skillTargets, filepath.Join(homeDir, ".agents", "skills", "chorus", "SKILL.md"))
 		candidates := []struct {
-			parentDir string
-			config    string
-			skill     string
+			parentDir  string
+			config     string
+			serversKey string
+			entry      map[string]any
+			skill      string
 		}{
 			{
-				parentDir: filepath.Join(homeDir, ".cursor"),
-				config:    filepath.Join(homeDir, ".cursor", "mcp.json"),
-				skill:     filepath.Join(homeDir, ".cursor", "skills", "chorus", "SKILL.md"),
+				parentDir:  filepath.Join(homeDir, ".cursor"),
+				config:     filepath.Join(homeDir, ".cursor", "mcp.json"),
+				serversKey: "mcpServers",
+				entry:      httpEntry(),
+				skill:      filepath.Join(homeDir, ".cursor", "skills", "chorus", "SKILL.md"),
 			},
 			{
-				parentDir: filepath.Join(homeDir, ".gemini", "config"),
-				config:    filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"),
-				skill:     filepath.Join(homeDir, ".gemini", "config", "skills", "chorus", "SKILL.md"),
+				parentDir:  filepath.Join(homeDir, ".gemini", "config"),
+				config:     filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"),
+				serversKey: "mcpServers",
+				entry:      map[string]any{"url": mcpURL},
+				skill:      filepath.Join(homeDir, ".gemini", "config", "skills", "chorus", "SKILL.md"),
+			},
+			{
+				parentDir:  filepath.Join(homeDir, ".codeium", "windsurf"),
+				config:     filepath.Join(homeDir, ".codeium", "windsurf", "mcp_config.json"),
+				serversKey: "mcpServers",
+				entry:      map[string]any{"serverUrl": mcpURL},
+				skill:      filepath.Join(homeDir, ".codeium", "windsurf", "skills", "chorus", "SKILL.md"),
 			},
 		}
 		for _, c := range candidates {
 			if info, err := os.Stat(c.parentDir); err == nil && info.IsDir() {
-				jsonTargets = append(jsonTargets, c.config)
+				jsonTargets = append(jsonTargets, jsonMCPTarget{
+					path:       c.config,
+					serversKey: c.serversKey,
+					entry:      c.entry,
+				})
 				skillTargets = append(skillTargets, c.skill)
 			}
+		}
+		// Gemini CLI shares ~/.gemini with Antigravity's ~/.gemini/config, so
+		// detect Gemini CLI specifically via settings.json, ~/.gemini/skills, or
+		// the gemini executable on PATH, and write Streamable HTTP's "httpUrl".
+		geminiSettings := filepath.Join(homeDir, ".gemini", "settings.json")
+		geminiSkillsDir := filepath.Join(homeDir, ".gemini", "skills")
+		if geminiCLIInstalled(homeDir, geminiSettings, geminiSkillsDir) {
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       geminiSettings,
+				serversKey: "mcpServers",
+				entry:      map[string]any{"httpUrl": mcpURL},
+			})
+			skillTargets = append(skillTargets, filepath.Join(geminiSkillsDir, "chorus", "SKILL.md"))
 		}
 		// Claude Code keeps user MCP servers in .claude.json and skills in
 		// skills/ under ~/.claude, or both under CLAUDE_CONFIG_DIR when set.
@@ -161,30 +228,54 @@ func setupMCPConfigs(cwd, homeDir, mcpURL string, global bool) ([]string, error)
 			claudeConfig = filepath.Join(dir, ".claude.json")
 		}
 		if claudeInstalled(homeDir, claudeDir, claudeConfig) {
-			jsonTargets = append(jsonTargets, claudeConfig)
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       claudeConfig,
+				serversKey: "mcpServers",
+				entry:      httpEntry(),
+			})
 			skillTargets = append(skillTargets, filepath.Join(claudeDir, "skills", "chorus", "SKILL.md"))
 		}
 		codexDir := filepath.Join(homeDir, ".codex")
 		if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
 			tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
 			skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
-		} else if realHome, homeErr := os.UserHomeDir(); homeErr == nil && realHome == homeDir {
-			if _, lookErr := exec.LookPath("codex"); lookErr == nil {
-				tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
-				skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
+		} else if executableInstalled(homeDir, "codex") {
+			tomlTargets = append(tomlTargets, filepath.Join(codexDir, "config.toml"))
+			skillTargets = append(skillTargets, filepath.Join(codexDir, "skills", "chorus", "SKILL.md"))
+		}
+		copilotDir := cmp.Or(os.Getenv("COPILOT_HOME"), filepath.Join(homeDir, ".copilot"))
+		if copilotInstalled(homeDir, copilotDir) {
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       filepath.Join(copilotDir, "mcp-config.json"),
+				serversKey: "mcpServers",
+				entry:      map[string]any{"type": "http", "url": mcpURL, "tools": []string{"*"}},
+			})
+			skillTargets = append(skillTargets, filepath.Join(copilotDir, "skills", "chorus", "SKILL.md"))
+		}
+		if vscodeDir := vscodeUserDir(homeDir); vscodeDir != "" {
+			if info, err := os.Stat(vscodeDir); err == nil && info.IsDir() {
+				jsonTargets = append(jsonTargets, jsonMCPTarget{
+					path:       filepath.Join(vscodeDir, "mcp.json"),
+					serversKey: "servers",
+					entry:      httpEntry(),
+				})
 			}
 		}
 		if len(jsonTargets) == 0 && len(tomlTargets) == 0 {
-			jsonTargets = append(jsonTargets, filepath.Join(homeDir, ".chorus", "mcp.json"))
+			jsonTargets = append(jsonTargets, jsonMCPTarget{
+				path:       filepath.Join(homeDir, ".chorus", "mcp.json"),
+				serversKey: "mcpServers",
+				entry:      httpEntry(),
+			})
 		}
 	}
 
 	updated := make([]string, 0, len(jsonTargets)+len(tomlTargets)+len(skillTargets))
 	for _, target := range jsonTargets {
-		if err := mergeMCPConfigFile(target, mcpURL); err != nil {
+		if err := mergeJSONMCPConfigFile(target); err != nil {
 			return nil, err
 		}
-		updated = append(updated, target)
+		updated = append(updated, target.path)
 	}
 	for _, target := range tomlTargets {
 		if err := mergeCodexConfigFile(target, mcpURL); err != nil {
@@ -499,13 +590,16 @@ func writeIntegrationFile(path string, content []byte) error {
 	return nil
 }
 
-// mergeMCPConfigFile idempotently inserts or updates "mcpServers.chorus" in a
-// JSON configuration file while preserving all existing top-level keys and peer
-// MCP server entries. A missing or empty file starts from an empty object. It
-// returns an error, writing nothing, when the file is not a JSON object (for
-// example "null" or an array) or its mcpServers is present but not an object,
-// so a malformed setting is reported instead of silently replaced.
-func mergeMCPConfigFile(path, mcpURL string) error {
+// mergeJSONMCPConfigFile idempotently inserts or updates target.entry under
+// target.serversKey["chorus"] in a JSON configuration file while preserving all
+// existing top-level keys and peer MCP server entries. A missing or empty file
+// starts from an empty object. It returns an error, writing nothing, when the
+// file is not a JSON object (for example "null" or an array) or its servers map
+// is present but not an object, so a malformed setting is reported instead of
+// silently replaced.
+func mergeJSONMCPConfigFile(target jsonMCPTarget) error {
+	path := target.path
+	serversKey := cmp.Or(target.serversKey, "mcpServers")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config directory for %s: %w", path, err)
 	}
@@ -529,23 +623,14 @@ func mergeMCPConfigFile(path, mcpURL string) error {
 	}
 
 	servers := make(map[string]any)
-	if existing, present := root["mcpServers"]; present {
+	if existing, present := root[serversKey]; present {
 		var ok bool
 		if servers, ok = existing.(map[string]any); !ok || servers == nil {
-			return fmt.Errorf("%s: mcpServers must be a JSON object", path)
+			return fmt.Errorf("%s: %s must be a JSON object", path, serversKey)
 		}
 	}
-	if filepath.Base(path) == "mcp_config.json" {
-		servers["chorus"] = map[string]any{
-			"url": mcpURL,
-		}
-	} else {
-		servers["chorus"] = map[string]any{
-			"type": "http",
-			"url":  mcpURL,
-		}
-	}
-	root["mcpServers"] = servers
+	servers["chorus"] = target.entry
+	root[serversKey] = servers
 
 	encoded, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
@@ -728,11 +813,22 @@ func writeHerdrLauncherSummary(out io.Writer, modDir string) {
 	}
 }
 
+// executableInstalled reports whether homeDir is the real user home directory
+// and binary name is present on PATH. Limiting PATH checks to the real home
+// keeps setup runs targeting another directory (such as tests) isolated from
+// binaries installed on the host.
+func executableInstalled(homeDir, name string) bool {
+	realHome, err := os.UserHomeDir()
+	if err != nil || realHome != homeDir {
+		return false
+	}
+	_, err = exec.LookPath(name)
+	return err == nil
+}
+
 // claudeInstalled reports whether Claude Code is set up for setupMCPConfigs:
 // its configuration directory or file already exists, or homeDir is the real
-// home directory and the claude executable is on PATH. The PATH check is
-// limited to the real home so a setup run against another directory (such as
-// a test's) never registers clients found on the machine.
+// home directory and the claude executable is on PATH.
 func claudeInstalled(homeDir, claudeDir, claudeConfig string) bool {
 	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
 		return true
@@ -740,10 +836,44 @@ func claudeInstalled(homeDir, claudeDir, claudeConfig string) bool {
 	if _, err := os.Stat(claudeConfig); err == nil {
 		return true
 	}
-	realHome, err := os.UserHomeDir()
-	if err != nil || realHome != homeDir {
-		return false
+	return executableInstalled(homeDir, "claude")
+}
+
+// geminiCLIInstalled reports whether Google Gemini CLI is set up for
+// setupMCPConfigs: ~/.gemini/settings.json or ~/.gemini/skills already exists,
+// or homeDir is the real home directory and the gemini executable is on PATH.
+// Checking settings.json and skills/ rather than ~/.gemini itself avoids
+// creating Gemini CLI files on machines that only use Antigravity
+// (~/.gemini/config).
+func geminiCLIInstalled(homeDir, settingsPath, skillsDir string) bool {
+	if _, err := os.Stat(settingsPath); err == nil {
+		return true
 	}
-	_, err = exec.LookPath("claude")
-	return err == nil
+	if info, err := os.Stat(skillsDir); err == nil && info.IsDir() {
+		return true
+	}
+	return executableInstalled(homeDir, "gemini")
+}
+
+// copilotInstalled reports whether GitHub Copilot CLI is set up for
+// setupMCPConfigs: its configuration directory already exists, or homeDir is
+// the real home directory and the copilot executable is on PATH.
+func copilotInstalled(homeDir, copilotDir string) bool {
+	if info, err := os.Stat(copilotDir); err == nil && info.IsDir() {
+		return true
+	}
+	return executableInstalled(homeDir, "copilot")
+}
+
+// vscodeUserDir returns Visual Studio Code's global User settings directory
+// under homeDir on macOS and Linux.
+func vscodeUserDir(homeDir string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Code", "User")
+	case "linux":
+		return filepath.Join(homeDir, ".config", "Code", "User")
+	default:
+		return ""
+	}
 }

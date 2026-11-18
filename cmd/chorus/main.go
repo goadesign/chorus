@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -84,8 +85,8 @@ const (
 	shutdownTimeout = 10 * time.Second
 	// dockerContainerName is the container name prefix used when auto-starting Redis via Docker.
 	dockerContainerName = "chorus-redis"
-	// dockerRedisImage is the Redis image used when auto-starting Redis via Docker.
-	dockerRedisImage = "redis:7-alpine"
+	// dockerRedisImage is the fully qualified Redis image used when auto-starting Redis via Docker or Podman.
+	dockerRedisImage = "docker.io/library/redis:7-alpine"
 )
 
 // main is the CLI entrypoint for the chorus command.
@@ -354,7 +355,7 @@ func connectOrStartRedis(ctx context.Context, rdb *redis.Client, redisAddr, data
 
 	if err := startLocalRedis(port, dataDir); err != nil {
 		return fmt.Errorf(
-			"redis is not running at %s and could not be auto-started (%w); install Redis with 'brew install redis', 'sudo apt-get install -y redis-server', or start Docker",
+			"redis is not running at %s and could not be auto-started (%w); install Redis or Valkey ('brew install redis', 'sudo apt-get install -y redis-server', 'sudo dnf install -y valkey'), or start Docker/Podman",
 			redisAddr,
 			err,
 		)
@@ -394,21 +395,27 @@ func loopbackPort(addr string) (string, bool) {
 	return port, true
 }
 
-// startLocalRedis starts a detached, persistent local Redis instance on port backed
-// by dataDir using either a local redis-server binary or a Docker container.
+// startLocalRedis starts a detached, persistent local Redis-compatible server
+// on port backed by dataDir using a local redis-server or valkey-server binary
+// or a Docker/Podman container.
 func startLocalRedis(port, dataDir string) error {
-	if redisBin, err := exec.LookPath("redis-server"); err == nil {
-		return startRedisSubprocess(redisBin, port, dataDir)
+	for _, name := range []string{"redis-server", "valkey-server"} {
+		if serverBin, err := exec.LookPath(name); err == nil {
+			return startRedisSubprocess(serverBin, port, dataDir)
+		}
 	}
-	if dockerBin, err := exec.LookPath("docker"); err == nil {
-		return startRedisDocker(dockerBin, port, dataDir)
+	for _, runtimeBin := range []string{"docker", "podman"} {
+		if containerBin, err := exec.LookPath(runtimeBin); err == nil {
+			return startRedisDocker(containerBin, port, dataDir)
+		}
 	}
-	return errors.New("neither redis-server nor docker found in PATH")
+	return errors.New("none of redis-server, valkey-server, docker, or podman found in PATH")
 }
 
-// startRedisSubprocess launches a persistent redis-server process bound to
-// 127.0.0.1:port in its own session, persisting data to dataDir with appendonly yes.
-func startRedisSubprocess(redisBin, port, dataDir string) error {
+// startRedisSubprocess launches a persistent redis-server or valkey-server
+// process bound to 127.0.0.1:port in its own session, persisting data to
+// dataDir with appendonly yes.
+func startRedisSubprocess(serverBin, port, dataDir string) error {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create redis data dir %s: %w", dataDir, err)
 	}
@@ -421,8 +428,9 @@ func startRedisSubprocess(redisBin, port, dataDir string) error {
 		_ = logFile.Close()
 	}()
 
+	binName := filepath.Base(serverBin)
 	cmd := exec.Command(
-		redisBin,
+		serverBin,
 		"--bind", "127.0.0.1",
 		"--port", port,
 		"--dir", dataDir,
@@ -436,10 +444,11 @@ func startRedisSubprocess(redisBin, port, dataDir string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start redis-server: %w", err)
+		return fmt.Errorf("start %s: %w", binName, err)
 	}
 	slog.Info(
-		"auto-started detached local redis-server subprocess",
+		"auto-started detached local Redis-compatible subprocess",
+		"binary", binName,
 		"addr", "127.0.0.1:"+port,
 		"dir", dataDir,
 		"pid", cmd.Process.Pid,
@@ -449,38 +458,52 @@ func startRedisSubprocess(redisBin, port, dataDir string) error {
 }
 
 // startRedisDocker launches a persistent redis container bound to
-// 127.0.0.1:port via Docker, mounting dataDir into /data.
-func startRedisDocker(dockerBin, port, dataDir string) error {
+// 127.0.0.1:port via Docker or Podman, mounting dataDir into /data.
+func startRedisDocker(containerBin, port, dataDir string) error {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create redis data dir %s: %w", dataDir, err)
 	}
+	runtimeName := filepath.Base(containerBin)
 	container := fmt.Sprintf("%s-%s", dockerContainerName, port)
-	if err := exec.Command(dockerBin, "start", container).Run(); err == nil {
-		slog.Info("re-started existing redis Docker container", "container", container, "addr", "127.0.0.1:"+port)
+	if err := exec.Command(containerBin, "start", container).Run(); err == nil {
+		slog.Info("re-started existing redis container", "runtime", runtimeName, "container", container, "addr", "127.0.0.1:"+port)
 		return nil
 	}
-	_ = exec.Command(dockerBin, "rm", "-f", container).Run()
+	_ = exec.Command(containerBin, "rm", "-f", container).Run()
+	mountSpec := containerDataMount(runtime.GOOS, containerBin, dataDir)
 	out, err := exec.Command(
-		dockerBin,
+		containerBin,
 		"run", "-d",
 		"--name", container,
 		"-p", fmt.Sprintf("127.0.0.1:%s:6379", port),
-		"-v", fmt.Sprintf("%s:/data", dataDir),
+		"-v", mountSpec,
 		dockerRedisImage,
 		"redis-server",
 		"--appendonly", "yes",
 		"--save", "60", "1",
 	).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker run %s: %w (%s)", dockerRedisImage, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s run %s: %w (%s)", runtimeName, dockerRedisImage, err, strings.TrimSpace(string(out)))
 	}
 	slog.Info(
-		"auto-started persistent redis Docker container",
+		"auto-started persistent redis container",
+		"runtime", runtimeName,
 		"container", container,
 		"addr", "127.0.0.1:"+port,
 		"dir", dataDir,
 	)
 	return nil
+}
+
+// containerDataMount formats the host-to-container /data bind-mount argument,
+// appending the SELinux private relabel suffix (:Z) when Podman runs on Linux
+// so rootless containers on Fedora/RHEL can write AOF files into dataDir.
+func containerDataMount(goos, containerBin, dataDir string) string {
+	mountSpec := fmt.Sprintf("%s:/data", dataDir)
+	if goos == "linux" && filepath.Base(containerBin) == "podman" {
+		return mountSpec + ":Z"
+	}
+	return mountSpec
 }
 
 // loopbackOrigins returns the browser Origin values of a page served by this
