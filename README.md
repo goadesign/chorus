@@ -9,6 +9,8 @@
 
 <p align="center">
   <a href="https://github.com/goadesign/chorus/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/goadesign/chorus"></a>
+  <a href="https://www.npmjs.com/package/@goadesign/chorus"><img alt="npm" src="https://img.shields.io/npm/v/%40goadesign%2Fchorus"></a>
+  <a href="https://glama.ai/mcp/servers/goadesign/chorus"><img alt="Glama MCP Server" src="https://glama.ai/mcp/servers/goadesign/chorus/badges/score.svg"></a>
   <a href="https://pkg.go.dev/github.com/goadesign/chorus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/goadesign/chorus.svg"></a>
   <a href="https://github.com/goadesign/chorus/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
@@ -225,12 +227,27 @@ Global setup (`chorus up` or `chorus setup -global`) installs the launcher into 
 
 #### Manual MCP Configuration (`.mcp.json`)
 
+Streamable HTTP (recommended when `chorus up` is running):
+
 ```json
 {
   "mcpServers": {
     "chorus": {
       "type": "http",
       "url": "http://localhost:9440/mcp"
+    }
+  }
+}
+```
+
+Or `stdio` (for Claude Desktop and other `stdio`-only MCP hosts; relays to the running Chorus server when reachable, or starts in-process):
+
+```json
+{
+  "mcpServers": {
+    "chorus": {
+      "command": "chorus",
+      "args": ["stdio"]
     }
   }
 }
