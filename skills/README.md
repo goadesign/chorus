@@ -18,7 +18,7 @@ If you already have the `chorus` CLI installed (or used `scripts/install.sh`), r
 
 ```bash
 chorus setup          # project-local (.mcp.json + .agents/skills/chorus/SKILL.md)
-chorus setup -global  # global across Claude Code, Codex, Cursor, and Antigravity
+chorus setup -global  # global across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, Copilot, and VS Code
 ```
 
 Global setup also installs the [Herdr launcher](herdr/chorus-launcher/) when

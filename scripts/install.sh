@@ -95,8 +95,16 @@ ensure_redis() {
 		printf 'Redis: found redis-server in PATH (chorus will auto-start it if needed)\n'
 		return
 	fi
+	if command -v valkey-server >/dev/null 2>&1; then
+		printf 'Redis: found valkey-server in PATH (chorus will auto-start it if needed)\n'
+		return
+	fi
 	if command -v docker >/dev/null 2>&1; then
-		printf 'Redis: found docker in PATH (chorus will auto-start redis:7-alpine if needed)\n'
+		printf 'Redis: found docker in PATH (chorus will auto-start docker.io/library/redis:7-alpine if needed)\n'
+		return
+	fi
+	if command -v podman >/dev/null 2>&1; then
+		printf 'Redis: found podman in PATH (chorus will auto-start docker.io/library/redis:7-alpine if needed)\n'
 		return
 	fi
 	if command -v brew >/dev/null 2>&1; then
@@ -104,18 +112,42 @@ ensure_redis() {
 		brew install redis
 		return
 	fi
-	if command -v apt-get >/dev/null 2>&1; then
+	run_as_root() {
 		if [ "$(id -u)" -eq 0 ]; then
-			printf 'Installing redis-server via apt-get...\n'
-			apt-get update -y && apt-get install -y redis-server
-			return
+			"$@"
 		elif command -v sudo >/dev/null 2>&1; then
-			printf 'Installing redis-server via sudo apt-get...\n'
-			sudo apt-get update -y && sudo apt-get install -y redis-server
+			sudo "$@"
+		else
+			return 1
+		fi
+	}
+	if command -v apt-get >/dev/null 2>&1; then
+		printf 'Installing redis-server via apt-get...\n'
+		if run_as_root apt-get update -y && run_as_root apt-get install -y redis-server; then
+			return
+		fi
+	elif command -v dnf >/dev/null 2>&1; then
+		printf 'Installing valkey/redis via dnf...\n'
+		if run_as_root dnf install -y valkey || run_as_root dnf install -y redis; then
+			return
+		fi
+	elif command -v pacman >/dev/null 2>&1; then
+		printf 'Installing valkey via pacman...\n'
+		if run_as_root pacman -Sy --noconfirm valkey || run_as_root pacman -Sy --noconfirm redis; then
+			return
+		fi
+	elif command -v apk >/dev/null 2>&1; then
+		printf 'Installing redis via apk...\n'
+		if run_as_root apk add --no-cache redis; then
+			return
+		fi
+	elif command -v zypper >/dev/null 2>&1; then
+		printf 'Installing redis via zypper...\n'
+		if run_as_root zypper --non-interactive install redis; then
 			return
 		fi
 	fi
-	printf 'Note: install Redis 7.0+ (brew install redis, apt install redis-server, or Docker) before running chorus\n'
+	printf 'Note: install Redis 7.0+ or Valkey (brew install redis, apt install redis-server, dnf install valkey, or Docker/Podman) before running chorus\n'
 }
 
 main() {

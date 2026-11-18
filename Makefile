@@ -125,6 +125,9 @@ release:
 	fi
 	sed 's/Version(".*")/Version("$(VERSION)")/' design/design.go > _tmp && mv _tmp design/design.go
 	sed 's/Version(".*")/Version("$(VERSION)")/' diagram/model/model.go > _tmp && mv _tmp diagram/model/model.go
+	set -e; for f in plugin.json .claude-plugin/plugin.json .claude-plugin/marketplace.json server.json npm/chorus/package.json; do \
+		sed 's/"version": "[^"]*"/"version": "$(VERSION)"/' "$$f" > _tmp && mv _tmp "$$f"; \
+	done
 	$(MAKE) release-preflight
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		git add .; \

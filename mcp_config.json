@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "chorus": {
+      "url": "http://localhost:9440/mcp"
+    }
+  }
+}

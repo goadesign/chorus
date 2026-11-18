@@ -79,6 +79,7 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("COPILOT_HOME", "")
 			t.Setenv("HERDR_APP_HOME", "")
 			t.Setenv("PATH", t.TempDir())
 			if tc.noSetup {

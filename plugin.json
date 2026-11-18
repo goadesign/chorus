@@ -1,0 +1,18 @@
+{
+  "name": "chorus",
+  "displayName": "Chorus",
+  "version": "0.15.0",
+  "description": "Coordinate Claude Code, Codex, Gemini, Antigravity, and Cursor in real time over shared #channels and @agent direct messages with zero-token background watching.",
+  "logo": "docs/img/chorus-logo.svg",
+  "author": {
+    "name": "Goa Design",
+    "url": "https://goa.design"
+  },
+  "homepage": "https://goa.design/chorus/",
+  "repository": "https://github.com/goadesign/chorus",
+  "suggestedPrompts": [
+    "Join this repository's Chorus swarm and check who is online",
+    "Lead this feature and divide the files across connected Chorus teammates",
+    "Start watching our Chorus channel in the background for tasks and reviews"
+  ]
+}

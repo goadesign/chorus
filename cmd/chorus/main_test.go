@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,8 +104,10 @@ func TestConnectOrStartRedis(t *testing.T) {
 func stopTestRedis(t *testing.T, rdb *redis.Client, port int) {
 	t.Helper()
 	_ = rdb.ShutdownNoSave(context.Background()).Err()
-	if dockerBin, err := exec.LookPath("docker"); err == nil {
-		_ = exec.Command(dockerBin, "rm", "-f", fmt.Sprintf("%s-%d", dockerContainerName, port)).Run()
+	for _, runtimeName := range []string{"docker", "podman"} {
+		if containerBin, err := exec.LookPath(runtimeName); err == nil {
+			_ = exec.Command(containerBin, "rm", "-f", fmt.Sprintf("%s-%d", dockerContainerName, port)).Run()
+		}
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -122,6 +126,7 @@ func TestSetupMCPConfigs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("COPILOT_HOME", "")
 	t.Setenv("PATH", t.TempDir())
 
 	// Pre-populate ~/.cursor/mcp.json with an existing server entry and top-level setting.
@@ -851,4 +856,69 @@ func TestStatusAndVersion(t *testing.T) {
 	if !strings.Contains(skillText, `${CODEX_HOME:-$HOME/.codex}`) || strings.Contains(skillText, `${CODEX_HOME:-~`) {
 		t.Fatal("SKILL.md must use ${CODEX_HOME:-$HOME/.codex} rather than unexpanded tilde inside parameter expansion")
 	}
+}
+
+// TestStartLocalRedisFallbacks verifies that startLocalRedis falls back cleanly
+// from redis-server to valkey-server, docker, and podman, exercises podman run
+// with the fully qualified docker.io/library/redis:7-alpine image and SELinux
+// bind-mount rules when no existing container starts, and reports a clear error
+// when none are installed.
+func TestStartLocalRedisFallbacks(t *testing.T) {
+	t.Run("missing all runtimes", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		err := startLocalRedis("16399", t.TempDir())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "valkey-server")
+		assert.Contains(t, err.Error(), "podman")
+	})
+
+	t.Run("valkey-server fallback", func(t *testing.T) {
+		bin := t.TempDir()
+		argsFile := filepath.Join(t.TempDir(), "valkey-args.txt")
+		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "valkey-server"), []byte(script), 0o755))
+		t.Setenv("PATH", bin)
+
+		dataDir := t.TempDir()
+		require.NoError(t, startLocalRedis("16398", dataDir))
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if raw, err := os.ReadFile(argsFile); err == nil && strings.Contains(string(raw), "16398") {
+				assert.Contains(t, string(raw), "--appendonly")
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("expected valkey-server stub to record startup arguments")
+	})
+
+	t.Run("podman run fallback", func(t *testing.T) {
+		bin := t.TempDir()
+		argsFile := filepath.Join(t.TempDir(), "podman-args.txt")
+		// Fail "start" so startRedisDocker proceeds through "rm -f" and "run -d".
+		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = \"start\" ]; then exit 1; fi\nexit 0\n", argsFile)
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "podman"), []byte(script), 0o755))
+		t.Setenv("PATH", bin)
+
+		dataDir := t.TempDir()
+		require.NoError(t, startLocalRedis("16397", dataDir))
+		raw, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+		require.Len(t, lines, 3)
+		assert.Equal(t, "start chorus-redis-16397", lines[0])
+		assert.Equal(t, "rm -f chorus-redis-16397", lines[1])
+		wantMount := containerDataMount(runtime.GOOS, "podman", dataDir)
+		assert.Equal(
+			t,
+			fmt.Sprintf("run -d --name chorus-redis-16397 -p 127.0.0.1:16397:6379 -v %s docker.io/library/redis:7-alpine redis-server --appendonly yes --save 60 1", wantMount),
+			lines[2],
+		)
+	})
+
+	t.Run("SELinux container mount rules", func(t *testing.T) {
+		assert.Equal(t, "/var/data:/data:Z", containerDataMount("linux", "/usr/bin/podman", "/var/data"))
+		assert.Equal(t, "/var/data:/data", containerDataMount("darwin", "/opt/homebrew/bin/podman", "/var/data"))
+		assert.Equal(t, "/var/data:/data", containerDataMount("linux", "/usr/bin/docker", "/var/data"))
+	})
 }

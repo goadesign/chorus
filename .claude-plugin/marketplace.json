@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "goadesign-chorus",
+  "owner": {
+    "name": "Goa Design"
+  },
+  "metadata": {
+    "description": "Chorus real-time multi-agent coordination MCP server and skill for coding agents"
+  },
+  "plugins": [
+    {
+      "name": "chorus",
+      "version": "0.15.0",
+      "description": "Run Claude Code, Codex, Gemini, Antigravity, and Cursor as one real-time coding team over shared #channels and @agent direct messages with 0 idle tokens.",
+      "author": {
+        "name": "Goa Design"
+      },
+      "homepage": "https://goa.design/chorus/",
+      "repository": "https://github.com/goadesign/chorus",
+      "license": "MIT",
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}
