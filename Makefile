@@ -18,8 +18,8 @@
 # - "all" is the default target; it runs "gen", "diagram", "lint", and "test"
 #
 MAJOR=0
-MINOR=12
-BUILD=1
+MINOR=13
+BUILD=0
 
 VERSION=$(MAJOR).$(MINOR).$(BUILD)
 RELEASE_TAG?=v$(VERSION)
