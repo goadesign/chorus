@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="https://goa.design/chorus/"><b>Website</b></a> ·
+  <a href="https://goa.design/chorus/demo/"><b>Live Demo</b></a> ·
   <a href="#how-it-works"><b>How It Works</b></a> ·
   <a href="#quickstart"><b>Quickstart</b></a> ·
   <a href="#see-it-in-action"><b>Live Dashboard</b></a> ·
@@ -73,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/insta
 npx @goadesign/chorus up
 ```
 
-`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis or Valkey (or Docker/Podman) is running, and registers Chorus across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and [Herdr](https://herdr.dev/). Run `chorus demo` to explore a populated 3-agent collaboration session in your browser right away, or `chorus ui` anytime to open the dashboard. *(Open or restart already-running coding agents once after first setup · Claude Code plugin: `/plugin marketplace add goadesign/chorus` then `/plugin install chorus@goadesign-chorus` · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
+`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis or Valkey (or Docker/Podman) is running, and registers Chorus across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and [Herdr](https://herdr.dev/). Want to explore first without installing? Try the **[interactive browser demo](https://goa.design/chorus/demo/)**, or run `chorus demo` locally to seed a populated 3-agent collaboration session (`chorus ui` opens the dashboard anytime). *(Open or restart already-running coding agents once after first setup · Claude Code plugin: `/plugin marketplace add goadesign/chorus` then `/plugin install chorus@goadesign-chorus` · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
 
 ### 2. Start Chorus in Each Agent, Then Prompt One
 
@@ -167,6 +168,7 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus status` | Check the managed server's `/healthz` and print its version, dashboard URL, and MCP endpoint; `-json` prints its `base_url` instead |
 | `chorus ui` | Open the managed server's live web dashboard in your browser |
 | `chorus demo` | Seed an isolated `demo` swarm (`-swarm`, `-addr`, `-no-open`) with a realistic 3-agent + human passkey collaboration session and open the live web dashboard on `#passkeys` |
+| `chorus stdio` | Serve MCP over newline-delimited `stdin`/`stdout` JSON-RPC for `stdio`-only clients and inspectors (relays to the running Chorus server when reachable, or runs in-process with local Redis) |
 | `chorus update` | Check for a newer release, prompt for approval (`-yes` / `-y` for non-interactive, `-check` for read-only check, `-addr` to pick server), refresh skills/MCP/Herdr files, and restart the server with its current settings |
 | `chorus setup` | Write `./.mcp.json` (plus `.gemini/settings.json`, `.vscode/mcp.json`, and `.codex/config.toml` when present) and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and Herdr |
 | `chorus watch` | Listen in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at **0 LLM tokens/sec** until matching messages arrive, print them, and exit `0` |
@@ -174,11 +176,11 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus version` | Print the binary version (`-version`, `--version`, `-v`) |
 | `chorus serve` | Run the Chorus HTTP/MCP server in the foreground (default when no subcommand is given) |
 
-After `chorus up -addr :9550`, bare `status`, `watch`, `ui`, `demo`, and `setup`
-use that saved address. An explicit `-addr` overrides it; without saved settings,
-the default remains `127.0.0.1:9440`. Invalid saved settings fail rather than
-selecting another server. A foreground `chorus serve -addr` does not change
-the managed address: use explicit `-addr` for its clients.
+After `chorus up -addr :9550`, bare `status`, `watch`, `ui`, `demo`, `stdio`,
+and `setup` use that saved address. An explicit `-addr` overrides it; without
+saved settings, the default remains `127.0.0.1:9440`. Invalid saved settings fail
+rather than selecting another server. A foreground `chorus serve -addr` does not
+change the managed address: use explicit `-addr` for its clients.
 
 `chorus status -json` prints `{"base_url":"http://localhost:9550"}` followed
 by a newline after the health check succeeds. A failed check exits nonzero
@@ -367,7 +369,7 @@ Chorus is built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`MCP 2026-07-2
 ├── design/design.go              # Goa-AI DSL contract (5 MCP tools + read-only dashboard view API)
 ├── diagram/                      # goa.design/model C4 architecture model & rendered SVG
 ├── chorus/                       # Core service, Pulse swarm state, wire codecs, & embedded web UI
-├── cmd/chorus/                   # CLI binary (up, down, status, ui, demo, update, setup, watch, team, serve)
+├── cmd/chorus/                   # CLI binary (up, down, status, ui, demo, stdio, update, setup, watch, team, serve)
 ├── skills/
 │   ├── chorus/SKILL.md           # Model-agnostic Chorus Agent Skill
 │   └── herdr/chorus-launcher/    # Herdr team launcher dialog & terminal role runner
@@ -375,6 +377,7 @@ Chorus is built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`MCP 2026-07-2
 ├── .claude-plugin/               # Claude Code plugin & marketplace manifests
 ├── plugin.json                   # Antigravity plugin manifest (uses .mcp.json / mcp_config.json)
 ├── server.json                   # Official MCP Registry server manifest
+├── glama.json                    # Glama MCP directory maintainer manifest
 ├── scripts/                      # One-line release installer & Homebrew formula generator
 ├── Makefile                      # Code generation, diagram rendering, tests, & release automation
 └── gen/                          # Generated Goa & Goa-AI MCP server/client packages
