@@ -23,6 +23,7 @@ import (
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLoopbackPort verifies detection of loopback host:port addresses.
@@ -275,11 +276,30 @@ func TestSetupMCPConfigs(t *testing.T) {
 
 // TestLocalBaseURL verifies normalization of listen addresses to local HTTP URLs.
 func TestLocalBaseURL(t *testing.T) {
-	if got := localBaseURL(":9440"); got != "http://localhost:9440" {
-		t.Fatalf("localBaseURL(:9440) = %q", got)
-	}
-	if got := localBaseURL("127.0.0.1:9090"); got != "http://localhost:9090" {
-		t.Fatalf("localBaseURL(127.0.0.1:9090) = %q", got)
+	for _, test := range []struct {
+		addr, want string
+	}{
+		{":9440", "http://localhost:9440"},
+		{"127.0.0.1:9090", "http://localhost:9090"},
+		{"[::1]:9550", "http://localhost:9550"},
+		{"[2001:db8::1]:9550", "http://[2001:db8::1]:9550"},
+		{"0.0.0.0:9550", "http://localhost:9550"},
+		{"", ""},
+		{"bad", ""},
+		{"localhost:", ""},
+	} {
+		t.Run(test.addr, func(t *testing.T) {
+			got, err := localBaseURL(test.addr)
+			if test.want == "" {
+				if err == nil || got != "" {
+					t.Fatalf("invalid address returned %q, %v", got, err)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("localBaseURL(%q) = %q, %v; want %q", test.addr, got, err, test.want)
+			}
+		})
 	}
 }
 
@@ -326,8 +346,8 @@ func TestDefaultListenAddrIsLoopback(t *testing.T) {
 	if !found {
 		t.Fatalf("buildServeArgs(default) does not pass -addr 127.0.0.1:9440: %v", args)
 	}
-	if got := localBaseURL(cfg.addr); got != "http://localhost:9440" {
-		t.Fatalf("localBaseURL(default) = %q, want http://localhost:9440", got)
+	if got, err := localBaseURL(cfg.addr); err != nil || got != "http://localhost:9440" {
+		t.Fatalf("localBaseURL(default) = %q, %v; want http://localhost:9440", got, err)
 	}
 }
 
@@ -383,6 +403,8 @@ func TestBuildServeArgs(t *testing.T) {
 // when no unread messages exist under -wait 0s, and blocks until a matching
 // mention arrives when -wait > 0 and -mentions are passed.
 func TestRunWatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("allocate free port: %v", err)
@@ -414,6 +436,8 @@ func TestRunWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse server URL: %v", err)
 	}
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+	require.NoError(t, saveServeArgs(home, serverConfig{addr: parsedURL.Host}))
 
 	ctx := context.Background()
 	for _, agent := range []string{"api", "db", "qa"} {
@@ -442,7 +466,6 @@ func TestRunWatch(t *testing.T) {
 	// 1. Instant hook check (-wait 0s) with no unread messages must write 0 bytes.
 	var emptyOut bytes.Buffer
 	if err := runWatch([]string{
-		"-addr", parsedURL.Host,
 		"-agent", "@api",
 		"-wait", "0s",
 	}, &emptyOut); err != nil {

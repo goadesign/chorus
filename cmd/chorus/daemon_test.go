@@ -140,6 +140,10 @@ func TestRunUpSetsUpAgentsAndPrintsEndpoints(t *testing.T) {
 // server answers, and still prints the address when the browser cannot open.
 func TestRunUI(t *testing.T) {
 	host := fakeChorus(t, genchorus.APIVersion)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+	require.NoError(t, saveServeArgs(home, serverConfig{addr: host}))
 	port := host[strings.LastIndex(host, ":")+1:]
 	dashboard := fmt.Sprintf("http://localhost:%s/", port)
 
@@ -149,7 +153,7 @@ func TestRunUI(t *testing.T) {
 		return nil
 	}
 	var out bytes.Buffer
-	require.NoError(t, runUI([]string{"-addr", host}, &out, open))
+	require.NoError(t, runUI(nil, &out, open))
 	assert.Equal(t, []string{dashboard}, opened)
 	assert.Equal(t, "Dashboard: "+dashboard+"\n", out.String())
 
@@ -175,6 +179,23 @@ func TestRunUI(t *testing.T) {
 	assert.Empty(t, opened)
 }
 
+// TestRunStatusJSON checks the actual health boundary and exact JSON output
+// using a local HTTP fixture; it needs no Redis server or service process.
+func TestRunStatusJSON(t *testing.T) {
+	host := fakeChorus(t, genchorus.APIVersion)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+	require.NoError(t, saveServeArgs(home, serverConfig{addr: host}))
+	port := host[strings.LastIndex(host, ":")+1:]
+	var out bytes.Buffer
+	require.NoError(t, runStatus([]string{"-json"}, &out))
+	assert.Equal(t, fmt.Sprintf("{\"base_url\":\"http://localhost:%s\"}\n", port), out.String())
+	out.Reset()
+	assert.Error(t, runStatus([]string{"-json", "-addr", "127.0.0.1:1"}, &out))
+	assert.Empty(t, out.String())
+}
+
 // TestWriteEndpoints verifies that the dashboard address is printed only for
 // hosts the dashboard accepts (localhost and loopback IPs, which is where a
 // wildcard listener such as ":9440" is reached) and reported unavailable for
@@ -191,7 +212,8 @@ func TestWriteEndpoints(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.addr, func(t *testing.T) {
 			var out bytes.Buffer
-			baseURL := localBaseURL(tc.addr)
+			baseURL, err := localBaseURL(tc.addr)
+			require.NoError(t, err)
 			writeEndpoints(&out, "1.2.3", baseURL)
 			assert.Equal(t, "Chorus v1.2.3 is running\n  Dashboard: "+tc.wantDashboard+"\n  MCP:       "+baseURL+"/mcp\n", out.String())
 		})

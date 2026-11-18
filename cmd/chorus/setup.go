@@ -71,7 +71,11 @@ func runSetup(args []string, out io.Writer) error {
 		return err
 	}
 
-	mcpURL := localBaseURL(addr) + "/mcp"
+	baseURL, err := clientBaseURL(fs, addr)
+	if err != nil {
+		return err
+	}
+	mcpURL := baseURL + "/mcp"
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve working directory: %w", err)
