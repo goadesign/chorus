@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -724,6 +725,7 @@ def team_rows(owned: list[dict]) -> list[dict]:
     rows = []
     for terminal in owned:
         labels = terminal["labels"]
+        status = terminal.get("status") if terminal.get("reported") else None
         options = json.loads(labels["chorus.options"]) if "chorus.options" in labels else None
         if options is not None and (
             not isinstance(options, dict)
@@ -737,6 +739,7 @@ def team_rows(owned: list[dict]) -> list[dict]:
             "id": labels.get("chorus.row", terminal["address"]),
             "key": labels["chorus.agent"],
             "terminal": terminal["address"],
+            "status": {"state": status["state"], "kind": status.get("kind")} if status is not None else None,
             "model": options["model"] if options else None,
             "thinking": options.get("thinking") if options else None,
             "yolo": options["yolo"] if options else None,
@@ -774,6 +777,7 @@ def roster_rows(roster: dict, owned: list[dict]) -> list[dict]:
             "has_connections": bool(entry["connections"]),
             "key": live["key"] if live else None,
             "terminal": live["terminal"] if live else None,
+            "status": live["status"] if live else None,
             "model": live["model"] if live else None,
             "thinking": live["thinking"] if live else None,
             "yolo": live["yolo"] if live else None,
@@ -1070,6 +1074,12 @@ def main() -> int:
             else:
                 result = launch_team(request, app, core, app_home)
         print(json.dumps(result))
+        if action == "team-launch":
+            print(
+                f"Next: inspect the team with `chorus team inspect --space {shlex.quote(request['space'])}`; "
+                "use `hc read <terminal>` for each new pane and answer what it shows before sending other keys.",
+                file=sys.stderr,
+            )
         return 0
     except Exception as error:
         recovery = "Existing panes remain available; reopen Start Chorus to continue."

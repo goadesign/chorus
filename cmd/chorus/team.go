@@ -44,6 +44,8 @@ func runTeam(args []string, input io.Reader, out io.Writer) error {
 		fmt.Fprintln(flags.Output(), "Use null for the client's configured model, or inspect your choices file to see that program's model choices before launch. Custom model IDs are checked by the client at startup.")
 		fmt.Fprintln(flags.Output(), "yolo:false uses the client's permission settings; yolo:true bypasses its tool confirmations (Codex also disables command sandboxing); inspect shows the exact flag and effect.")
 		fmt.Fprintln(flags.Output(), "Every missing role needs a choice; omitted running roles are reused. Refusals exit nonzero; inspect and retry after a partial launch.")
+		fmt.Fprintln(flags.Output(), "Inspect returns each role's terminal ID (null if not running) and reported status (state/kind; null if unreported). Running does not mean ready for input.")
+		fmt.Fprintln(flags.Output(), "After launch, inspect the team and use hc read <terminal> for each new pane; answer what it shows before sending other keys.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args[1:]); err != nil {

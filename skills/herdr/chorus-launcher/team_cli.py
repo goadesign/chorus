@@ -18,6 +18,7 @@ def inspect(request: dict, app, core, app_home: Path, execute) -> dict:
         "roles": [{
             "role": row["role"], "title": row["title"], "handle": row["handle"],
             "running": row["terminal"] is not None, "client": row["key"],
+            "terminal": row["terminal"], "status": row["status"],
             "model": row["model"], "thinking": row["thinking"], "yolo": row["yolo"],
         } for row in team["rows"]],
     }

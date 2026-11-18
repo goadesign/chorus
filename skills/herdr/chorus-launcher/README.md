@@ -155,6 +155,13 @@ an empty catalog does not prove that a custom model is invalid. Bare inspection
 keeps the roster-only result and never runs client discovery. Neither form
 launches panes or changes saved preferences.
 
+Each role also names its owned `terminal` ID, or null when no pane is running.
+`status` contains Herdr's reported `state` and `kind`, or null when the pane has
+not reported status. Only those two status fields are returned, never the
+pane's text or status message. A missing kind is null. These are reported
+facts: `running` does not mean the pane is ready for input, and an unreported
+status does not prove that a question is open.
+
 `yolo:false` uses the client's permission settings; `yolo:true` bypasses its tool
 confirmations (Codex also disables command sandboxing). Inspection shows the
 exact supported flag and effect from the same source used by the dialog. An
@@ -174,6 +181,15 @@ pane fails, completed panes remain available: inspect and retry to open the
 remaining roles without duplicates. The command uses the same locking, MCP
 configuration, labels, and pane placement as the dialog, and does not close
 unrelated dialogs.
+
+A successful terminal launch also prints one next step to stderr, leaving
+stdout as the success JSON. Inspect the same space, then run
+`hc read <terminal>` for each new pane. Read and answer the displayed folder
+trust prompt or question before sending other text or keys. `hc send` pastes
+text and presses Enter, so it may answer or dismiss a question that is already
+open. Use `hc keys <terminal> <keys>...` for the displayed prompt's controls;
+send other text only after answering it. Later reported blockers can be read through inspection; Surla's live
+Team notice remains the place to follow its roles while the page is open.
 
 The installed launcher must match the command's release. If it is missing or
 stale, run `chorus setup -global` before retrying. That explicit setup owns
