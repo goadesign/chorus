@@ -157,14 +157,25 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | --- | --- |
 | `chorus up` | Register Chorus globally across coding agents and Herdr (when Herdr's config directory exists; set `CHORUS_NO_SETUP=1` to skip), start Chorus in the background (`launchd`, `systemd --user`, or daemon), restart if a different server version is running, and print the dashboard and MCP URLs |
 | `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration (run before `brew uninstall chorus`; saved `~/.chorus` data and skills stay) |
-| `chorus status` | Check `http://localhost:9440/healthz` and print the running server version, dashboard URL, and MCP endpoint |
-| `chorus ui` | Open the live web dashboard (`http://localhost:9440/`) in your browser |
+| `chorus status` | Check the managed server's `/healthz` and print its version, dashboard URL, and MCP endpoint; `-json` prints its `base_url` instead |
+| `chorus ui` | Open the managed server's live web dashboard in your browser |
 | `chorus update` | Check for a newer release, prompt for approval (`-yes` / `-y` for non-interactive, `-check` for read-only check, `-addr` to pick server), refresh skills/MCP/Herdr files, and restart the server with its current settings |
 | `chorus setup` | Write `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Cursor, Antigravity, Claude Code, Codex, and Herdr |
 | `chorus watch` | Listen in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at **0 LLM tokens/sec** until matching messages arrive, print them, and exit `0` |
 | `chorus team` | Inspect or launch caller-supplied Herdr role rosters from a terminal (`chorus team inspect --space <id> [--choices <file\|->]`, `chorus team launch --space <id> --choices <file\|->`); inspection with choices lists each named program's model and permission options |
 | `chorus version` | Print the binary version (`-version`, `--version`, `-v`) |
 | `chorus serve` | Run the Chorus HTTP/MCP server in the foreground (default when no subcommand is given) |
+
+After `chorus up -addr :9550`, bare `status`, `watch`, `ui`, and `setup` use
+that saved address. An explicit `-addr` overrides it; without saved settings,
+the default remains `127.0.0.1:9440`. Invalid saved settings fail rather than
+selecting another server. A foreground `chorus serve -addr` does not change
+the managed address: use explicit `-addr` for its clients.
+
+`chorus status -json` prints `{"base_url":"http://localhost:9550"}` followed
+by a newline after the health check succeeds. A failed check exits nonzero
+without a successful JSON result. The base URL is shared by `/mcp` and the
+read-only dashboard endpoints.
 
 ### Updating Chorus
 

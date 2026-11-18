@@ -752,10 +752,12 @@ func TestServeArgsPersistence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, current, restarted)
 
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".chorus", serveArgsFile), []byte("{"), 0o644))
-	_, err = loadServeArgs(home)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "run 'chorus down' to clear them")
+	for _, invalid := range []string{"{", "null", `{"addr":":9550"}`, `[1]`} {
+		require.NoError(t, os.WriteFile(filepath.Join(home, ".chorus", serveArgsFile), []byte(invalid), 0o644))
+		_, err = loadServeArgs(home)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "run 'chorus down' to clear them")
+	}
 }
 
 // fakeUpdatableChorus starts a server that answers GET /healthz like a

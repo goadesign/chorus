@@ -169,13 +169,24 @@ func runDown(args []string) error {
 // returns an error naming the address when nothing answers there.
 func runStatus(args []string, out io.Writer) error {
 	var addr string
+	var jsonOutput bool
 	fs := flag.NewFlagSet("chorus status", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", defaultListenAddr, "Chorus HTTP listen address")
+	fs.BoolVar(&jsonOutput, "json", false, "Print the healthy server's base_url as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	baseURL := localBaseURL(addr)
+	baseURL, err := clientBaseURL(fs, addr)
+	if err != nil {
+		return err
+	}
 	if ok, srvVer := probeServer(baseURL); ok {
+		if jsonOutput {
+			return json.NewEncoder(out).Encode(struct {
+				// BaseURL is the resolved HTTP origin shared by the MCP and view endpoints.
+				BaseURL string `json:"base_url"`
+			}{BaseURL: baseURL})
+		}
 		writeEndpoints(out, srvVer, baseURL)
 		return nil
 	}
@@ -200,7 +211,10 @@ func runUI(args []string, out io.Writer, open func(string) error) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	baseURL := localBaseURL(addr)
+	baseURL, err := clientBaseURL(fs, addr)
+	if err != nil {
+		return err
+	}
 	dashboard, err := dashboardURL(baseURL)
 	if err != nil {
 		return err
@@ -269,7 +283,11 @@ func runWatch(args []string, out io.Writer) error {
 		return errors.New("-limit must be between 1 and 50")
 	}
 
-	parsedURL, err := url.Parse(localBaseURL(addr))
+	baseURL, err := clientBaseURL(fs, addr)
+	if err != nil {
+		return err
+	}
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return fmt.Errorf("parse chorus address %q: %w", addr, err)
 	}
@@ -511,6 +529,9 @@ func loadServeArgs(homeDir string) ([]string, error) {
 	var args []string
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, fmt.Errorf("read saved server flags %s: %w (run 'chorus down' to clear them)", path, err)
+	}
+	if args == nil {
+		return nil, fmt.Errorf("read saved server flags %s: expected an array of strings (run 'chorus down' to clear them)", path)
 	}
 	return args, nil
 }

@@ -304,6 +304,8 @@ func TestRunSetupInstallsHerdrOnlyGlobally(t *testing.T) {
 			t.Setenv("HERDR_APP_HOME", "")
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			t.Setenv("PATH", t.TempDir())
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+			require.NoError(t, saveServeArgs(home, serverConfig{addr: ":9550"}))
 			project := filepath.Join(t.TempDir(), "chorus-launcher")
 			require.NoError(t, os.MkdirAll(project, 0o755))
 			t.Chdir(project)
@@ -319,7 +321,7 @@ func TestRunSetupInstallsHerdrOnlyGlobally(t *testing.T) {
 				assert.Contains(t, out.String(), "Installed Chorus launcher in "+filepath.Join(herdrHome, "mods", "chorus-launcher"))
 				assert.Contains(t, out.String(), "herdr-app do mod.open --name chorus-launcher")
 			} else {
-				assert.Contains(t, out.String(), "Registered Chorus MCP (http://localhost:9440/mcp) in "+filepath.Join(project, ".mcp.json"))
+				assert.Contains(t, out.String(), "Registered Chorus MCP (http://localhost:9550/mcp) in "+filepath.Join(project, ".mcp.json"))
 				assert.NotContains(t, out.String(), "Installed Chorus launcher")
 				assert.NoDirExists(t, filepath.Join(herdrHome, "mods"))
 			}

@@ -23,6 +23,7 @@ import (
 	genchorus "github.com/goadesign/chorus/gen/chorus"
 	"github.com/goadesign/chorus/skills"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLoopbackPort verifies detection of loopback host:port addresses.
@@ -383,6 +384,8 @@ func TestBuildServeArgs(t *testing.T) {
 // when no unread messages exist under -wait 0s, and blocks until a matching
 // mention arrives when -wait > 0 and -mentions are passed.
 func TestRunWatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("allocate free port: %v", err)
@@ -414,6 +417,8 @@ func TestRunWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse server URL: %v", err)
 	}
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".chorus"), 0o755))
+	require.NoError(t, saveServeArgs(home, serverConfig{addr: parsedURL.Host}))
 
 	ctx := context.Background()
 	for _, agent := range []string{"api", "db", "qa"} {
@@ -442,7 +447,6 @@ func TestRunWatch(t *testing.T) {
 	// 1. Instant hook check (-wait 0s) with no unread messages must write 0 bytes.
 	var emptyOut bytes.Buffer
 	if err := runWatch([]string{
-		"-addr", parsedURL.Host,
 		"-agent", "@api",
 		"-wait", "0s",
 	}, &emptyOut); err != nil {
