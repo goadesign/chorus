@@ -67,10 +67,10 @@ client flag, only when the installed client's help advertises it:
 | Client | Flag | Effect |
 | --- | --- | --- |
 | Claude Code | `--dangerously-skip-permissions` | Bypasses tool permission checks |
-| Codex | `--dangerously-bypass-approvals-and-sandbox` | Disables approval prompts and sandboxing |
+| Codex | `--dangerously-bypass-approvals-and-sandbox` | Disables approval prompts and command sandboxing |
 | Antigravity | `--dangerously-skip-permissions` | Auto-approves tool permission requests |
 | Cursor | `--yolo` | Allows commands unless explicitly denied; keeps the sandbox setting |
-| Gemini CLI | `--yolo` | Auto-approves tool actions; keeps the sandbox setting |
+| Gemini CLI | `--yolo` | Auto-approves all tool calls; Gemini CLI controls sandbox behavior |
 
 **Apply YOLO to all** affects only new rows whose client supports the flag.
 **Turn YOLO off for all** restores those rows to client settings. Changing to a
@@ -118,7 +118,7 @@ The choices file is a JSON object keyed by the roster's role names:
   "guide": {
     "client": "codex",
     "program": "codex",
-    "model": "gpt-6.1-sol",
+    "model": null,
     "thinking": null,
     "yolo": false
   }
@@ -135,10 +135,32 @@ each role's identity separate. Roles with connections currently support the
 Claude Code and Codex families, just as in the dialog.
 
 The command has no agent catalog and does not read or write Herdr's saved
-preferences. Name your program and model explicitly, or use the dialog for
-Herdr's catalog and saved choices. Null model/thinking select the client's
-defaults; an exact custom model ID is supported when the program advertises
-`--model`. The program checks model access at startup. Before opening any pane,
+preferences. Name your program explicitly, or use the dialog for Herdr's catalog
+and saved choices. Null model/thinking select the client's defaults. To see the
+chosen programs' models and permission effects before launching, run:
+
+```sh
+chorus team inspect --space sp1 --choices choices.json
+```
+
+Inspection adds `client_options`, one entry per distinct chosen client/program,
+from the same discovery used by the dialog. It includes `models`, `efforts`,
+`model_supported`, `thinking_supported`, `note`, `error`, `yolo_flag`, and
+`yolo_effect`. Each entry's `choices` names the roles using it and their selected
+model. A model outside the discovered suggestions carries the note
+`not listed by <program>; the client checks it at startup`. This is information,
+not a refusal: an exact custom model ID remains supported when the program
+advertises `--model`. Discovery failures remain visible in `note` and `error`;
+an empty catalog does not prove that a custom model is invalid. Bare inspection
+keeps the roster-only result and never runs client discovery. Neither form
+launches panes or changes saved preferences.
+
+`yolo:false` uses the client's permission settings; `yolo:true` bypasses its tool
+confirmations (Codex also disables command sandboxing). Inspection shows the
+exact supported flag and effect from the same source used by the dialog. An
+unadvertised permission flag remains unavailable.
+
+The program checks model access at startup. Before opening any pane,
 Chorus checks the named programs and requested options through the launch
 shell. A missing program or unsupported option fails with a reason on stderr.
 

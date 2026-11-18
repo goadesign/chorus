@@ -36,15 +36,6 @@ const THINKING_NAMES = {
   ultra: "Ultra (delegates tasks)",
 };
 
-// Describe the actual client effect rather than promising identical restrictions.
-const YOLO_EFFECT = {
-  claude: "Bypasses tool permission checks.",
-  codex: "Disables approval prompts and sandboxing.",
-  antigravity: "Auto-approves tool permission requests.",
-  cursor: "Allows commands unless explicitly denied; keeps the sandbox setting.",
-  gemini: "Auto-approves tool actions; keeps the sandbox setting.",
-};
-
 export default class ChorusLauncher extends View {
   // Capture the project before discovery or selecting another tab can change focus.
   init(_props, cx) {
@@ -288,6 +279,7 @@ export default class ChorusLauncher extends View {
       chosenModel: hasSaved ? (saved.model || null) : persistedModel,
       chosenThinking: key === "cursor" ? undefined : (hasSaved ? (saved.thinking ?? null) : (persisted && "thinking" in persisted ? (persisted.thinking ?? null) : undefined)),
       yolo: hasSaved ? (saved.yolo ?? false) : persisted ? Boolean(persisted.yolo) : false,
+      yoloEffect: saved?.yolo_effect,
       recorded: hasSaved ? saved.yolo !== null : true,
       custom: false,
       input: InputState.new({ placeholder: "Exact model ID" }),
@@ -626,8 +618,8 @@ export default class ChorusLauncher extends View {
               .child(div().m(3).size(8).rounded(1).bg(t.background)))
             .child(div().text_size(13).child("YOLO mode")))))
         .child(div().text_size(12).text_color(t.muted).child(row.terminal
-          ? `Existing pane · ${row.recorded ? row.yolo ? `YOLO · ${YOLO_EFFECT[row.key]}` : "Client settings at launch" : "Launch settings not recorded"}`
-          : row.yolo ? details?.yolo_flag ? YOLO_EFFECT[row.key] : "YOLO not verified · retry or turn it off to continue" : agent?.loading || !details ? "Checking client options…" : details.yolo_flag ? "Off · use client settings" : "YOLO unavailable · use client settings")))
+          ? `Existing pane · ${row.recorded ? row.yolo ? `YOLO · ${row.yoloEffect}` : "Client settings at launch" : "Launch settings not recorded"}`
+          : row.yolo ? details?.yolo_flag ? details.yolo_effect : "YOLO not verified · retry or turn it off to continue" : agent?.loading || !details ? "Checking client options…" : details.yolo_flag ? "Off · use client settings" : "YOLO unavailable · use client settings")))
       .when(connectionBlocked, el => el.child(div().text_size(12).text_color(t.blocked).child("This agent app cannot yet be given a role's connections.")))
       .when(!row.terminal && Boolean(details?.note), el => el.child(div().text_size(12).text_color(t.muted).child(details.note)))
       .when(!row.terminal && Boolean(details?.error), el => el.child(this.button(`${row.id}-retry`, "Retry client options", row.retry, cx => {

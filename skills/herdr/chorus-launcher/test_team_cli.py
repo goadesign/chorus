@@ -45,8 +45,10 @@ class TeamCommandTests(unittest.TestCase):
                               self.owner.core, self.home, self.execute)
 
     def test_same_executor_creates_connections_labels_and_reuses_running_roles(self):
-        before = team_cli.inspect({"space": "sp1"}, self.owner.app, self.owner.core, self.home)
+        before = team_cli.inspect({"space": "sp1"}, self.owner.app, self.owner.core, self.home, self.execute)
         self.assertFalse(before["roles"][0]["running"])
+        self.assertNotIn("client_options", before)
+        self.assertEqual(self.calls, [])
         self.assertNotIn("private-test-token", json.dumps(before))
         self.assertEqual(self.start({"guide": self.choice}), {"tab": "tb1", "created": 1, "reused": 0})
         argv = next(args["argv"] for name, args in self.owner.commands if name == "tab.new")
@@ -65,6 +67,54 @@ class TeamCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "different launch settings"):
             self.start({"guide": changed})
         self.assertEqual(sum(name == "tab.new" for name, _ in self.owner.commands), 1)
+
+    def test_inspection_shares_program_options_without_launching_or_refusing_custom_models(self):
+        second = copy.deepcopy(self.roster["roles"][0])
+        second.update(role="builder", title="Builder", handle="builder-example",
+                      place={"beside": "guide-example", "direction": "right"})
+        self.roster["roles"].append(second)
+        launch.roster_path(self.home, "sp1").write_text(json.dumps(self.roster))
+        choices = {"guide": self.choice, "builder": dict(self.choice, model="opus")}
+        inspected = team_cli.inspect({"space": "sp1", "choices": choices},
+                                     self.owner.app, self.owner.core, self.home, self.execute)
+        self.assertEqual(len(inspected["client_options"]), 1)
+        options = inspected["client_options"][0]
+        self.assertEqual((options["client"], options["program"]), ("claude", "my-claude"))
+        self.assertIn({"id": "opus", "name": "Opus"}, options["models"])
+        self.assertEqual(options["efforts"], ["low", "medium", "high"])
+        self.assertEqual(options["yolo_flag"], "--dangerously-skip-permissions")
+        self.assertEqual(options["yolo_effect"], launch.CLIENTS["claude"]["yolo_effect"])
+        self.assertEqual(options["choices"]["guide"], {
+            "model": "custom-model", "note": "not listed by my-claude; the client checks it at startup"})
+        self.assertEqual(options["choices"]["builder"], {"model": "opus", "note": ""})
+        self.assertEqual(len(self.calls), 1, "the same program is discovered once for both roles")
+        self.assertEqual(self.owner.commands, [], "inspection creates no panes or launch state")
+        self.assertNotIn("private-test-token", json.dumps(inspected))
+
+    def test_inspection_distinguishes_defaults_variants_and_discovery_failure(self):
+        self.roster["roles"][0]["connections"] = []
+        launch.roster_path(self.home, "sp1").write_text(json.dumps(self.roster))
+        for model in (None, "family-low", "custom-model"):
+            with self.subTest(model=model):
+                def execute(argv):
+                    return "--model --yolo" if argv[-1] == "--help" else "family-low - Family (Low)\nfamily-high - Family (High)\n"
+                choices = {"guide": dict(self.choice, client="cursor", program="my-cursor", model=model, thinking=None)}
+                inspected = team_cli.inspect({"space": "sp1", "choices": choices},
+                                             self.owner.app, self.owner.core, self.home, execute)
+                note = inspected["client_options"][0]["choices"]["guide"]["note"]
+                self.assertEqual(bool(note), model == "custom-model")
+        def unavailable(argv):
+            if argv[-1] == "--help":
+                return "--model -c --dangerously-bypass-approvals-and-sandbox"
+            raise RuntimeError("catalog unavailable")
+        choices = {"guide": dict(self.choice, client="codex", program="my-codex", thinking=None)}
+        inspected = team_cli.inspect({"space": "sp1", "choices": choices},
+                                     self.owner.app, self.owner.core, self.home, unavailable)
+        options = inspected["client_options"][0]
+        self.assertTrue(options["error"])
+        self.assertIn("catalog unavailable", options["note"])
+        self.assertIn("not listed", options["choices"]["guide"]["note"])
+        self.assertEqual(self.owner.commands, [])
 
     def test_refusals_create_no_panes(self):
         cases = [({}, "needs an explicit choice"),

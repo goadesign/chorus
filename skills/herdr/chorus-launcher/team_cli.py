@@ -5,14 +5,15 @@ from pathlib import Path
 import launch
 
 
-def inspect(request: dict, app, core, app_home: Path) -> dict:
-    """Show roster roles and observed launch settings without exposing connections."""
-    if not isinstance(request, dict) or set(request) != {"space"}:
-        raise ValueError("Team inspection requires only a space ID.")
+def inspect(request: dict, app, core, app_home: Path, execute) -> dict:
+    """Show roster state and, when chosen, each program's own current options."""
+    if not isinstance(request, dict) or set(request) not in ({"space"}, {"space", "choices"}):
+        raise ValueError("Team inspection requires a space ID and optional role choices.")
+    prepared = prepare(request, app_home) if "choices" in request else None
     team = launch.inspect_team({"space": request["space"], "root": ""}, app, core, app_home)
     if not team.get("roster"):
         raise ValueError("This space has no team roster. Prepare the project's team first.")
-    return {
+    result = {
         "root": team["root"], "swarm": team["swarm"],
         "roles": [{
             "role": row["role"], "title": row["title"], "handle": row["handle"],
@@ -20,6 +21,29 @@ def inspect(request: dict, app, core, app_home: Path) -> dict:
             "model": row["model"], "thinking": row["thinking"], "yolo": row["yolo"],
         } for row in team["rows"]],
     }
+    if prepared is not None:
+        # Programs are explicit choices, not inferred from client names or PATH.
+        # One discovery serves every role choosing the same client and program.
+        programs = {}
+        for agent in prepared["agents"]:
+            if set(agent) == {"id"}:
+                continue
+            key = (agent["key"], agent["name"])
+            if key not in programs:
+                details = launch.discover(agent, lambda argv: execute(launch.split_argv(argv, prepared["root"])))
+                programs[key] = {"client": agent["key"], "program": agent["name"],
+                                 **details, "choices": {}}
+        for role, choice in request["choices"].items():
+            options = programs[(choice["client"], choice["program"])]
+            model = choice["model"]
+            listed = model is None or any(
+                model == entry["id"] or model in entry.get("variants", {}).values()
+                for entry in options["models"]
+            )
+            options["choices"][role] = {"model": model, "note": "" if listed else
+                f"not listed by {choice['program']}; the client checks it at startup"}
+        result["client_options"] = list(programs.values())
+    return result
 
 
 def prepare(request: dict, app_home: Path) -> dict:
