@@ -18,7 +18,7 @@
 # - "all" is the default target; it runs "gen", "diagram", "lint", and "test"
 #
 MAJOR=0
-MINOR=13
+MINOR=14
 BUILD=0
 
 VERSION=$(MAJOR).$(MINOR).$(BUILD)
