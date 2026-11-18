@@ -83,7 +83,8 @@ const (
 
 // formatDirectory renders the complete swarm snapshot for the calling agent in
 // Chorus's compact line-oriented wire format. It reads only the provided
-// in-memory replicated map snapshot and subscription list, performing no I/O.
+// in-memory replicated map snapshot, live agent handles, and subscription list,
+// performing no I/O.
 //
 // Example output:
 //
@@ -96,8 +97,7 @@ const (
 //	dm: 0 unread
 func formatDirectory(
 	caller string,
-	now time.Time,
-	onlineWindow time.Duration,
+	agents []string,
 	snap map[string]string,
 	subs []string,
 ) string {
@@ -107,15 +107,9 @@ func formatDirectory(
 	writeHandle(&b, caller, snap)
 	b.WriteByte('\n')
 
-	var agents []string
 	var channels []string
-	for k, v := range snap {
-		switch {
-		case strings.HasPrefix(k, prefixAgent):
-			if _, live := parseLiveAgentRecord(now, onlineWindow, v); live {
-				agents = append(agents, strings.TrimPrefix(k, prefixAgent))
-			}
-		case strings.HasPrefix(k, prefixChannel):
+	for k := range snap {
+		if strings.HasPrefix(k, prefixChannel) {
 			channels = append(channels, strings.TrimPrefix(k, prefixChannel))
 		}
 	}
@@ -304,13 +298,15 @@ func parseAgentRecord(raw string) (agentRecord, bool) {
 }
 
 // parseLiveAgentRecord decodes raw as an agentRecord and reports whether the
-// agent has been active within onlineWindow of now.
-func parseLiveAgentRecord(now time.Time, onlineWindow time.Duration, raw string) (agentRecord, bool) {
+// agent is watching or has been active within onlineWindow of now.
+func parseLiveAgentRecord(
+	now time.Time, onlineWindow time.Duration, raw string, watching bool,
+) (agentRecord, bool) {
 	rec, valid := parseAgentRecord(raw)
 	if !valid {
 		return agentRecord{}, false
 	}
-	if rec.LastSeenUnix > 0 && now.Sub(time.Unix(rec.LastSeenUnix, 0)) > onlineWindow {
+	if !watching && rec.LastSeenUnix > 0 && now.Sub(time.Unix(rec.LastSeenUnix, 0)) > onlineWindow {
 		return agentRecord{}, false
 	}
 	return rec, true

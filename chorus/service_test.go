@@ -815,8 +815,7 @@ func TestConcurrentMultiAgentHammer(t *testing.T) {
 }
 
 // TestMultiSwarmIsolationAndLiveness verifies that distinct swarm namespaces
-// are completely isolated and that agent registrations and abandoned channels
-// expire after the configured online activity window.
+// are completely isolated and that registration expiry preserves channels.
 func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	c := newTestCluster(t, 1, []chorus.Option{
 		chorus.WithOnlineWindow(2 * time.Minute),
@@ -830,7 +829,7 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 		"topic":    "Alpha Topic",
 		"role":     "Alpha Lead",
 	})
-	alphaLead.send("#arch", "alpha secret message", 0)
+	alphaLead.call("send", map[string]any{"to": "#arch", "text": "alpha secret message", "pin": true})
 
 	// Attempting to join a different swarm using an already-active handle must fail.
 	collision := c.newAgent(0, "swarm-beta", "alpha-lead")
@@ -863,14 +862,18 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for active watch to terminate upon leaving last channel")
 	}
-	alphaLead.call("join", map[string]any{
+	rejoined := alphaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
 		"topic":    "Alpha Topic",
 		"role":     "Alpha Lead",
 	})
+	if strings.Contains(rejoined, "alpha secret message") || !strings.Contains(rejoined, "head #0") {
+		t.Fatalf("explicit last leave must remove channel history and pin, got %q", rejoined)
+	}
 	if got := alphaLead.call("read", map[string]any{}); got != "none" {
 		t.Fatalf("expected already-read dm #1 not to replay after leave and rejoin, got %q", got)
 	}
+	alphaLead.call("send", map[string]any{"to": "#arch", "text": "retained manifest", "pin": true})
 
 	betaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
@@ -884,7 +887,7 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	}
 
 	// Advance synthetic clock past onlineWindow (2m) and verify @alpha-lead's stale
-	// registration and abandoned #arch channel are automatically reaped both when
+	// registration is reaped while its channel survives both when
 	// observed by a peer (swarm-alpha) and when the expired agent itself calls
 	// who (swarm-beta).
 	c.advanceClock(3 * time.Minute)
@@ -894,8 +897,8 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	})
 	alphaObserver := c.newAgent(0, "swarm-alpha", "observer")
 	whoAlpha := alphaObserver.call("who", map[string]any{"role": "Observer"})
-	if strings.Contains(whoAlpha, "@alpha-lead") || strings.Contains(whoAlpha, "#arch") {
-		t.Fatalf("expected expired @alpha-lead and its abandoned #arch channel to be reaped, got:\n%s", whoAlpha)
+	if strings.Contains(whoAlpha, "@alpha-lead") || !strings.Contains(whoAlpha, "#arch [unsub, head #1] - Alpha Topic") {
+		t.Fatalf("expected expired registration removed and channel retained, got:\n%s", whoAlpha)
 	}
 	if !strings.Contains(whoAlpha, "@observer (Observer)\n") {
 		t.Fatalf("expected @observer in directory, got:\n%s", whoAlpha)
@@ -903,7 +906,10 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 
 	// If a peer sends a new DM while @alpha-lead is expired, re-joining delivers
 	// only the new DM (#2) without replaying already-read DM #1.
-	alphaObserver.call("join", map[string]any{"channels": []string{"#arch"}})
+	retained := alphaObserver.call("join", map[string]any{"channels": []string{"#arch"}})
+	if !strings.Contains(retained, "pin #arch#1 @alpha-lead: retained manifest") {
+		t.Fatalf("expected retained pin and history on joining after expiry, got %q", retained)
+	}
 	alphaObserver.send("@alpha-lead", "dm 2 while expired", 0)
 	alphaLead.call("join", map[string]any{
 		"channels": []string{"#arch"},
@@ -914,8 +920,8 @@ func TestMultiSwarmIsolationAndLiveness(t *testing.T) {
 	}
 
 	whoBetaExpiredSelf := betaLead.call("who", map[string]any{"role": "Beta Lead"})
-	if strings.Contains(whoBetaExpiredSelf, "#arch") {
-		t.Fatalf("expected expired @beta-lead calling who to reap its own stale #arch subscription, got:\n%s", whoBetaExpiredSelf)
+	if !strings.Contains(whoBetaExpiredSelf, "#arch [unsub, head #0] - Beta Topic") {
+		t.Fatalf("expected stale subscription removed and channel retained, got:\n%s", whoBetaExpiredSelf)
 	}
 }
 

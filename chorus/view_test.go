@@ -31,6 +31,7 @@ type (
 			Role     *string  `json:"role"`
 			Model    *string  `json:"model"`
 			Channels []string `json:"channels"`
+			Watching bool     `json:"watching_on_this_server"`
 		} `json:"agents"`
 		// Channels lists channels sorted by name.
 		Channels []struct {
