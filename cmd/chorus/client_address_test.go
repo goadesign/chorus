@@ -52,7 +52,7 @@ func TestClientBaseURL(t *testing.T) {
 	}
 }
 
-// TestClientCommandsRejectBadSavedAddress verifies all four entry points stop
+// TestClientCommandsRejectBadSavedAddress verifies all five entry points stop
 // before making requests, opening a browser, or writing client configuration.
 func TestClientCommandsRejectBadSavedAddress(t *testing.T) {
 	home := t.TempDir()
@@ -66,6 +66,9 @@ func TestClientCommandsRejectBadSavedAddress(t *testing.T) {
 		"watch":  func() error { return runWatch([]string{"agent", "-wait", "0s"}, &bytes.Buffer{}) },
 		"ui": func() error {
 			return runUI(nil, &bytes.Buffer{}, func(string) error { opened = true; return nil })
+		},
+		"demo": func() error {
+			return runDemo(nil, &bytes.Buffer{}, func(string) error { opened = true; return nil })
 		},
 		"setup": func() error { return runSetup(nil, &bytes.Buffer{}) },
 	} {

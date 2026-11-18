@@ -1487,6 +1487,63 @@ body[data-theme="light"] .provider-openai {
   flex-wrap: wrap;
 }
 
+.share-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.share-btn {
+  min-inline-size: 24px;
+  min-block-size: 30px;
+  font-size: 12.5px;
+  padding: 5px 10px;
+}
+
+.share-btn[data-copied] {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.share-btn[data-failed] {
+  border-color: var(--coral);
+  color: var(--coral);
+}
+
+.share-status {
+  position: absolute;
+  inset-block-end: calc(100% + 6px);
+  inset-inline-end: 0;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--teal);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 20;
+  transition: opacity 0.15s ease;
+}
+
+.share-status.is-visible {
+  opacity: 1;
+}
+
+.share-status.is-error {
+  color: var(--coral);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-status {
+    transition: none;
+  }
+}
+
 .stream-title {
   font-family: var(--font-mono);
   font-size: 18px;

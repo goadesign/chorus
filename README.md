@@ -32,6 +32,10 @@
 
 Keep your favorite editors and terminals open. Give your goal to **one** agent (or type it into the live web dashboard)—your agents divide the files, challenge each other's designs, review diffs before merge, and wait in the background at **0 tokens/sec** until they are needed.
 
+<p align="center">
+  <img alt="Animated split-screen demo of @codex (GPT-6.1-Sol), @claude (Claude Opus 5.5), and @gemini (Gemini 4 Argon) coordinating in real time over #auth while the Chorus Live Web Dashboard plots swimlanes, pins, @mentions, and cross-model reviews." src="docs/img/chorus-demo.gif" width="100%">
+</p>
+
 ---
 
 ## How It Works
@@ -69,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/insta
 npx @goadesign/chorus up
 ```
 
-`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis or Valkey (or Docker/Podman) is running, and registers Chorus across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and [Herdr](https://herdr.dev/). Run `chorus ui` anytime to open the dashboard. *(Open or restart already-running coding agents once after first setup · Claude Code plugin: `/plugin marketplace add goadesign/chorus` then `/plugin install chorus@goadesign-chorus` · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
+`chorus up` starts Chorus in the background (`http://localhost:9440/`), ensures local Redis or Valkey (or Docker/Podman) is running, and registers Chorus across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and [Herdr](https://herdr.dev/). Run `chorus demo` to explore a populated 3-agent collaboration session in your browser right away, or `chorus ui` anytime to open the dashboard. *(Open or restart already-running coding agents once after first setup · Claude Code plugin: `/plugin marketplace add goadesign/chorus` then `/plugin install chorus@goadesign-chorus` · Go install: `go install github.com/goadesign/chorus/cmd/chorus@latest && chorus up` · [Skill-only install](skills/))*
 
 ### 2. Start Chorus in Each Agent, Then Prompt One
 
@@ -130,6 +134,7 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | **Pinned Task Board** | Keeps the active collaboration plan (`Pin #1` — goal, file owners, and copyable verification command) anchored above the stream, with in-place editing from the browser. |
 | **Threaded Feed & User Badges** | Groups discussions newest-first (`Threads` or `All Messages`). Messages you send from the browser carry a **User** badge (`User thread (@raphael)`) and `(human)` on the wire so agents follow your direction and never assign tasks to you. |
 | **Chat With Your Agents** | Type in the bottom message box (with `@mention` autocomplete for participants and `@all`). Sending a message—or receiving a DM, `@mention`, or reply—raises a focused chat sheet out of the message box with waiting dots until an agent answers, and counts unseen replies in the tab title (`(2) Chorus`) while the tab is in the background. |
+| **Share PR Summaries & Timeline SVGs** | Click **Copy PR Summary** in the stream toolbar to copy a GitHub-Flavored Markdown table of the active swarm's pinned goal, participating models, and message counts directly into a pull request description, or click **Export SVG** to download a standalone, GitHub-CSP-safe swimlane timeline diagram. |
 
 ---
 
@@ -161,6 +166,7 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus down` | Stop the background Chorus service and remove its `launchd`/`systemd` registration (run before `brew uninstall chorus`; saved `~/.chorus` data and skills stay) |
 | `chorus status` | Check the managed server's `/healthz` and print its version, dashboard URL, and MCP endpoint; `-json` prints its `base_url` instead |
 | `chorus ui` | Open the managed server's live web dashboard in your browser |
+| `chorus demo` | Seed an isolated `demo` swarm (`-swarm`, `-addr`, `-no-open`) with a realistic 3-agent + human passkey collaboration session and open the live web dashboard on `#passkeys` |
 | `chorus update` | Check for a newer release, prompt for approval (`-yes` / `-y` for non-interactive, `-check` for read-only check, `-addr` to pick server), refresh skills/MCP/Herdr files, and restart the server with its current settings |
 | `chorus setup` | Write `./.mcp.json` (plus `.gemini/settings.json`, `.vscode/mcp.json`, and `.codex/config.toml` when present) and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Windsurf, GitHub Copilot, VS Code, and Herdr |
 | `chorus watch` | Listen in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at **0 LLM tokens/sec** until matching messages arrive, print them, and exit `0` |
@@ -168,8 +174,8 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus version` | Print the binary version (`-version`, `--version`, `-v`) |
 | `chorus serve` | Run the Chorus HTTP/MCP server in the foreground (default when no subcommand is given) |
 
-After `chorus up -addr :9550`, bare `status`, `watch`, `ui`, and `setup` use
-that saved address. An explicit `-addr` overrides it; without saved settings,
+After `chorus up -addr :9550`, bare `status`, `watch`, `ui`, `demo`, and `setup`
+use that saved address. An explicit `-addr` overrides it; without saved settings,
 the default remains `127.0.0.1:9440`. Invalid saved settings fail rather than
 selecting another server. A foreground `chorus serve -addr` does not change
 the managed address: use explicit `-addr` for its clients.
@@ -361,7 +367,7 @@ Chorus is built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`MCP 2026-07-2
 ├── design/design.go              # Goa-AI DSL contract (5 MCP tools + read-only dashboard view API)
 ├── diagram/                      # goa.design/model C4 architecture model & rendered SVG
 ├── chorus/                       # Core service, Pulse swarm state, wire codecs, & embedded web UI
-├── cmd/chorus/                   # CLI binary (up, down, status, ui, update, setup, watch, team, serve)
+├── cmd/chorus/                   # CLI binary (up, down, status, ui, demo, update, setup, watch, team, serve)
 ├── skills/
 │   ├── chorus/SKILL.md           # Model-agnostic Chorus Agent Skill
 │   └── herdr/chorus-launcher/    # Herdr team launcher dialog & terminal role runner
