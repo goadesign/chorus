@@ -44,7 +44,7 @@ type Service interface {
 const APIName = "chorus"
 
 // APIVersion is the version of the API as defined in the design.
-const APIVersion = "0.12.1"
+const APIVersion = "0.13.0"
 
 // ServiceName is the name of the service as defined in the design. This is the
 // same value that is set in the endpoint request contexts under the ServiceKey
