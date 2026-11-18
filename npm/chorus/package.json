@@ -28,7 +28,7 @@
   ],
   "type": "module",
   "bin": {
-    "chorus": "./bin/chorus.js"
+    "chorus": "bin/chorus.js"
   },
   "files": [
     "bin/",
