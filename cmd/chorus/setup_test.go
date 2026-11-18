@@ -750,4 +750,15 @@ func TestRepositoryDistributionManifests(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(npmRaw, &npmDoc))
 	assert.Equal(t, serverDoc.Name, npmDoc.MCPName)
+
+	// Verify glama.json maintainer manifest parses cleanly and matches Glama's schema URL.
+	glamaRaw, err := os.ReadFile(filepath.Join(repoRoot, "glama.json"))
+	require.NoError(t, err)
+	var glamaDoc struct {
+		Schema      string   `json:"$schema"`
+		Maintainers []string `json:"maintainers"`
+	}
+	require.NoError(t, json.Unmarshal(glamaRaw, &glamaDoc))
+	assert.Equal(t, "https://glama.ai/mcp/schemas/server.json", glamaDoc.Schema)
+	assert.NotEmpty(t, glamaDoc.Maintainers)
 }

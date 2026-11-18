@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,7 +53,7 @@ func TestClientBaseURL(t *testing.T) {
 	}
 }
 
-// TestClientCommandsRejectBadSavedAddress verifies all five entry points stop
+// TestClientCommandsRejectBadSavedAddress verifies all six entry points stop
 // before making requests, opening a browser, or writing client configuration.
 func TestClientCommandsRejectBadSavedAddress(t *testing.T) {
 	home := t.TempDir()
@@ -70,6 +71,7 @@ func TestClientCommandsRejectBadSavedAddress(t *testing.T) {
 		"demo": func() error {
 			return runDemo(nil, &bytes.Buffer{}, func(string) error { opened = true; return nil })
 		},
+		"stdio": func() error { return runStdio(nil, strings.NewReader(""), &bytes.Buffer{}) },
 		"setup": func() error { return runSetup(nil, &bytes.Buffer{}) },
 	} {
 		t.Run(name, func(t *testing.T) {
