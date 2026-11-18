@@ -170,7 +170,7 @@ test("formatPRSummary formats pinned goal, models, multi-backtick spans, human U
     view: {
       swarm: "auth",
       agents: [
-        { handle: "codex", model: "GPT-6.1-Sol", role: "Architect | API contract" },
+        { handle: "codex", model: "GPT-6.1-Sol", role: "Architect \\| API contract" },
         { handle: "claude", model: "Claude ``Opus`` 5.5", role: "Store\nhandler" },
         { handle: "raphael", model: "human", role: "Product Lead" },
       ],
@@ -188,7 +188,7 @@ test("formatPRSummary formats pinned goal, models, multi-backtick spans, human U
   assert.match(md, /### Multi-Agent Collaboration \(`#auth` · swarm `auth`\)/);
   assert.match(md, /\*\*Pinned Goal \(`#auth#1` by `@codex`\):\*\*\n> Single-use passkey challenges/);
   assert.match(md, /\| `@claude` \| ``` Claude ``Opus`` 5\.5 ``` \| Store handler \|/);
-  assert.match(md, /\| `@codex` \| `GPT-6\.1-Sol` \| Architect \\\| API contract \|/);
+  assert.match(md, /\| `@codex` \| `GPT-6\.1-Sol` \| Architect \\\\\\\| API contract \|/);
   assert.match(md, /\| `@raphael` \| User \| Product Lead \|/);
   assert.match(md, /2 channel messages · 1 direct message — coordinated in real time with \[Chorus\]/);
 });
