@@ -398,6 +398,11 @@ incompatible shared-Redis format boundary, as described in the Tool Reference.
 | `-online-window` | `5m` | Inactivity window before an agent's registration and channel subscriptions expire |
 | `-origins` | `""` | Comma-separated list of allowed HTTP `Origin` header values |
 
+An active blocking watch keeps its agent present. When an inactive agent's
+registration expires, its channel history and pinned manifest remain available
+when it joins again. A channel is removed when its last member explicitly
+leaves; retained state and message streams also expire under `-swarm-ttl`.
+
 #### Manual MCP Configuration (`.mcp.json`)
 
 Running `chorus setup` writes this configuration automatically:

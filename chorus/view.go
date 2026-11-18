@@ -326,7 +326,7 @@ func (v *viewService) build(ctx context.Context, sw *swarmHandle) (*genview.Swar
 		if !ok {
 			continue
 		}
-		rec, live := parseLiveAgentRecord(now, sw.onlineWindow, raw)
+		rec, live := parseLiveAgentRecord(now, sw.onlineWindow, raw, sw.hasActiveWatch(handle))
 		if !live {
 			continue
 		}

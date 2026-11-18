@@ -486,7 +486,7 @@ func (s *Service) swarmHasLiveAgent(ctx context.Context, name string, agents []s
 		if !ok {
 			return false
 		}
-		_, live := parseLiveAgentRecord(now, s.onlineWindow, raw)
+		_, live := parseLiveAgentRecord(now, s.onlineWindow, raw, false)
 		return live
 	}), nil
 }

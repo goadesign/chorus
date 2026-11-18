@@ -138,10 +138,7 @@ func (s *swarmHandle) isLiveAgent(agent string) bool {
 	if !ok {
 		return false
 	}
-	if s.hasActiveWatch(agent) {
-		return true
-	}
-	_, live := parseLiveAgentRecord(s.clock(), s.onlineWindow, raw)
+	_, live := parseLiveAgentRecord(s.clock(), s.onlineWindow, raw, s.hasActiveWatch(agent))
 	return live
 }
 
@@ -155,11 +152,7 @@ func (s *swarmHandle) liveAgents() []string {
 			continue
 		}
 		handle := strings.TrimPrefix(k, prefixAgent)
-		if s.hasActiveWatch(handle) {
-			handles = append(handles, handle)
-			continue
-		}
-		if _, live := parseLiveAgentRecord(now, s.onlineWindow, v); live {
+		if _, live := parseLiveAgentRecord(now, s.onlineWindow, v, s.hasActiveWatch(handle)); live {
 			handles = append(handles, handle)
 		}
 	}
@@ -300,7 +293,7 @@ func (s *swarmHandle) directory(ctx context.Context, caller, role, model string)
 	}
 	snap := s.state.Map()
 	subs, _ := s.state.GetValues(subMapKey(caller))
-	return formatDirectory(caller, now, s.onlineWindow, snap, subs), nil
+	return formatDirectory(caller, s.liveAgents(), snap, subs), nil
 }
 
 // joinChannels subscribes agent to one or more channels, creating any that do
@@ -401,7 +394,8 @@ func (s *swarmHandle) channelSubscriptions(snap map[string]string, now time.Time
 			continue
 		}
 		handle := strings.TrimPrefix(k, prefixSub)
-		if _, live := parseLiveAgentRecord(now, s.onlineWindow, snap[agentMapKey(handle)]); !live {
+		_, live := parseLiveAgentRecord(now, s.onlineWindow, snap[agentMapKey(handle)], s.hasActiveWatch(handle))
+		if !live {
 			continue
 		}
 		subs, _ := s.state.GetValues(k)
@@ -414,8 +408,8 @@ func (s *swarmHandle) channelSubscriptions(snap map[string]string, now time.Time
 
 // reapExpiredAgents removes agent records, channel subscriptions, and channel
 // read cursors for any agent whose LastSeenUnix is older than onlineWindow
-// (preserving direct-message cursors alongside retained DM streams), and
-// purges any channels left with zero live subscribers.
+// (preserving direct-message cursors alongside retained DM streams).
+// Registration expiry never removes channel history or pins.
 func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (bool, error) {
 	snap := s.state.Map()
 	var expired []string
@@ -424,10 +418,7 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 			continue
 		}
 		handle := strings.TrimPrefix(k, prefixAgent)
-		if s.hasActiveWatch(handle) {
-			continue
-		}
-		if _, live := parseLiveAgentRecord(now, s.onlineWindow, v); !live {
+		if _, live := parseLiveAgentRecord(now, s.onlineWindow, v, s.hasActiveWatch(handle)); !live {
 			expired = append(expired, handle)
 		}
 	}
@@ -435,14 +426,9 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 		return false, nil
 	}
 
-	subsByAgent := s.channelSubscriptions(snap, now)
-	var candidateChannels []string
 	for _, handle := range expired {
 		oldSubs, _ := s.state.GetValues(subMapKey(handle))
 		for _, ch := range oldSubs {
-			if !slices.Contains(candidateChannels, ch) {
-				candidateChannels = append(candidateChannels, ch)
-			}
 			if _, err := s.state.Delete(ctx, cursorMapKey(handle, ch)); err != nil {
 				return false, fmt.Errorf("delete expired cursor for %s: %w", ch, err)
 			}
@@ -460,13 +446,6 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
 		}
 		_ = s.rdb.HDel(ctx, agentSwarmHashKey, handle).Err()
-	}
-	for _, ch := range candidateChannels {
-		if !hasChannelSubscribers(ch, subsByAgent) {
-			if err := s.purgeChannel(ctx, ch, snap); err != nil {
-				return false, err
-			}
-		}
 	}
 	return true, nil
 }
