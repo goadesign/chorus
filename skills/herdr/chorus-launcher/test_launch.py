@@ -234,18 +234,22 @@ class LaunchTests(unittest.TestCase):
 
     def test_client_yolo_thinking_and_model_arguments_precede_interactive_prompt(self):
         cases = [
-            ("claude", "claude-opus-5-5", "high", ["claude", "--model", "claude-opus-5-5", "--effort", "high", "--dangerously-skip-permissions"]),
-            ("codex", "gpt-6.1-sol", "xhigh", ["codex", "--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="xhigh"', "--dangerously-bypass-approvals-and-sandbox"]),
-            ("antigravity", "gemini-4-argon", "high", ["antigravity", "--model", "gemini-4-argon", "--effort", "high", "--dangerously-skip-permissions", "--prompt-interactive"]),
-            ("cursor", "claude-opus-5-5-max", "max", ["cursor", "--model", "claude-opus-5-5-max", "--yolo"]),
-            ("gemini", "gemini-model", None, ["gemini", "--model", "gemini-model", "--yolo", "--prompt-interactive"]),
+            ("claude", "claude-opus-5-5", "high", None, ["claude", "--model", "claude-opus-5-5", "--effort", "high", "--dangerously-skip-permissions"]),
+            ("codex", "gpt-6.1-sol", "xhigh", "gpt-6.1-sol", ["codex", "--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="xhigh"', "--dangerously-bypass-approvals-and-sandbox"]),
+            ("antigravity", "gemini-4-argon", "high", "gemini-4-argon-high", ["antigravity", "--model", "gemini-4-argon", "--effort", "high", "--dangerously-skip-permissions", "--prompt-interactive"]),
+            ("cursor", "claude-opus-5-5-max", "max", "claude-opus-5-5-max", ["cursor", "--model", "claude-opus-5-5-max", "--yolo"]),
+            ("gemini", "gemini-model", None, "gemini-model", ["gemini", "--model", "gemini-model", "--yolo", "--prompt-interactive"]),
         ]
-        for key, model, thinking, prefix in cases:
+        for key, model, thinking, reported, prefix in cases:
             with self.subTest(client=key):
                 agent = {"key": key, "name": key, "run": [key], "model": model, "thinking": thinking, "yolo": True}
                 argv = launch.initial_argv(agent, "/project", "team")
                 self.assertEqual(argv[:-1], prefix)
                 self.assertIn("Use the installed chorus skill", argv[-1])
+                if reported is None:
+                    self.assertIn("Determine and report your exact active model according to the chorus skill when joining", argv[-1])
+                else:
+                    self.assertIn(f"Report model {reported!r} when joining", argv[-1])
                 agent.update(model=None, thinking=None, yolo=False)
                 argv = launch.initial_argv(agent, "/project", "team")
                 self.assertNotIn("--model", argv)
@@ -254,6 +258,35 @@ class LaunchTests(unittest.TestCase):
                 self.assertNotIn("--trust", argv)
                 self.assertNotIn("--approve-mcps", argv)
                 self.assertNotIn("--sandbox", argv)
+                self.assertIn("Determine and report your exact active model according to the chorus skill when joining", argv[-1])
+        for client_key in ("claude", "cursor"):
+            for alias in ("fable", "opus", "sonnet", "haiku", "opus[1m]", "sonnet[1m]", "opusplan", "best", "auto", "default"):
+                with self.subTest(client=client_key, alias=alias):
+                    argv = launch.initial_argv({"key": client_key, "name": client_key, "run": [client_key], "model": alias, "thinking": None, "yolo": False}, "/project", "team")
+                    self.assertEqual(argv[:3], [client_key, "--model", alias])
+                    self.assertIn("Determine and report your exact active model according to the chorus skill when joining", argv[-1])
+        param_cursor = "claude-opus-4-8[context=1m,effort=high,fast=false]"
+        argv = launch.initial_argv({"key": "cursor", "name": "Cursor", "run": ["cursor"], "model": param_cursor, "thinking": None, "yolo": False}, "/project", "team")
+        self.assertEqual(argv[:3], ["cursor", "--model", param_cursor])
+        self.assertIn(f"Report model {param_cursor!r} when joining", argv[-1])
+
+        argv_suffixed = launch.initial_argv({"key": "antigravity", "name": "Antigravity", "run": ["agy"], "model": "gemini-4-argon-low", "thinking": None, "yolo": False}, "/project", "team")
+        self.assertEqual(argv_suffixed[:-1], ["agy", "--model", "gemini-4-argon-low", "--prompt-interactive"])
+        self.assertIn("Report model 'gemini-4-argon-low' when joining", argv_suffixed[-1])
+
+        for unsuffixed in ("gemini-4-argon", "gemini-pro-orchestrator"):
+            with self.subTest(agy_unsuffixed_no_effort=unsuffixed):
+                argv_base = launch.initial_argv({"key": "antigravity", "name": "Antigravity", "run": ["agy"], "model": unsuffixed, "thinking": None, "yolo": False}, "/project", "team")
+                self.assertEqual(argv_base[:-1], ["agy", "--model", unsuffixed, "--prompt-interactive"])
+                self.assertIn(f"launched with --model {unsuffixed!r} (no --effort flag): resolve {unsuffixed!r} against 'agy models'", argv_base[-1])
+                self.assertNotIn(f"Report model {unsuffixed!r} when joining", argv_base[-1])
+
+        for effort, label in (("low", "Low"), ("xhigh", "XHigh")):
+            with self.subTest(agy_default_effort=effort):
+                argv = launch.initial_argv({"key": "antigravity", "name": "Antigravity", "run": ["agy"], "model": None, "thinking": effort, "yolo": False}, "/project", "team")
+                self.assertEqual(argv[:-1], ["agy", "--effort", effort, "--prompt-interactive"])
+                self.assertIn(f"launched with --effort {effort!r} on your default model", argv[-1])
+                self.assertIn(f"'({label})'", argv[-1])
 
     def test_inspect_preserves_legacy_and_two_field_panes_without_inventing_thinking(self):
         owner, payload = Herdr(), request()
@@ -520,10 +553,13 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual(creations[2][1]["direction"], "down")
             self.assertEqual(creations[2][1]["argv"][4], str(tester_dir))
             self.assertIn("using handle 'guide' and role 'Guide'", creations[0][1]["argv"][-1])
+            self.assertIn("Determine and report your exact active model according to the chorus skill when joining", creations[0][1]["argv"][-1])
             self.assertIn("Shape the change with the user.", creations[0][1]["argv"][-1])
             self.assertIn("using handle 'builder' and role 'Builder'", creations[1][1]["argv"][-1])
+            self.assertIn("Report model 'gpt-6.1-sol' when joining", creations[1][1]["argv"][-1])
             self.assertIn("Implement the assigned package.", creations[1][1]["argv"][-1])
             self.assertIn("using handle 'test-writer' and role 'Test writer'", creations[2][1]["argv"][-1])
+            self.assertIn("Report model 'gemini-4-argon-high' when joining", creations[2][1]["argv"][-1])
             self.assertIn("Write acceptance tests from the contract.", creations[2][1]["argv"][-1])
             self.assertEqual(
                 [(t["labels"]["chorus.handle"], t["labels"]["chorus.role"]) for t in owner.terminals],

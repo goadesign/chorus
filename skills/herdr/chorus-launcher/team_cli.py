@@ -66,7 +66,7 @@ def check_options(agent: dict, root: str, execute) -> None:
     thinking = agent["thinking"]
     if thinking is not None:
         entry = next((m for m in details["models"] if m["id"] == agent["model"]), None)
-        levels = entry.get("efforts", details["efforts"]) if entry else details["efforts"]
+        levels = entry.get("efforts", [] if agent["key"] == "antigravity" else details["efforts"]) if entry else details["efforts"]
         if not details["thinking_supported"] or thinking not in levels or agent["key"] == "cursor":
             raise ValueError(f"Thinking level {thinking!r} is unavailable for {agent['name']!r} and this model.")
 

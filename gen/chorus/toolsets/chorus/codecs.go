@@ -166,7 +166,7 @@ var joinPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
 		JSONType:    "string",
-		Description: "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.",
+		Description: "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.",
 	},
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("tail")},
@@ -281,7 +281,7 @@ var whoPayloadFields = []tools.FieldMetadata{
 	{
 		Path:        []tools.FieldPathSegment{tools.FixedField("model")},
 		JSONType:    "string",
-		Description: "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.",
+		Description: "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.",
 	},
 }
 
@@ -1039,7 +1039,7 @@ func validateWhoPayloadJSONValue(path string, value any, description string) err
 		case "model":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.",
+				typed[key], "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.",
 			); err != nil {
 				return err
 			}
@@ -1122,7 +1122,7 @@ func validateJoinPayloadJSONValue(path string, value any, description string) er
 		case "model":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.",
+				typed[key], "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.",
 			); err != nil {
 				return err
 			}

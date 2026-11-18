@@ -431,6 +431,20 @@ test('thinking selector adapts across Claude, Codex, Antigravity, and Cursor mod
   assert.equal(agyRow.thinking, null);
   assert.equal(h.view.ready(), true);
 
+  // Antigravity: single-variant catalog entry without efforts (e.g. Orchestrator) clears and disables Thinking.
+  h.view.agents[2].details.models.push({ id: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' });
+  agyRow.custom = false;
+  agyRow.model = 'gemini-4-argon';
+  agyRow.thinking = 'low';
+  h.render();
+  agyRow.modelPicker.index = 3; // gemini-pro-orchestrator (after App default, gemini-4-argon, gpt-oss-120b)
+  h.click(`${agyRow.id}-model`, 'on_confirm');
+  assert.equal(agyRow.model, 'gemini-pro-orchestrator');
+  assert.equal(agyRow.thinking, null);
+  h.render();
+  assert.equal(h.controls.get(`${agyRow.id}-thinking`).disabled[0], true);
+  assert.equal(h.view.ready(), true);
+
   // Claude: explicit thinking level is preserved alongside model selection.
   h.render();
   claudeRow.thinkingPicker.index = 3; // high
@@ -532,6 +546,26 @@ test('per-repository preferences persist across reopenings without affecting oth
   agyReopened.view.rows[1].thinking = 'ultra';
   assert.equal(agyReopened.view.ready(), false);
   assert.match(agyReopened.view.blockingReason(), /Unavailable|unavailable/);
+
+  // Reopening saved preferences with a single-variant Antigravity model + stale thinking keeps Thinking enabled so the user can clear it.
+  sharedStore['chorus-launcher.repo:/repos/delta'] = {
+    swarm: 'delta',
+    rows: [{ key: 'antigravity', yolo: false, model: 'gemini-pro-orchestrator', thinking: 'high' }],
+  };
+  const agyStale = harness({ agents: DEFAULT_AGENTS, root: '/repos/delta', sharedStore });
+  await agyStale.settle();
+  agyStale.view.agents[2].details.models.push({ id: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' });
+  assert.equal(agyStale.view.ready(), false);
+  assert.match(agyStale.view.blockingReason(), /unavailable/);
+  agyStale.render();
+  const staleRow = agyStale.view.rows[0];
+  assert.equal(agyStale.controls.get(`${staleRow.id}-thinking`).disabled[0], false);
+  staleRow.thinkingPicker.index = 0; // Set by model (clears stale thinking)
+  agyStale.click(`${staleRow.id}-thinking`, 'on_confirm');
+  assert.equal(staleRow.thinking, null);
+  assert.equal(agyStale.view.ready(), true);
+  agyStale.render();
+  assert.equal(agyStale.controls.get(`${staleRow.id}-thinking`).disabled[0], true);
 });
 
 test('adding all preserves edited rows and fills only missing client apps', async () => {

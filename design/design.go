@@ -84,7 +84,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.", func() {
+			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
@@ -135,7 +135,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The model you are running (for example 'Claude Opus 5.5'; a person joining from the dashboard uses 'human'). Report your own model from your runtime or system prompt—never copy the example from this prompt or invent a version.", func() {
+			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)

@@ -332,7 +332,9 @@ export default class ChorusLauncher extends View {
   syncThinking(row, details) {
     if (!row.chosenThinking) return;
     const levels = this.thinkingLevels(row, details);
-    if ((row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) || (levels.length > 0 && !levels.includes(row.chosenThinking))) {
+    const entry = !row.custom ? this.modelEntry(row, details) : null;
+    if ((row.key === "antigravity" && ((row.model && AGY_SUFFIX.test(row.model)) || (entry && !entry.efforts)))
+      || (levels.length > 0 && !levels.includes(row.chosenThinking))) {
       row.chosenThinking = null;
     }
   }
@@ -347,15 +349,15 @@ export default class ChorusLauncher extends View {
   thinkingLevels(row, details) {
     const entry = !row.custom ? this.modelEntry(row, details) : null;
     if (row.key === "cursor") return entry?.efforts ?? [];
-    if (row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) return [];
+    if (row.key === "antigravity" && ((row.model && AGY_SUFFIX.test(row.model)) || (entry && !entry.efforts))) return [];
     return entry?.efforts?.length ? entry.efforts : details?.thinking_supported ? (details.efforts ?? []) : [];
   }
 
   // Compute valid thinking choices for the row's current client and model.
   thinkingConfig(row, details) {
     const levels = this.thinkingLevels(row, details);
+    const entry = !row.custom ? this.modelEntry(row, details) : null;
     if (row.key === "cursor") {
-      const entry = !row.custom ? this.modelEntry(row, details) : null;
       if (levels.length && entry?.variants) {
         const value = Object.entries(entry.variants).find(([, slug]) => slug === row.model)?.[0] ?? "";
         return { options: levels.map(id => ({ id, name: THINKING_NAMES[id] ?? id })), enabled: true, value };
@@ -363,10 +365,11 @@ export default class ChorusLauncher extends View {
       const label = !details ? "Checking…" : row.model ? "Set by model" : "App default";
       return { options: [{ id: "", name: label }], enabled: false, value: "" };
     }
-    if (row.key === "antigravity" && row.model && AGY_SUFFIX.test(row.model)) {
+    const setByAgyModel = row.key === "antigravity" && ((row.model && AGY_SUFFIX.test(row.model)) || Boolean(entry && !entry.efforts));
+    if (setByAgyModel && !row.thinking) {
       return { options: [{ id: "", name: "Set by model" }], enabled: false, value: "" };
     }
-    const options = [{ id: "", name: !details ? "Checking…" : levels.length ? "App default" : "Set by client" },
+    const options = [{ id: "", name: !details ? "Checking…" : levels.length ? "App default" : (setByAgyModel ? "Set by model" : "Set by client") },
       ...levels.map(id => ({ id, name: THINKING_NAMES[id] ?? id }))];
     if (row.thinking && !options.some(option => option.id === row.thinking)) {
       options.push({ id: row.thinking, name: `${THINKING_NAMES[row.thinking] ?? row.thinking} (selected)` });

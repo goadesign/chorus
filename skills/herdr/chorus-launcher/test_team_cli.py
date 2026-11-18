@@ -78,6 +78,25 @@ class TeamCommandTests(unittest.TestCase):
                 self.start(choices)
             self.assertEqual(self.owner.commands, [])
 
+        # Single-variant Antigravity models without effort variants reject separate thinking flags.
+        no_conn_roster = copy.deepcopy(self.roster)
+        no_conn_roster["roles"][0]["connections"] = []
+        launch.roster_path(self.home, "sp1").write_text(json.dumps(no_conn_roster))
+        agy_exec = lambda argv: (
+            "--model --effort (low|medium|high) --dangerously-skip-permissions"
+            if argv[-1] == "--help"
+            else "gemini-pro-orchestrator\tOrchestrator (Carbon)\n"
+        )
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            team_cli.start(
+                {"space": "sp1", "choices": {"guide": {"client": "antigravity", "program": "agy", "model": "gemini-pro-orchestrator", "thinking": "high", "yolo": False}}},
+                self.owner.app,
+                self.owner.core,
+                self.home,
+                agy_exec,
+            )
+        self.assertEqual(self.owner.commands, [])
+
     def test_missing_program_and_unadvertised_flags_refuse_before_creation(self):
         def unavailable(_argv):
             raise RuntimeError("command not found")

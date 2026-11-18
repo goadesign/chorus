@@ -821,4 +821,11 @@ func TestStatusAndVersion(t *testing.T) {
 	if !bytes.Equal(repoSkill, skills.ChorusSkillMD) {
 		t.Fatal(".agents/skills/chorus/SKILL.md and skills/chorus/SKILL.md are out of sync")
 	}
+	skillText := string(repoSkill)
+	if !strings.Contains(skillText, `"type":"turn_context"`) || strings.Contains(skillText, `"type": "turn_context"`) {
+		t.Fatal("SKILL.md must match compact Codex rollout JSON (\"type\":\"turn_context\") without space")
+	}
+	if !strings.Contains(skillText, `${CODEX_HOME:-$HOME/.codex}`) || strings.Contains(skillText, `${CODEX_HOME:-~`) {
+		t.Fatal("SKILL.md must use ${CODEX_HOME:-$HOME/.codex} rather than unexpanded tilde inside parameter expansion")
+	}
 }
