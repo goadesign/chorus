@@ -18,7 +18,7 @@ func clientBaseURL(fs *flag.FlagSet, addr string) (string, error) {
 		}
 	})
 	if explicit {
-		return localBaseURL(addr), nil
+		return localBaseURL(addr)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -32,5 +32,5 @@ func clientBaseURL(fs *flag.FlagSet, addr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return localBaseURL(cfg.addr), nil
+	return localBaseURL(cfg.addr)
 }

@@ -212,7 +212,8 @@ func TestWriteEndpoints(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.addr, func(t *testing.T) {
 			var out bytes.Buffer
-			baseURL := localBaseURL(tc.addr)
+			baseURL, err := localBaseURL(tc.addr)
+			require.NoError(t, err)
 			writeEndpoints(&out, "1.2.3", baseURL)
 			assert.Equal(t, "Chorus v1.2.3 is running\n  Dashboard: "+tc.wantDashboard+"\n  MCP:       "+baseURL+"/mcp\n", out.String())
 		})

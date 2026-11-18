@@ -600,19 +600,23 @@ func TestServeRestartsInPlace(t *testing.T) {
 		err    error
 	}
 	start := func(addr, exe string) chan served {
+		baseURL, err := localBaseURL(addr)
+		require.NoError(t, err)
 		done := make(chan served, 1)
 		go func() {
 			target, err := runServe([]string{"-addr", addr, "-redis-addr", redisAddr}, releases, exe)
 			done <- served{target: target, err: err}
 		}()
 		require.Eventually(t, func() bool {
-			ok, _ := probeServer(localBaseURL(addr))
+			ok, _ := probeServer(baseURL)
 			return ok
 		}, 15*time.Second, 50*time.Millisecond)
 		return done
 	}
 	update := func(addr string) int {
-		resp, err := http.Post(localBaseURL(addr)+"/update", "application/json", strings.NewReader(fmt.Sprintf(`{"version":%q}`, next)))
+		baseURL, err := localBaseURL(addr)
+		require.NoError(t, err)
+		resp, err := http.Post(baseURL+"/update", "application/json", strings.NewReader(fmt.Sprintf(`{"version":%q}`, next)))
 		require.NoError(t, err)
 		assert.NoError(t, resp.Body.Close())
 		return resp.StatusCode
@@ -638,9 +642,13 @@ func TestServeRestartsInPlace(t *testing.T) {
 		t.Fatal("server A did not shut down for its restart")
 	}
 	assert.Equal(t, next, binaryVersion(context.Background(), exeA))
-	upA, _ := probeServer(localBaseURL(addrA))
+	baseURLA, err := localBaseURL(addrA)
+	require.NoError(t, err)
+	upA, _ := probeServer(baseURLA)
 	assert.False(t, upA, "server A stopped listening before its restart")
-	upB, versionB := probeServer(localBaseURL(addrB))
+	baseURLB, err := localBaseURL(addrB)
+	require.NoError(t, err)
+	upB, versionB := probeServer(baseURLB)
 	assert.True(t, upB, "updating server A must not stop server B")
 	assert.Equal(t, current, versionB)
 	assert.Equal(t, fakeChorusBinary(current), mustReadFile(t, exeB))

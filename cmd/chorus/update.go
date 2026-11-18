@@ -247,7 +247,10 @@ func runUpdate(args []string, in io.Reader, out io.Writer, releases releaseSourc
 	if err != nil {
 		return err
 	}
-	baseURL := localBaseURL(cfg.addr)
+	baseURL, err := localBaseURL(cfg.addr)
+	if err != nil {
+		return err
+	}
 
 	running, serverVersion := probeServer(baseURL)
 	var rel release
@@ -364,7 +367,10 @@ func installAndSetUp(ctx context.Context, out io.Writer, addr string, install fu
 // Redis password and flags are unknown here, so stopping it could leave
 // nothing running.
 func updateServer(ctx context.Context, out io.Writer, addr, serverVersion, version string, install func() (string, func() error, error)) error {
-	baseURL := localBaseURL(addr)
+	baseURL, err := localBaseURL(addr)
+	if err != nil {
+		return err
+	}
 	body, err := json.Marshal(updateRequest{Version: version})
 	if err != nil {
 		return fmt.Errorf("encode update request: %w", err)

@@ -24,6 +24,8 @@ func TestClientBaseURL(t *testing.T) {
 		{name: "explicit default wins", saved: `["-addr",":9550"]`, args: []string{"-addr", defaultListenAddr}, want: "http://localhost:9440"},
 		{name: "explicit bypasses invalid saved settings", saved: `{`, args: []string{"-addr", ":9660"}, want: "http://localhost:9660"},
 		{name: "invalid flags", saved: `["-unknown"]`, wantErr: "flag provided but not defined"},
+		{name: "invalid saved address", saved: `["-addr","bad"]`, wantErr: "parse Chorus listen address"},
+		{name: "invalid explicit address", args: []string{"-addr", "bad"}, wantErr: "parse Chorus listen address"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()

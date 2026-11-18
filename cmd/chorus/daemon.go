@@ -94,7 +94,10 @@ func runUp(args []string, out io.Writer) error {
 		return err
 	}
 
-	baseURL := localBaseURL(cfg.addr)
+	baseURL, err := localBaseURL(cfg.addr)
+	if err != nil {
+		return err
+	}
 	if os.Getenv("CHORUS_NO_SETUP") != "1" {
 		if err := setupForUp(homeDir, baseURL+"/mcp", out); err != nil {
 			return err
@@ -795,16 +798,20 @@ func callWatchRead(
 }
 
 // localBaseURL normalizes a listen address (such as ":9440" or "127.0.0.1:9440")
-// into an HTTP base URL ("http://localhost:9440").
-func localBaseURL(addr string) string {
+// into an HTTP base URL ("http://localhost:9440"). An address without a host/port
+// separator or port is an error; it never selects another server instead.
+func localBaseURL(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
-	if err != nil || port == "" {
-		return "http://localhost:9440"
+	if err != nil {
+		return "", fmt.Errorf("parse Chorus listen address: %w", err)
+	}
+	if port == "" {
+		return "", errors.New("Chorus listen address requires a port")
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "127.0.0.1" || host == "::1" {
 		host = "localhost"
 	}
-	return fmt.Sprintf("http://%s:%s", host, port)
+	return "http://" + net.JoinHostPort(host, port), nil
 }
 
 // probeServer queries GET <baseURL>/healthz and returns whether the server
