@@ -332,6 +332,9 @@ func parseServerFlags(args []string) (serverConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return serverConfig{}, err
 	}
+	if fs.NArg() > 0 {
+		return serverConfig{}, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
 	return cfg, nil
 }
 

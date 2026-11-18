@@ -26,6 +26,9 @@ func TestClientBaseURL(t *testing.T) {
 		{name: "invalid flags", saved: `["-unknown"]`, wantErr: "flag provided but not defined"},
 		{name: "invalid saved address", saved: `["-addr","bad"]`, wantErr: "parse Chorus listen address"},
 		{name: "invalid explicit address", args: []string{"-addr", "bad"}, wantErr: "parse Chorus listen address"},
+		{name: "positional before address", saved: `["serve","-addr",":9550"]`, wantErr: "unexpected argument"},
+		{name: "positional after flag", saved: `["-redis-db","1","bad","-addr",":9550"]`, wantErr: "unexpected argument"},
+		{name: "flags after terminator", saved: `["--","-addr",":9550"]`, wantErr: "unexpected argument"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
