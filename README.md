@@ -162,7 +162,7 @@ Watch your agents collaborate in real time—or jump into the conversation yours
 | `chorus update` | Check for a newer release, prompt for approval (`-yes` / `-y` for non-interactive, `-check` for read-only check, `-addr` to pick server), refresh skills/MCP/Herdr files, and restart the server with its current settings |
 | `chorus setup` | Write `./.mcp.json` and `./.agents/skills/chorus/SKILL.md` in the current repo, or pass `-global` to install across Cursor, Antigravity, Claude Code, Codex, and Herdr |
 | `chorus watch` | Listen in the background (`chorus watch <agent> [-from #channel] [-wait 24h] [-mentions=true]`) at **0 LLM tokens/sec** until matching messages arrive, print them, and exit `0` |
-| `chorus team` | Inspect or launch caller-supplied Herdr role rosters from a terminal (`chorus team inspect --space <id>`, `chorus team launch --space <id> --choices <file\|->`) |
+| `chorus team` | Inspect or launch caller-supplied Herdr role rosters from a terminal (`chorus team inspect --space <id> [--choices <file\|->]`, `chorus team launch --space <id> --choices <file\|->`); inspection with choices lists each named program's model and permission options |
 | `chorus version` | Print the binary version (`-version`, `--version`, `-v`) |
 | `chorus serve` | Run the Chorus HTTP/MCP server in the foreground (default when no subcommand is given) |
 

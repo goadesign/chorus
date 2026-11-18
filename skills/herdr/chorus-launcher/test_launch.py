@@ -373,6 +373,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(codex_info["efforts"], ["low", "high", "ultra"])
         self.assertEqual(codex_info["models"][0]["efforts"], ["low", "high", "ultra"])
         self.assertEqual(codex_info["models"][1]["efforts"], ["low", "high"])
+        self.assertIn("command sandboxing", codex_info["yolo_effect"])
 
         claude_help = (
             "  --model <model>                       Model for the current session\n"
@@ -388,6 +389,8 @@ class LaunchTests(unittest.TestCase):
                                   lambda _argv: "  --model <m>\n  --effort <level> Effort without choices\n  --input-format (text, stream-json)")
         self.assertFalse(no_list["thinking_supported"])
         self.assertEqual(no_list["efforts"], [])
+        self.assertIsNone(no_list["yolo_flag"])
+        self.assertIn("unavailable", no_list["yolo_effect"])
 
         agy_help = (
             "  --dangerously-skip-permissions  Auto-approve\n"

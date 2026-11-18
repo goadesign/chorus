@@ -25,12 +25,12 @@ Command = Callable[[list[str]], object]
 
 # These are client flags, not model names. Unknown clients keep their own settings.
 CLIENTS = {
-    "claude": {"yolo": "--dangerously-skip-permissions", "thinking": "--effort", "prompt": []},
-    "codex": {"yolo": "--dangerously-bypass-approvals-and-sandbox", "thinking": "-c", "prompt": []},
-    "antigravity": {"yolo": "--dangerously-skip-permissions", "thinking": "--effort", "prompt": ["--prompt-interactive"]},
-    "cursor": {"yolo": "--yolo", "thinking": None, "prompt": []},
-    "gemini": {"yolo": "--yolo", "thinking": None, "prompt": ["--prompt-interactive"]},
-    "opencode": {"yolo": None, "thinking": None, "prompt": ["--prompt"]},
+    "claude": {"yolo": "--dangerously-skip-permissions", "yolo_effect": "Bypasses tool permission checks.", "thinking": "--effort", "prompt": []},
+    "codex": {"yolo": "--dangerously-bypass-approvals-and-sandbox", "yolo_effect": "Disables approval prompts and command sandboxing.", "thinking": "-c", "prompt": []},
+    "antigravity": {"yolo": "--dangerously-skip-permissions", "yolo_effect": "Auto-approves tool permission requests.", "thinking": "--effort", "prompt": ["--prompt-interactive"]},
+    "cursor": {"yolo": "--yolo", "yolo_effect": "Allows commands unless explicitly denied; keeps the sandbox setting.", "thinking": None, "prompt": []},
+    "gemini": {"yolo": "--yolo", "yolo_effect": "Auto-approves all tool calls; Gemini CLI controls sandbox behavior.", "thinking": None, "prompt": ["--prompt-interactive"]},
+    "opencode": {"yolo": None, "yolo_effect": "YOLO is unavailable; uses client permission settings.", "thinking": None, "prompt": ["--prompt"]},
 }
 
 # Only clients with verified per-process additive MCP flags may take role connections.
@@ -373,6 +373,7 @@ def discover(agent: dict, cli: Callable[[list[str]], str]) -> dict:
         "thinking_supported": False,
         "efforts": [],
         "yolo_flag": None,
+        "yolo_effect": "YOLO is unavailable; uses client permission settings.",
         "note": "",
         "error": False,
     }
@@ -387,6 +388,7 @@ def discover(agent: dict, cli: Callable[[list[str]], str]) -> dict:
     flag = CLIENTS.get(key, {}).get("yolo")
     if flag and re.search(r"(?<![\w-])" + re.escape(flag) + r"(?![\w-])", help_text):
         result["yolo_flag"] = flag
+        result["yolo_effect"] = CLIENTS[key]["yolo_effect"]
     if not result["model_supported"]:
         result["note"] = "This client uses its configured model; no supported --model flag was found."
     elif key == "claude":
@@ -738,6 +740,7 @@ def team_rows(owned: list[dict]) -> list[dict]:
             "model": options["model"] if options else None,
             "thinking": options.get("thinking") if options else None,
             "yolo": options["yolo"] if options else None,
+            "yolo_effect": CLIENTS.get(labels["chorus.agent"], {}).get("yolo_effect", "YOLO effect is not recorded for this client."),
         }
         if "chorus.handle" in labels:
             row["handle"] = labels["chorus.handle"]
@@ -774,6 +777,7 @@ def roster_rows(roster: dict, owned: list[dict]) -> list[dict]:
             "model": live["model"] if live else None,
             "thinking": live["thinking"] if live else None,
             "yolo": live["yolo"] if live else None,
+            "yolo_effect": live["yolo_effect"] if live else "",
         })
     return rows
 
@@ -1043,7 +1047,7 @@ def main() -> int:
         app, core = lambda args: call("herdr-app", args), lambda args: call("herdr-core", args)
         if action == "team-inspect":
             import team_cli
-            print(json.dumps(team_cli.inspect(request, app, core, app_home)))
+            print(json.dumps(team_cli.inspect(request, app, core, app_home, execute)))
             return 0
         if action == "inspect":
             print(json.dumps(inspect_team(request, app, core, app_home)))

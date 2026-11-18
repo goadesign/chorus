@@ -73,13 +73,18 @@ function harness({ initial = [], roster = null, agents = DEFAULT_AGENTS.slice(0,
   const closed = [];
   const notices = [];
   const execCalls = [];
+  const texts = [];
   function element(id) {
     const data = {};
     const el = new Proxy(data, { get(target, key) {
       if (key === 'when') return (condition, branch) => condition ? branch(el) : el;
       if (key === 'id') return value => { controls.set(value, data); return el; };
       if (key === 'role') return value => { assert.ok(roles.has(value), `Unsupported native accessibility role: ${value}`); return el; };
-      return (...args) => { data[key] = args; return el; };
+      return (...args) => {
+        if (key === 'child' && typeof args[0] === 'string') texts.push(args[0]);
+        data[key] = args;
+        return el;
+      };
     } });
     if (id) controls.set(id, data);
     return el;
@@ -119,7 +124,7 @@ function harness({ initial = [], roster = null, agents = DEFAULT_AGENTS.slice(0,
       if (roster) return { roster: true, root: roster.root, swarm: roster.swarm, tab: roster.tab ?? null, rows: saved, session: 'session' };
       return { rows: saved, session: 'session', tab: saved.length ? 'tab' : null, swarm: saved.length ? 'project' : null };
     }
-    if (action === 'models') return catalogFor(request.key);
+    if (action === 'models') return { ...catalogFor(request.key), yolo_effect: `Discovered permission effect for ${request.key}.` };
     launches.push(JSON.parse(JSON.stringify(request)));
     let created = 0;
     for (const row of request.agents) {
@@ -135,11 +140,11 @@ function harness({ initial = [], roster = null, agents = DEFAULT_AGENTS.slice(0,
     return { created, reused: request.agents.length - created };
   };
   view.init({}, cx);
-  return { view, cx, controls, launches, focus, scrolls, closed, notices, sharedStore, execCalls,
+  return { view, cx, controls, launches, focus, scrolls, closed, notices, sharedStore, execCalls, texts,
     get inspects() { return inspects; },
     async settle() { while (tasks.length) await tasks.shift(); },
     partialAfter(count) { failAfter = count; },
-    render() { view.render(cx); },
+    render() { texts.length = 0; view.render(cx); },
     click(id, event = 'on_click', value = {}) { controls.get(id)[event][0](value, cx); } };
 }
 
@@ -605,6 +610,19 @@ test('apply YOLO to all affects only supported new panes and never existing sett
   h.render();
   h.click('chorus-yolo-all');
   assert.ok(h.view.rows.filter(row => !row.terminal).every(row => !row.yolo));
+});
+
+test('permission descriptions come from discovery and recorded rows without an installed client', async () => {
+  const pending = harness();
+  await pending.settle();
+  pending.view.rows[0].yolo = true;
+  pending.render();
+  assert.ok(pending.texts.includes(`Discovered permission effect for ${pending.view.rows[0].key}.`));
+  const running = harness({ agents: [], initial: [{ id: 'existing', key: 'claude', terminal: 't1',
+    model: null, thinking: null, yolo: true, yolo_effect: 'Recorded permission effect.' }] });
+  await running.settle();
+  running.render();
+  assert.ok(running.texts.includes('Existing pane · YOLO · Recorded permission effect.'));
 });
 
 test('an empty custom model cannot silently use the default; picking custom focuses the input', async () => {
