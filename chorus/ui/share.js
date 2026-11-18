@@ -14,6 +14,7 @@
   // a GitHub-Flavored Markdown table cell.
   function escapeTableCell(value) {
     return String(value ?? "")
+      .replace(/\\/g, "\\\\")
       .replace(/\r?\n+/g, " ")
       .replace(/\|/g, "\\|")
       .trim();
@@ -206,7 +207,9 @@
     const totalHeight = baseHeight + 24;
 
     stripInteractiveAttributes(clone);
-    clone.setAttribute("xmlns", SVG_NS);
+    if (!clone.namespaceURI) {
+      clone.setAttribute("xmlns", SVG_NS);
+    }
     clone.setAttribute("viewBox", `0 0 ${width} ${totalHeight}`);
     clone.setAttribute("width", String(width));
     clone.setAttribute("height", String(totalHeight));
