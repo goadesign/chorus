@@ -1,10 +1,13 @@
 """Prove terminal choices retain the dialog executor's launch and replay contracts."""
 
 import copy
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import launch
 import team_cli
@@ -47,6 +50,8 @@ class TeamCommandTests(unittest.TestCase):
     def test_same_executor_creates_connections_labels_and_reuses_running_roles(self):
         before = team_cli.inspect({"space": "sp1"}, self.owner.app, self.owner.core, self.home, self.execute)
         self.assertFalse(before["roles"][0]["running"])
+        self.assertIsNone(before["roles"][0]["terminal"])
+        self.assertIsNone(before["roles"][0]["status"])
         self.assertNotIn("client_options", before)
         self.assertEqual(self.calls, [])
         self.assertNotIn("private-test-token", json.dumps(before))
@@ -67,6 +72,81 @@ class TeamCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "different launch settings"):
             self.start({"guide": changed})
         self.assertEqual(sum(name == "tab.new" for name, _ in self.owner.commands), 1)
+
+    def test_inspection_returns_owned_pane_and_only_reported_status_without_screen_reads(self):
+        self.start({"guide": self.choice})
+        terminal = self.owner.terminals[0]
+        terminal.update(screen="PRIVATE screen", title="PRIVATE title")
+        self.roster["roles"].append(dict(self.roster["roles"][0],
+                                        role="builder", title="Builder", handle="builder-example",
+                                        place={"beside": "guide-example", "direction": "right"}))
+        launch.roster_path(self.home, "sp1").write_text(json.dumps(self.roster))
+        cases = [
+            (True, {"state": "blocked", "kind": kind, "msg": "PRIVATE message"},
+             {"state": "blocked", "kind": kind}) for kind in ("permission", "question", "auth")
+        ] + [
+            (True, {"state": "idle", "msg": "PRIVATE message"}, {"state": "idle", "kind": None}),
+            (False, {"state": "blocked", "kind": "permission"}, None),
+            (True, None, None),
+        ]
+        for reported, status, expected in cases:
+            with self.subTest(reported=reported, status=status):
+                terminal.update(reported=reported, status=status)
+                calls = []
+
+                def core(argv):
+                    self.assertNotIn(argv[0], ("read", "send", "keys"))
+                    calls.append(argv)
+                    return self.owner.core(argv)
+
+                inspected = team_cli.inspect({"space": "sp1"}, self.owner.app, core,
+                                             self.home, self.execute)
+                guide, builder = inspected["roles"]
+                self.assertTrue(guide["running"], "blocked and unreported panes still run")
+                self.assertEqual(guide["terminal"], terminal["address"])
+                self.assertEqual(guide["status"], expected)
+                self.assertFalse(builder["running"])
+                self.assertIsNone(builder["terminal"])
+                self.assertIsNone(builder["status"])
+                self.assertNotIn("PRIVATE", json.dumps(inspected))
+                self.assertEqual(sum(args[0] == "get" for args in calls), 1,
+                                 "inspection reuses its existing one record read")
+
+    def test_terminal_launch_notice_is_stderr_only_and_only_after_success(self):
+        request = {"space": "sp'1", "choices": {"guide": self.choice}}
+        result = {"tab": "tb1", "created": 1, "reused": 0}
+        for action, refused in (("team-launch", False), ("team-launch", True), ("launch", False)):
+            with self.subTest(action=action, refused=refused):
+                output, diagnostics = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(launch.sys, "argv", ["launch.py", str(self.home), action, "-"]),
+                    mock.patch.object(launch.sys, "stdin", io.StringIO(json.dumps(request))),
+                    mock.patch.dict(launch.os.environ),
+                    mock.patch("launch.shutil.which", return_value="/unused/herdr"),
+                    mock.patch("team_cli.start", return_value=result,
+                               side_effect=ValueError("refused") if refused else None),
+                    mock.patch("launch.launch_team", return_value=result),
+                    redirect_stdout(output), redirect_stderr(diagnostics),
+                ):
+                    code = launch.main()
+                if refused:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertIn("refused", diagnostics.getvalue())
+                    self.assertNotIn("Next:", diagnostics.getvalue())
+                else:
+                    self.assertEqual(code, 0)
+                    self.assertEqual(json.loads(output.getvalue()), result)
+                    self.assertEqual(len(output.getvalue().splitlines()), 1)
+                    if action == "team-launch":
+                        self.assertEqual(len(diagnostics.getvalue().splitlines()), 1)
+                        command = diagnostics.getvalue().split("`")[1]
+                        self.assertEqual(launch.shlex.split(command),
+                                         ["chorus", "team", "inspect", "--space", "sp'1"])
+                        self.assertIn("hc read <terminal>", diagnostics.getvalue())
+                        self.assertIn("before sending other keys", diagnostics.getvalue())
+                    else:
+                        self.assertEqual(diagnostics.getvalue(), "")
 
     def test_inspection_shares_program_options_without_launching_or_refusing_custom_models(self):
         second = copy.deepcopy(self.roster["roles"][0])
