@@ -1,0 +1,169 @@
+name: Publish Registries
+
+# Publishes @goadesign/chorus to npm (via npm Trusted Publishing OIDC) and
+# io.github.goadesign/chorus to the Official MCP Registry (via GitHub OIDC)
+# after a non-prerelease GitHub Release is published. Use GitHub Actions'
+# "Re-run failed jobs" on a release run to retry transient registry failures.
+#
+# One-time setup on npmjs.com (no secrets or tokens required in GitHub):
+#   https://www.npmjs.com/package/@goadesign/chorus/access -> Trusted Publisher
+#   Provider: GitHub Actions
+#   Organization or user: goadesign
+#   Repository: chorus
+#   Workflow filename: publish-registries.yml
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: publish-registries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    if: "!github.event.release.prerelease && !github.event.release.draft"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Node 24 ships npm >= 11.5.1 required for OIDC Trusted Publishing.
+          # Omit registry-url so setup-node does not write a blank
+          # _authToken=${NODE_AUTH_TOKEN} line into .npmrc that blocks OIDC.
+          node-version: "24"
+
+      - name: Validate release metadata and npm launcher tests
+        id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          npm --version
+          version="$(node -e '
+            const fs = require("node:fs");
+            const pkg = JSON.parse(fs.readFileSync("npm/chorus/package.json", "utf8"));
+            const srv = JSON.parse(fs.readFileSync("server.json", "utf8"));
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(pkg.version || "")) {
+              throw new Error(`expected stable semver in package.json, got ${pkg.version}`);
+            }
+            if (pkg.version !== srv.version || srv.packages?.[0]?.version !== pkg.version) {
+              throw new Error(`version mismatch: package.json=${pkg.version} server.json=${srv.version} packages[0]=${srv.packages?.[0]?.version}`);
+            }
+            if (!pkg.mcpName || pkg.mcpName !== srv.name || srv.packages?.[0]?.identifier !== pkg.name) {
+              throw new Error(`package identity mismatch: package.json=${pkg.name} (${pkg.mcpName}) server.json=${srv.name} (${srv.packages?.[0]?.identifier})`);
+            }
+            console.log(pkg.version);
+          ')"
+          if [ "v${version}" != "$RELEASE_TAG" ] || [ "$GITHUB_REF" != "refs/tags/v${version}" ]; then
+            echo "error: release ref (${GITHUB_REF} / ${RELEASE_TAG}) does not match manifest version v${version}" >&2
+            exit 1
+          fi
+          curl -fsSLI "https://github.com/goadesign/chorus/releases/download/v${version}/checksums.txt" >/dev/null
+          node --test npm/chorus/test_cli.mjs
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish @goadesign/chorus to npm via OIDC Trusted Publishing
+        working-directory: npm/chorus
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@goadesign%2Fchorus/${VERSION}")"
+          if [ "$status" = "200" ]; then
+            echo "@goadesign/chorus@${VERSION} is already published on npm; skipping"
+            exit 0
+          fi
+          if [ "$status" != "404" ]; then
+            echo "error: unexpected HTTP ${status} checking npm registry for @goadesign/chorus@${VERSION}" >&2
+            exit 1
+          fi
+          npm publish --access public --provenance
+
+  publish-mcp-registry:
+    needs: publish-npm
+    if: "!github.event.release.prerelease && !github.event.release.draft"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.9
+      VERSION: ${{ needs.publish-npm.outputs.version }}
+    steps:
+      - name: Check whether version is already in Official MCP Registry
+        id: check
+        run: |
+          set -euo pipefail
+          url="https://registry.modelcontextprotocol.io/v0.1/servers/io.github.goadesign%2Fchorus/versions/${VERSION}"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "$url")"
+          if [ "$status" = "200" ]; then
+            echo "io.github.goadesign/chorus@${VERSION} is already published; skipping"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = "404" ]; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "error: unexpected HTTP ${status} checking Official MCP Registry for ${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Checkout release tag
+        if: steps.check.outputs.already_published != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Wait for npm package version propagation
+        if: steps.check.outputs.already_published != 'true'
+        run: |
+          set -euo pipefail
+          url="https://registry.npmjs.org/@goadesign%2Fchorus/${VERSION}"
+          for i in $(seq 1 12); do
+            if [ "$(curl -sS -o /dev/null -w '%{http_code}' "$url")" = "200" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: ${url} was not reachable after 60s" >&2
+          exit 1
+
+      - name: Install cosign
+        if: steps.check.outputs.already_published != 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Download and verify mcp-publisher
+        if: steps.check.outputs.already_published != 'true'
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "${tmp}"' EXIT
+          curl -fsSL "${base_url}/${archive}" -o "${tmp}/${archive}"
+          curl -fsSL "${base_url}/${archive}.sigstore.json" -o "${tmp}/${archive}.sigstore.json"
+          cosign verify-blob \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --bundle "${tmp}/${archive}.sigstore.json" \
+            "${tmp}/${archive}"
+          tar -xzf "${tmp}/${archive}" -C "${RUNNER_TEMP}" mcp-publisher
+
+      - name: Authenticate and publish to Official MCP Registry via GitHub OIDC
+        if: steps.check.outputs.already_published != 'true'
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/mcp-publisher" login github-oidc
+          "${RUNNER_TEMP}/mcp-publisher" publish
