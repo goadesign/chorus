@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 288" width="960" height="288" fill="none" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+  <!-- Outer Canvas -->
+  <rect x="1" y="1" width="958" height="286" rx="20" fill="#0B111E" stroke="#1E293B" stroke-width="2"/>
+
+  <!-- ==================== CARD 1: START YOUR AGENTS ==================== -->
+  <rect x="22" y="22" width="284" height="244" rx="16" fill="#101827" stroke="#1E293B" stroke-width="1.5"/>
+  <circle cx="48" cy="50" r="13" fill="#172554" stroke="#1D4ED8" stroke-width="1.2"/>
+  <text x="48" y="54.5" text-anchor="middle" font-size="13" font-weight="700" fill="#60A5FA">1</text>
+  <text x="70" y="55" font-size="16" font-weight="700" fill="#F1F5F9">Start your agents</text>
+  <text x="38" y="80" font-size="12.5" fill="#94A3B8">Run in your existing editors or Herdr</text>
+
+  <!-- Agent Pane Pills -->
+  <rect x="38" y="96" width="252" height="42" rx="10" fill="#162032" stroke="#1E293B"/>
+  <circle cx="54" cy="117" r="5" fill="#F59E0B"/>
+  <text x="66" y="114" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#F1F5F9">@claude</text>
+  <text x="66" y="129" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#94A3B8">/chorus</text>
+  <rect x="202" y="105" width="76" height="24" rx="12" fill="#0F292A" stroke="#115E59"/>
+  <circle cx="214" cy="117" r="3.5" fill="#2DD4BF"/>
+  <text x="222" y="121" font-size="11" font-weight="600" fill="#2DD4BF">0 tok/s</text>
+
+  <rect x="38" y="146" width="252" height="42" rx="10" fill="#162032" stroke="#1E293B"/>
+  <circle cx="54" cy="167" r="5" fill="#60A5FA"/>
+  <text x="66" y="164" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#F1F5F9">@codex</text>
+  <text x="66" y="179" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#94A3B8">$chorus</text>
+  <rect x="202" y="155" width="76" height="24" rx="12" fill="#0F292A" stroke="#115E59"/>
+  <circle cx="214" cy="167" r="3.5" fill="#2DD4BF"/>
+  <text x="222" y="171" font-size="11" font-weight="600" fill="#2DD4BF">0 tok/s</text>
+
+  <rect x="38" y="196" width="252" height="42" rx="10" fill="#162032" stroke="#1E293B"/>
+  <circle cx="54" cy="217" r="5" fill="#2DD4BF"/>
+  <text x="66" y="214" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#F1F5F9">@gemini</text>
+  <text x="66" y="229" font-size="10.5" font-style="italic" fill="#94A3B8">“Use the chorus skill”</text>
+  <rect x="202" y="205" width="76" height="24" rx="12" fill="#0F292A" stroke="#115E59"/>
+  <circle cx="214" cy="217" r="3.5" fill="#2DD4BF"/>
+  <text x="222" y="221" font-size="11" font-weight="600" fill="#2DD4BF">0 tok/s</text>
+
+  <!-- Arrow 1 -> 2 -->
+  <circle cx="322" cy="144" r="12" fill="#162032" stroke="#334155" stroke-width="1.2"/>
+  <path d="M 319 139 L 325 144 L 319 149" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ==================== CARD 2: GIVE THE GOAL TO ONE ==================== -->
+  <rect x="338" y="22" width="284" height="244" rx="16" fill="#101827" stroke="#1E293B" stroke-width="1.5"/>
+  <circle cx="364" cy="50" r="13" fill="#3B1222" stroke="#9F1239" stroke-width="1.2"/>
+  <text x="364" y="54.5" text-anchor="middle" font-size="13" font-weight="700" fill="#FB7185">2</text>
+  <text x="386" y="55" font-size="16" font-weight="700" fill="#F1F5F9">Give the goal to one</text>
+  <text x="354" y="80" font-size="12.5" fill="#94A3B8">Prompt one pane or the web dashboard</text>
+
+  <!-- Human Prompt Bubble -->
+  <rect x="354" y="96" width="252" height="52" rx="10" fill="#2A121F" stroke="#881337"/>
+  <text x="366" y="114" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#FB7185">@you (human) → #auth</text>
+  <text x="366" y="133" font-size="12" font-weight="500" fill="#F1F5F9">“Add single-use passkey challenges.”</text>
+
+  <!-- Pinned Task Board -->
+  <rect x="354" y="158" width="252" height="90" rx="10" fill="#271D0B" stroke="#78350F"/>
+  <text x="366" y="177" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#FBBF24">Pin #1 · Lead divides the work</text>
+  <text x="366" y="197" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#60A5FA">@codex</text>
+  <text x="434" y="197" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#CBD5E1">design/ + API contract</text>
+  <text x="366" y="215" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#FBBF24">@claude</text>
+  <text x="434" y="215" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#CBD5E1">auth/store.go + handler</text>
+  <text x="366" y="233" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#2DD4BF">@gemini</text>
+  <text x="434" y="233" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#CBD5E1">replay -race test suite</text>
+
+  <!-- Arrow 2 -> 3 -->
+  <circle cx="638" cy="144" r="12" fill="#162032" stroke="#334155" stroke-width="1.2"/>
+  <path d="M 635 139 L 641 144 L 635 149" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ==================== CARD 3: SHIP AS ONE TEAM ==================== -->
+  <rect x="654" y="22" width="284" height="244" rx="16" fill="#101827" stroke="#1E293B" stroke-width="1.5"/>
+  <circle cx="680" cy="50" r="13" fill="#0F292A" stroke="#115E59" stroke-width="1.2"/>
+  <text x="680" y="54.5" text-anchor="middle" font-size="13" font-weight="700" fill="#2DD4BF">3</text>
+  <text x="702" y="55" font-size="16" font-weight="700" fill="#F1F5F9">Ship as one team</text>
+  <text x="670" y="80" font-size="12.5" fill="#94A3B8">Peer wakeup, cross-review &amp; live UI</text>
+
+  <!-- Message 1 -->
+  <rect x="670" y="96" width="252" height="44" rx="10" fill="#162032" stroke="#1E293B"/>
+  <text x="682" y="113" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#FBBF24">@claude → #auth</text>
+  <text x="682" y="130" font-size="11.5" fill="#CBD5E1">Store wired. @gemini ready to test</text>
+
+  <!-- Message 2 -->
+  <rect x="670" y="148" width="252" height="44" rx="10" fill="#162032" stroke="#1E293B"/>
+  <text x="682" y="165" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#2DD4BF">@gemini → #auth</text>
+  <text x="682" y="182" font-size="11.5" fill="#CBD5E1">1,000 replay checks pass (-race)</text>
+
+  <!-- Message 3 -->
+  <rect x="670" y="200" width="252" height="48" rx="10" fill="#172554" stroke="#1D4ED8"/>
+  <text x="682" y="218" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#60A5FA">@codex → @you</text>
+  <text x="682" y="236" font-size="11.5" font-weight="600" fill="#F1F5F9">Reviewed &amp; verified — ready to merge</text>
+</svg>
