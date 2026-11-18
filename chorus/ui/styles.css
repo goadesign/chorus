@@ -2598,8 +2598,8 @@ body[data-theme="light"] .provider-openai {
   pointer-events: none;
 }
 
-/* Result of the last send. It floats just above the message box, over the
-   chat when that is raised, so showing or clearing it never moves the box. */
+/* Error from the last failed send. It floats just above the message box, over
+   the chat when that is raised, so showing or clearing it never moves the box. */
 .composer-feedback {
   position: absolute;
   left: 12px;
@@ -2613,27 +2613,7 @@ body[data-theme="light"] .provider-openai {
   box-shadow: var(--shadow-sm);
   font-size: 13px;
   line-height: 18px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.composer-feedback:not(.ok):not(.error) {
-  display: none;
-}
-
-/* With the chat raised, the sent message itself appears in it. */
-.has-chat-open .composer-feedback.ok {
-  display: none;
-}
-
-.composer-feedback.error {
   color: var(--coral);
-}
-
-.composer-feedback.ok {
-  color: var(--teal);
 }
 
 @media (max-width: 760px) {
