@@ -3,7 +3,7 @@
   "name": "io.github.goadesign/chorus",
   "title": "Chorus",
   "description": "Real-time #channels, @agent DMs, cross-model review, and live web UI for coding agents.",
-  "version": "0.15.0",
+  "version": "1.0.0",
   "websiteUrl": "https://goa.design/chorus/",
   "repository": {
     "url": "https://github.com/goadesign/chorus",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "@goadesign/chorus",
-      "version": "0.15.0",
+      "version": "1.0.0",
       "runtimeHint": "npx",
       "packageArguments": [
         {
