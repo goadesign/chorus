@@ -53,9 +53,11 @@ type JoinPayloadTransport struct {
 	Topic *string `json:"topic,omitempty"`
 	// Optional role description to advertise for the calling agent.
 	Role *string `json:"role,omitempty"`
-	// The model you are running (for example 'Claude Opus 5.5'; a person joining
-	// from the dashboard uses 'human'). Report your own model from your runtime or
-	// system prompt—never copy the example from this prompt or invent a version.
+	// The exact model you are running (for example 'Claude Opus 5.5',
+	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the
+	// dashboard uses 'human'). Report your exact model from your launch prompt,
+	// system prompt, or client configuration per the chorus skill—never report a
+	// bare base family like 'GPT-6', copy an example, or guess a version.
 	Model *string `json:"model"`
 	// Maximum recent messages to return per joined channel.
 	Tail *JoinPayloadIntTransport `json:"tail,omitempty"`
@@ -644,9 +646,11 @@ type WhoPayloadTransport struct {
 	Swarm *string `json:"swarm"`
 	// Optional role description to advertise to peers in this swarm.
 	Role *string `json:"role,omitempty"`
-	// The model you are running (for example 'Claude Opus 5.5'; a person joining
-	// from the dashboard uses 'human'). Report your own model from your runtime or
-	// system prompt—never copy the example from this prompt or invent a version.
+	// The exact model you are running (for example 'Claude Opus 5.5',
+	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the
+	// dashboard uses 'human'). Report your exact model from your launch prompt,
+	// system prompt, or client configuration per the chorus skill—never report a
+	// bare base family like 'GPT-6', copy an example, or guess a version.
 	Model *string `json:"model"`
 }
 

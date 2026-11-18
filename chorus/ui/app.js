@@ -148,14 +148,21 @@
       return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null, known };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
-    const paren = /^(.*?)\s*\(([^()]+)\)$/.exec(m);
-    const stripped = paren && /^(?:none|minimal|low|medium|high|xhigh|extra[- ]high|max)$/.test(paren[2].trim())
-      ? paren[1].trim()
-      : m;
-    const candidates = [stripped];
-    if (paren && /^[a-z0-9]+[-._:@][a-z0-9._:@-]+$/.test(paren[2].trim())) {
-      candidates.push(paren[2].trim());
+    const qualifier = /^(?:none|minimal|low|medium|high|xhigh|extra[- ]high|max|ultra|[0-9]+[km](?:\s+context)?|no\s+zdr)$/;
+    const stripBracket = (s) => s.replace(/\[[^[\]]+\]$/, "").trim();
+    let stripped = stripBracket(m);
+    const candidates = [];
+    while (true) {
+      const paren = /^(.*?)\s*\(([^()]+)\)$/.exec(stripped);
+      if (!paren) break;
+      const inner = stripBracket(paren[2].trim());
+      if (/^[a-z0-9]+[-._:@][a-z0-9._:@-]+$/.test(inner)) {
+        candidates.push(inner);
+      }
+      if (!qualifier.test(inner)) break;
+      stripped = stripBracket(paren[1].trim());
     }
+    candidates.unshift(stripped);
     for (const candidate of candidates) {
       const leaf = candidate.replace(cloudPrefix, "").replace(/\s+/g, "-");
       if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {

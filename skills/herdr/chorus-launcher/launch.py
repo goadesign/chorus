@@ -53,6 +53,15 @@ NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}")
 
 # Antigravity and Cursor encode effort suffixes directly into variant model IDs.
 AGY_SUFFIX = re.compile(r"-(low|medium|high|xhigh|max)$")
+AGY_EFFORT_LABELS = {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "XHigh",
+    "max": "Max",
+}
+# Routing aliases and context-window tags resolve inside the client at startup.
+MODEL_ALIASES = frozenset({"auto", "default", "fable", "opus", "sonnet", "haiku", "opusplan", "best"})
 CURSOR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "extra-high", "max")
 CURSOR_VARIANT = re.compile(r"^(?P<base>[A-Za-z0-9._:/+=-]+?)-(?P<effort>" + "|".join(CURSOR_EFFORTS) + r")(?P<fast>-fast)?$")
 CURSOR_SUFFIX_LABEL = {
@@ -461,6 +470,47 @@ def validate(request: object, roster: dict | None = None) -> dict:
     return request
 
 
+def declared_launch_model(agent: dict) -> str | None:
+    """Return the exact runnable model ID chosen for launch, or None when runtime resolution is needed."""
+    if agent.get("key") == "claude":
+        return None  # Claude Code always exposes its exact resolved model in its system prompt.
+    model = agent.get("model")
+    if model is None or model.split("[", 1)[0].lower() in MODEL_ALIASES:
+        return None
+    if agent.get("key") == "antigravity":
+        if AGY_SUFFIX.search(model):
+            return model
+        thinking = agent.get("thinking")
+        return f"{model}-{thinking}" if thinking else None
+    return model
+
+
+def launch_model_instruction(agent: dict) -> str:
+    """State the exact model or session override to report on join."""
+    launch_model = declared_launch_model(agent)
+    if launch_model is not None:
+        return f"Report model {launch_model!r} when joining (never a generic base family or guessed version). "
+    model = agent.get("model")
+    thinking = agent.get("thinking")
+    if agent.get("key") == "antigravity":
+        if model is not None and not thinking:
+            return (
+                f"This pane was launched with --model {model!r} (no --effort flag): "
+                f"resolve {model!r} against 'agy models' (matching its exact entry or its variant "
+                "for your configured effort in settings.json, never a different model from settings.json "
+                "or a guessed version) and report it when joining. "
+            )
+        if thinking:
+            label = AGY_EFFORT_LABELS.get(thinking, thinking)
+            return (
+                f"This pane was launched with --effort {thinking!r} on your default model: "
+                f"read your configured model according to the chorus skill and apply --effort {thinking!r} "
+                f"(updating its effort label to '({label})' when the model carries effort variants, "
+                "and never guessing a version) when joining. "
+            )
+    return "Determine and report your exact active model according to the chorus skill when joining (never report a generic base family or guess a version). "
+
+
 def initial_argv(agent: dict, root: str, swarm: str) -> list[str]:
     """Give each CLI an interactive first prompt and a unique Chorus handle."""
     # The UUID is a valid 32-character Chorus handle; role names remain readable.
@@ -469,7 +519,7 @@ def initial_argv(agent: dict, root: str, swarm: str) -> list[str]:
         "Use the installed chorus skill now. "
         f"Your project is {root!r}. Join swarm {swarm!r}, channel {'#' + swarm!r}, "
         f"using handle {handle!r} and role {'Herdr ' + agent['name'] + ' teammate'!r}. "
-        "Report your actual runtime model when joining. "
+        f"{launch_model_instruction(agent)}"
         "Startup only: join and keep listening according to the skill. "
         "Preserve the current pinned plan and report available. Do not claim or "
         "start tasks, edit files, run project checks, spawn helpers, or change the "
@@ -504,7 +554,7 @@ def roster_argv(
         "Use the installed chorus skill now. "
         f"Your project is {root!r}. Join swarm {swarm!r}, channel {'#' + swarm!r}, "
         f"using handle {handle!r} and role {title!r}. "
-        "Report your actual runtime model when joining. "
+        f"{launch_model_instruction(agent)}"
         f"Keep `CI=true chorus watch {handle} -wait 24h </dev/null` running in the background while you work. "
         f"{role['first_message']}"
     )

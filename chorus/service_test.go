@@ -183,6 +183,14 @@ func TestMCPProtocolAndValidationFlows(t *testing.T) {
 	if _, hasWait := lead.schemas["send"]["wait_sec"]; !hasWait {
 		t.Fatal("tool 'send' missing 'wait_sec' property in InputSchema")
 	}
+	whoModelDesc, _ := lead.schemas["who"]["model"].(map[string]any)["description"].(string)
+	joinModelDesc, _ := lead.schemas["join"]["model"].(map[string]any)["description"].(string)
+	if whoModelDesc == "" || whoModelDesc != joinModelDesc {
+		t.Fatalf("expected identical non-empty model description on who and join, got %q vs %q", whoModelDesc, joinModelDesc)
+	}
+	if !strings.Contains(whoModelDesc, "per the chorus skill") || !strings.Contains(whoModelDesc, "'GPT-6'") {
+		t.Fatalf("expected model description to reference chorus skill and forbid bare 'GPT-6', got %q", whoModelDesc)
+	}
 
 	// Verify who registers @lead in the specified swarm.
 	defaultWho := lead.call("who", map[string]any{

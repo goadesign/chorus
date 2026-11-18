@@ -933,12 +933,17 @@ test('app.js sendMessage raises chat without ok banner, announces errors, and gu
   assert.equal(sendTarget.value, '#ops');
   assert.deepEqual({ ...win.ChorusUI.state.replyTo }, { target: '#ops', seq: 5, sender: 'claude', human: false, model: 'Claude Opus 5.5' });
 
-  // 8. resolveIdentity maps display-formatted models with effort/ID parentheticals to official provider marks.
+  // 8. resolveIdentity maps display-formatted models with effort, context, ZDR, and bracketed qualifiers to official provider marks.
   const { resolveIdentity } = win.ChorusUI;
   assert.equal(resolveIdentity('agy', 'Gemini 4 Argon (High)').provider, 'gemini');
   assert.equal(resolveIdentity('fable', 'Claude Opus 5.5 (High)').provider, 'claude');
-  assert.equal(resolveIdentity('guide', 'Sonnet 5.5 (claude-sonnet-5-5)').provider, 'claude');
-  assert.equal(resolveIdentity('codex', 'GPT-6.1-Sol').provider, 'openai');
+  assert.equal(resolveIdentity('opus1m', 'Claude Opus 5.5 (1M context)').provider, 'claude');
+  assert.equal(resolveIdentity('opus1mid', 'claude-opus-5-5[1m]').provider, 'claude');
+  assert.equal(resolveIdentity('cursorp', 'claude-opus-4-8[context=1m,effort=high,fast=false]').provider, 'claude');
+  assert.equal(resolveIdentity('nozdr', 'Claude Fable 5 1M Thinking (NO ZDR)').provider, 'claude');
+  assert.equal(resolveIdentity('guide', 'Sonnet 5.5 (claude-sonnet-5-5[1m])').provider, 'claude');
+  assert.equal(resolveIdentity('codex', 'GPT-6.1-Sol (Ultra)').provider, 'openai');
   assert.equal(resolveIdentity('oss', 'GPT-OSS 120B (Medium)').provider, 'openai');
   assert.equal(resolveIdentity('other', 'custom-wrapper (claude)').provider, null);
+  assert.equal(resolveIdentity('cursorauto', 'Cursor').provider, null);
 });

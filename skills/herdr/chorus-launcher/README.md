@@ -45,9 +45,9 @@ interactive zsh, so configured shell-function commands also work:
   `codex debug models`, passing `-c model_reasoning_effort="<level>"` when a
   thinking level is chosen.
 - **Antigravity:** groups variant rows from `agy models` by base model with their
-  advertised levels and passes `--model <base> --effort <level>`. Entering a
-  custom model ID that already ends with an effort suffix leaves thinking set by
-  that model ID so `--effort` never conflicts.
+  advertised levels and passes `--model <base> --effort <level>`. Single-variant
+  catalog entries and custom model IDs that already end with an effort suffix show
+  **Set by model** so `--effort` never conflicts.
 - **Cursor:** groups multi-level model families from `cursor-agent --list-models`
   so the Thinking selector switches among the exact variant slugs Cursor lists
   (for example `claude-opus-5-5-low` through `claude-opus-5-5-max`), while
