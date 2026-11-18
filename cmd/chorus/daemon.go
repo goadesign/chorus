@@ -61,9 +61,9 @@ const (
 )
 
 var (
-	// errWatchToolError marks application-level MCP tool errors returned by
-	// "read" so runWatch fails fast instead of retrying them as transport drops.
-	errWatchToolError = errors.New("watch tool error")
+	// errMCPToolError marks application-level MCP tool errors returned by
+	// Chorus tools so callers fail fast instead of retrying them as transport drops.
+	errMCPToolError = errors.New("tool error")
 )
 
 // runUp is the one command a new user runs after installing Chorus. It
@@ -321,10 +321,10 @@ func runWatch(args []string, out io.Writer) error {
 			if sigCtx.Err() != nil {
 				return nil
 			}
-			if errors.Is(err, errWatchToolError) && watchedOnce {
+			if errors.Is(err, errMCPToolError) && watchedOnce {
 				return nil
 			}
-			if wait == 0 || errors.Is(err, errWatchToolError) {
+			if wait == 0 || errors.Is(err, errMCPToolError) {
 				return err
 			}
 			now := time.Now()
@@ -753,14 +753,30 @@ func callWatchRead(
 	if from != "" {
 		toolArgs["from"] = from
 	}
+	return callMCPTool(
+		ctx,
+		baseURL,
+		"read",
+		toolArgs,
+		time.Duration(waitSec)*time.Second+10*time.Second,
+	)
+}
+
+// callMCPTool invokes a Chorus MCP tool over HTTP JSON-RPC at baseURL/mcp and
+// returns its plain-text wire result.
+func callMCPTool(
+	ctx context.Context,
+	baseURL *url.URL,
+	name string,
+	toolArgs map[string]any,
+	timeout time.Duration,
+) (string, error) {
 	rawArgs, err := json.Marshal(toolArgs)
 	if err != nil {
-		return "", fmt.Errorf("marshal read arguments: %w", err)
+		return "", fmt.Errorf("marshal %s arguments: %w", name, err)
 	}
 
-	httpClient := &http.Client{
-		Timeout: time.Duration(waitSec)*time.Second + 10*time.Second,
-	}
+	httpClient := &http.Client{Timeout: timeout}
 	mcpClient := genmcpchorusclient.NewClient(
 		baseURL.Scheme,
 		baseURL.Host,
@@ -770,16 +786,16 @@ func callWatchRead(
 		false,
 	)
 	resAny, err := mcpClient.ToolsCall()(ctx, &genmcpchorus.ToolsCallPayload{
-		Name:      "read",
+		Name:      name,
 		Arguments: rawArgs,
 	})
 	if err != nil {
-		return "", fmt.Errorf("call chorus read at %s/mcp: %w", baseURL.String(), err)
+		return "", fmt.Errorf("call chorus %s at %s/mcp: %w", name, baseURL.String(), err)
 	}
 	res := resAny.(*genmcpchorus.ToolsCallResult)
 	complete, ok := res.Outcome.AsComplete()
 	if !ok {
-		return "", errors.New("unexpected streaming outcome from chorus read")
+		return "", fmt.Errorf("unexpected streaming outcome from chorus %s", name)
 	}
 	if complete.IsError != nil && *complete.IsError {
 		errText := "tool call failed"
@@ -789,7 +805,7 @@ func callWatchRead(
 		if strings.Contains(errText, context.Canceled.Error()) {
 			return "", errors.New(errText)
 		}
-		return "", fmt.Errorf("%w: %s", errWatchToolError, errText)
+		return "", fmt.Errorf("%w: %s", errMCPToolError, errText)
 	}
 	if len(complete.Content) == 0 || complete.Content[0].Text == nil {
 		return "", nil

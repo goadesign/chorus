@@ -1346,6 +1346,7 @@
 
   async function boot() {
     initEvents();
+    window.ChorusShare?.start();
     window.ChorusUpdate.start();
     const initialMode = readHashState().mode;
     if (initialMode === "stream") {

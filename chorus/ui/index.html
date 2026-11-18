@@ -85,6 +85,11 @@
           </div>
           <div class="stream-toolbar-right">
             <div id="active-filters-bar" class="active-filters-bar"></div>
+            <div class="share-controls">
+              <button type="button" class="btn-tonal share-btn" id="btn-copy-pr">Copy PR Summary</button>
+              <button type="button" class="btn-tonal share-btn" id="btn-export-svg">Export SVG</button>
+              <span class="share-status" id="share-status" role="status"></span>
+            </div>
             <div class="segmented" id="mode-control" role="group" aria-label="Message grouping">
               <button type="button" id="mode-threaded" class="active">Threads</button>
               <button type="button" id="mode-stream">All Messages</button>
@@ -154,6 +159,7 @@
   <script src="/ui/stream.js" defer></script>
   <script src="/ui/chat.js" defer></script>
   <script src="/ui/mention.js" defer></script>
+  <script src="/ui/share.js" defer></script>
   <script src="/ui/update.js" defer></script>
   <script src="/ui/app.js" defer></script>
 </body>
