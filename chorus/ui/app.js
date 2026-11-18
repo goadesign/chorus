@@ -500,6 +500,7 @@
       }
       renderReplyChip();
       document.getElementById("send-text")?.focus();
+      window.ChorusMention.refresh();
     },
 
     // clearReply drops a pending reply and its chip from the message box.
@@ -518,6 +519,7 @@
       if (sendTarget) sendTarget.value = `@${clean}`;
       if (sendPin) sendPin.checked = false;
       document.getElementById("send-text")?.focus();
+      window.ChorusMention.refresh();
     },
 
     // inspectAgent opens, switches, or closes the #agent-details popover for
@@ -741,6 +743,7 @@
     reconcileSelectedTarget(state.view, state.pairedDMs);
     renderHeaderAndTabs();
     window.ChorusChat.render(state, actions);
+    window.ChorusMention.refresh();
 
     const stageEl = document.getElementById("stage-container");
     const streamEl = document.getElementById("message-stream");
@@ -1075,6 +1078,7 @@
       await publishHumanMessage(swarm, sendArgs);
 
       textInput.value = "";
+      window.ChorusMention.refresh();
       pinCheck.checked = false;
       state.replyTo = null;
       renderReplyChip();

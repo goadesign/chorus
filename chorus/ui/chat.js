@@ -90,11 +90,13 @@
     if (awaiting && entries.length > awaiting.listed && !newest.mine) awaiting = null;
     const waitingOn = awaiting && entries.length > awaiting.listed ? newest : null;
 
-    document.getElementById("send-text").setAttribute("aria-expanded", String(open));
     const sheet = document.getElementById("chat-sheet");
     const wasOpen = sheet.classList.contains("is-open");
     sheet.classList.toggle("is-open", open);
     sheet.inert = !open;
+    if (document.getElementById("mention-suggestions")?.hidden !== false) {
+      document.getElementById("send-text").setAttribute("aria-expanded", String(open));
+    }
     sheet.closest(".composer-card").classList.toggle("has-chat-open", open);
     if (open) fitSheet();
     const waiting = waitingOn ? waitingRow(state.view, waitingOn, me) : null;

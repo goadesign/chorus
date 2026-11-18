@@ -532,6 +532,7 @@ func TestDashboardPageServed(t *testing.T) {
 		{name: "page", path: "/", wantStatus: http.StatusOK, wantType: "text/html; charset=utf-8", wantContent: "<html"},
 		{name: "timeline script", path: "/ui/timeline.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusTimeline"},
 		{name: "chat script", path: "/ui/chat.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusChat"},
+		{name: "mention script", path: "/ui/mention.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusMention"},
 		{name: "update script", path: "/ui/update.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "ChorusUpdate"},
 		{name: "page under ui", path: "/ui/index.html", wantStatus: http.StatusNotFound},
 		{name: "missing file", path: "/ui/missing.js", wantStatus: http.StatusNotFound},

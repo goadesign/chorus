@@ -247,6 +247,18 @@ body[data-theme="light"] {
   display: none !important;
 }
 
+.visually-hidden {
+  position: absolute;
+  clip-path: inset(50%);
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -2499,6 +2511,72 @@ body[data-theme="light"] .provider-openai {
   overflow-y: auto;
   outline: none;
   field-sizing: content;
+}
+
+/* Mention suggestions: the participants whose handle matches what the person
+   is typing after an @. The list sits just above the message box, over the
+   chat sheet (15) and send-status pill (16), and below participant details
+   (20, 30). */
+.mention-suggestions {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  z-index: 17;
+  min-width: min(260px, 100%);
+  max-width: 100%;
+  max-height: min(240px, 45dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0 0 6px;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+}
+
+.mention-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mention-suggestion .handle-with-logo {
+  flex-shrink: 0;
+  max-width: 65%;
+}
+
+.mention-suggestion:hover,
+.mention-suggestion[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+@media (forced-colors: active) {
+  .mention-suggestion[aria-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.mention-suggestion-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .composer-actions {
