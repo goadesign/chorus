@@ -148,15 +148,25 @@
       return { handle: raw, label: `@${raw}`, model: mod, provider: "human", iconUrl: null, avatarUrl: null, known };
     }
     const cloudPrefix = /^(?:arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]*:[0-9]*:(?:foundation-model|inference-profile|application-inference-profile|provisioned-model)\/|projects\/[a-z0-9._-]+\/locations\/[a-z0-9._-]+\/publishers\/(?:anthropic|google|openai)\/models\/|(?:anthropic|openai|google|models|vertex_ai)[/.:])?(?:(?:us|eu|ap|apac|global)\.)?(?:(?:anthropic|openai|google)\.)?/;
-    const leaf = m.replace(cloudPrefix, "").replace(/\s+/g, "-");
-    if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg", known };
+    const paren = /^(.*?)\s*\(([^()]+)\)$/.exec(m);
+    const stripped = paren && /^(?:none|minimal|low|medium|high|xhigh|extra[- ]high|max)$/.test(paren[2].trim())
+      ? paren[1].trim()
+      : m;
+    const candidates = [stripped];
+    if (paren && /^[a-z0-9]+[-._:@][a-z0-9._:@-]+$/.test(paren[2].trim())) {
+      candidates.push(paren[2].trim());
     }
-    if (/^(?:gpt(?:$|[-._:@][a-z0-9._:@-]+)|chatgpt-[a-z0-9._:@-]+|codex(?:$|[-._:@][a-z0-9._:@-]+)|sol(?:$|[-._:@][a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg", known };
-    }
-    if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
-      return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png", known };
+    for (const candidate of candidates) {
+      const leaf = candidate.replace(cloudPrefix, "").replace(/\s+/g, "-");
+      if (/^claude(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
+        return { handle: raw, label: `@${raw}`, model: mod, provider: "claude", iconUrl: "/ui/brands/claude.svg", avatarUrl: "/ui/brands/claude.svg", known };
+      }
+      if (/^(?:gpt(?:$|[-._:@][a-z0-9._:@-]+)|chatgpt-[a-z0-9._:@-]+|codex(?:$|[-._:@][a-z0-9._:@-]+)|sol(?:$|[-._:@][a-z0-9._:@-]+)|o[134](?:$|-(?:mini|pro|preview|[0-9][a-z0-9._:@-]*)))$/.test(leaf)) {
+        return { handle: raw, label: `@${raw}`, model: mod, provider: "openai", iconUrl: "/ui/brands/openai.svg", avatarUrl: "/ui/brands/openai.svg", known };
+      }
+      if (/^gemini(?:$|[-._:@][a-z0-9._:@-]+)$/.test(leaf)) {
+        return { handle: raw, label: `@${raw}`, model: mod, provider: "gemini", iconUrl: "/ui/brands/gemini.png", avatarUrl: "/ui/brands/gemini.png", known };
+      }
     }
     return { handle: raw, label: `@${raw}`, model: mod, provider: null, iconUrl: null, avatarUrl: null, known };
   }
@@ -276,10 +286,38 @@
     if (state.activeSwarm) params.set("swarm", state.activeSwarm);
     if (state.selectedTarget?.kind === "channel") params.set("target", state.selectedTarget.name);
     else if (state.selectedTarget?.kind === "dm") params.set("target", `dm:${state.selectedTarget.pairKey}`);
-    else if (state.selectedTarget?.kind === "all") params.set("target", "all");
+    else if (state.selectedTarget?.kind === "all" && (state.view?.channels?.length || state.pairedDMs?.length)) {
+      params.set("target", "all");
+    }
     if (state.viewMode !== "threaded") params.set("mode", state.viewMode);
     const nextHash = `#${params.toString()}`;
     if (window.location.hash !== nextHash) history.replaceState(null, "", nextHash);
+  }
+
+  // targetExistsInSwarm reports whether rawTarget names a channel or known
+  // participant in the currently loaded swarm view.
+  function targetExistsInSwarm(rawTarget) {
+    if (!rawTarget || !state.view) return false;
+    if (rawTarget.startsWith("#")) {
+      return (state.view.channels || []).some((c) => c.name === rawTarget);
+    }
+    if (rawTarget.startsWith("@")) {
+      return isKnownParticipant(rawTarget.slice(1));
+    }
+    return false;
+  }
+
+  // defaultComposerTarget picks a concrete send destination for the active
+  // swarm when "All Activity" is selected or no channels exist yet.
+  function defaultComposerTarget() {
+    const channels = state.view?.channels || [];
+    if (channels.length > 0) return channels[0].name;
+    const pairedDMs = state.pairedDMs || [];
+    if (pairedDMs.length > 0) {
+      const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim().replace(/^@/, "");
+      return `@${pairedDMs[0].a === myHandle ? pairedDMs[0].b : pairedDMs[0].a}`;
+    }
+    return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(state.activeSwarm) ? `#${state.activeSwarm}` : "";
   }
 
   function syncComposerTarget(targetObj, onlyIfNotEdited = false) {
@@ -289,14 +327,24 @@
     if (!onlyIfNotEdited) delete sendTarget.dataset.userEdited;
     const pinCheck = document.getElementById("send-pin");
     const pinLabel = document.getElementById("pin-toggle-label");
+    let nextValue = null;
     if (targetObj.kind === "channel") {
-      sendTarget.value = targetObj.name;
-      pinLabel?.classList.remove("disabled");
+      nextValue = targetObj.name;
     } else if (targetObj.kind === "dm") {
-      const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim();
-      sendTarget.value = `@${targetObj.a === myHandle ? targetObj.b : targetObj.a}`;
-      if (pinCheck) pinCheck.checked = false;
-      pinLabel?.classList.add("disabled");
+      const myHandle = (document.getElementById("send-handle")?.value || "raphael").trim().replace(/^@/, "");
+      nextValue = `@${targetObj.a === myHandle ? targetObj.b : targetObj.a}`;
+    } else if (targetObj.kind === "all") {
+      const current = sendTarget.value.trim();
+      if (!targetExistsInSwarm(current)) {
+        nextValue = defaultComposerTarget();
+      }
+    }
+    if (nextValue !== null) {
+      sendTarget.value = nextValue;
+      const isChannel = nextValue.startsWith("#");
+      if (!isChannel && pinCheck) pinCheck.checked = false;
+      pinLabel?.classList.toggle("disabled", !isChannel);
+      window.ChorusMention?.refresh();
     }
   }
 
@@ -320,12 +368,23 @@
   function reconcileSelectedTarget(view, pairedDMs) {
     if (!view) return;
     const channels = view.channels || [];
+    const hashTarget = readHashState().target;
+    const hasComposerTarget = Boolean(document.getElementById("send-target")?.value.trim());
     if (state.selectedTarget) {
-      if (state.selectedTarget.kind === "all") return;
-      if (state.selectedTarget.kind === "channel" && channels.some((c) => c.name === state.selectedTarget.name)) return;
-      if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) return;
+      if (state.selectedTarget.kind === "all" && (hashTarget === "all" || (channels.length === 0 && pairedDMs.length === 0))) {
+        syncComposerTarget(state.selectedTarget, true);
+        return;
+      }
+      if (state.selectedTarget.kind === "channel" && channels.some((c) => c.name === state.selectedTarget.name)) {
+        if (!hasComposerTarget) syncComposerTarget(state.selectedTarget, true);
+        return;
+      }
+      if (state.selectedTarget.kind === "dm" && pairedDMs.some((p) => p.pairKey === state.selectedTarget.pairKey)) {
+        if (!hasComposerTarget) syncComposerTarget(state.selectedTarget, true);
+        return;
+      }
     }
-    state.selectedTarget = resolveTarget(readHashState().target, channels, pairedDMs);
+    state.selectedTarget = resolveTarget(hashTarget, channels, pairedDMs);
     syncComposerTarget(state.selectedTarget, true);
     writeHashState();
   }
@@ -497,6 +556,12 @@
       if (channelName) {
         const sendTarget = document.getElementById("send-target");
         if (sendTarget) sendTarget.value = channelName;
+        const isChannel = channelName.startsWith("#");
+        if (!isChannel) {
+          const sendPin = document.getElementById("send-pin");
+          if (sendPin) sendPin.checked = false;
+        }
+        document.getElementById("pin-toggle-label")?.classList.toggle("disabled", !isChannel);
       }
       renderReplyChip();
       document.getElementById("send-text")?.focus();
@@ -518,6 +583,7 @@
       const sendPin = document.getElementById("send-pin");
       if (sendTarget) sendTarget.value = `@${clean}`;
       if (sendPin) sendPin.checked = false;
+      document.getElementById("pin-toggle-label")?.classList.add("disabled");
       document.getElementById("send-text")?.focus();
       window.ChorusMention.refresh();
     },
@@ -859,6 +925,12 @@
     if (switchedSwarm || !nextSwarm) {
       state.replyTo = null;
       renderReplyChip();
+      setComposerFeedback("");
+      const sendTarget = document.getElementById("send-target");
+      if (sendTarget) {
+        delete sendTarget.dataset.userEdited;
+        sendTarget.value = "";
+      }
       state.view = null;
       const stageEl = document.getElementById("stage-container");
       if (stageEl) stageEl.scrollTop = 0;
@@ -999,22 +1071,12 @@
     return (payload.result?.content || []).map((c) => c.text).join("\n");
   }
 
-  function setComposerFeedback(msg, kind = "") {
-    const wrap = document.getElementById("composer-feedback");
-    const txt = document.getElementById("composer-status-text");
-    if (!wrap || !txt) return;
-    wrap.className = `composer-feedback${kind ? ` ${kind}` : ""}`;
-    const parts = Array.isArray(msg) ? msg : msg ? [msg] : [];
-    txt.replaceChildren(
-      ...parts.map((p) => (p instanceof Node ? p : document.createTextNode(String(p))))
-    );
-    clearTimeout(setComposerFeedback._timer);
-    if (parts.length > 0 && kind === "ok") {
-      setComposerFeedback._timer = setTimeout(() => {
-        wrap.className = "composer-feedback";
-        txt.replaceChildren();
-      }, 4000);
-    }
+  // setComposerFeedback shows or clears an error from the last send attempt.
+  function setComposerFeedback(errorMessage = "") {
+    const feedback = document.getElementById("composer-feedback");
+    if (!feedback) return;
+    feedback.textContent = errorMessage;
+    feedback.hidden = !errorMessage;
   }
 
   // publishHumanMessage validates the chosen human against the loaded swarm,
@@ -1052,7 +1114,9 @@
     } else if (!existingAgent) {
       await callMCPTool("who", { swarm, agent, model: "human", role: "human" });
     }
-    await callMCPTool("send", args);
+    const out = await callMCPTool("send", args);
+    const ack = /^sent (\S+)#(\d+)/.exec(out);
+    return ack ? `${ack[1]}:${ack[2]}` : "";
   }
 
   // sendMessage reads and resets only the message composer; pin editing owns
@@ -1075,19 +1139,21 @@
     try {
       const sendArgs = { agent, to, text, pin, wait_sec: 0 };
       if (state.replyTo && to === state.replyTo.target) sendArgs.reply_to = state.replyTo.seq;
-      await publishHumanMessage(swarm, sendArgs);
+      const sentKey = await publishHumanMessage(swarm, sendArgs);
 
-      textInput.value = "";
-      window.ChorusMention.refresh();
-      pinCheck.checked = false;
-      state.replyTo = null;
-      renderReplyChip();
-      if (to.startsWith("@")) setComposerFeedback(["Sent to ", handleBadge(to.slice(1))], "ok");
-      else setComposerFeedback(pin ? `Pinned in ${to}` : `Sent to ${to}`, "ok");
-      window.ChorusChat.sent();
-      if (state.activeSwarm === swarm) startSwarmLoop(swarm);
+      if (state.activeSwarm === swarm) {
+        textInput.value = "";
+        window.ChorusMention.refresh();
+        pinCheck.checked = false;
+        state.replyTo = null;
+        renderReplyChip();
+        window.ChorusChat.sent(swarm, agent, sentKey);
+        startSwarmLoop(swarm);
+      }
     } catch (err) {
-      setComposerFeedback(err.message || "Failed to send message.", "error");
+      if (state.activeSwarm === swarm) {
+        setComposerFeedback(err.message || "Failed to send message.");
+      }
     } finally {
       sendBtn.disabled = !state.activeSwarm;
     }
@@ -1177,7 +1243,12 @@
       renderAll();
     });
 
+    document.getElementById("send-handle").addEventListener("input", () => {
+      setComposerFeedback("");
+    });
+
     document.getElementById("send-target").addEventListener("input", (e) => {
+      setComposerFeedback("");
       e.currentTarget.dataset.userEdited = "true";
       const val = e.currentTarget.value.trim();
       if (state.replyTo && val !== state.replyTo.target) {
@@ -1191,6 +1262,9 @@
     });
 
     const sendText = document.getElementById("send-text");
+    sendText.addEventListener("input", () => {
+      setComposerFeedback("");
+    });
     sendText.addEventListener("keydown", (e) => {
       if (e.isComposing) return;
       if (e.key === "Enter" && !e.shiftKey) {

@@ -1,10 +1,11 @@
 // Chorus dashboard chat sheet. When an agent says something to the person
-// using the dashboard, or when the person clicks the message box at the
-// bottom of the page, a chat rises out of that box. It shows what agents said
-// to the person and what the person sent, oldest at the top and newest at the
-// bottom. It stays up while they write and send, shows three dots under a
-// message they just sent until an agent answers, and folds back into the
-// plain message box when they click anywhere outside it or press Escape.
+// using the dashboard, when the person sends a message, or when they click
+// the message box at the bottom of the page, a chat rises out of that box. It
+// shows what agents said to the person and what the person sent, oldest at
+// the top and newest at the bottom. It stays up while they write and send,
+// shows three dots under a message they just sent until an agent answers, and
+// folds back into the plain message box when they click anywhere outside it
+// or press Escape.
 (() => {
   "use strict";
 
@@ -33,25 +34,36 @@
   // drawn lists, in order, the keys of the rows currently in the chat and
   // whose conversation they belong to, so a refresh adds only new rows.
   let drawn = { owner: "", keys: [] };
-  // listed is how many messages the latest render found in the conversation.
-  let listed = 0;
-  // awaiting is set when the person sends with the chat raised: it holds how
-  // many messages were listed at that moment, so the message they sent is
-  // the first one past that count. It is cleared when an agent's message
-  // follows theirs, or when they fold the chat. null when nothing was sent.
+  // awaiting is set when the person sends from the message box: it holds whose
+  // conversation that was and the exact target:seq key of the published
+  // message. Once that message is present in the view (even if a background
+  // long-poll delivered it before POST /mcp returned), it raises the chat and
+  // keeps the waiting dots shown until an agent's message follows theirs, they
+  // switch swarms or handles, or they fold the chat. null otherwise.
   let awaiting = null;
   // latest holds the arguments of the most recent render for redraws that
   // start here (opening, closing, returning to the page).
   let latest = null;
 
   // render is called on every dashboard refresh. It finds the person's
-  // conversation in the loaded swarm, raises the chat when an agent has said
-  // something they have not seen, remembers what they have seen, and puts
-  // the unseen count in the browser tab title for when the page is hidden.
+  // conversation in the loaded swarm, raises the chat when a message they just
+  // sent arrives or when an agent has said something they have not seen,
+  // remembers what they have seen, and puts the unseen count in the browser
+  // tab title for when the page is hidden.
   function render(state, actions) {
     latest = { state, actions };
     const me = personHandle(state);
+    const owner = `${state.activeSwarm}|${me}`;
+    if (awaiting && awaiting.owner !== owner) awaiting = null;
     const entries = me ? conversation(state.view, me) : [];
+    const sentArrived = Boolean(
+      awaiting && entries.some((entry) => entry.mine && entryKey(entry) === awaiting.sentKey)
+    );
+    const newest = entries.at(-1) || null;
+    if (sentArrived) open = true;
+    if (sentArrived && !newest.mine) awaiting = null;
+    const waitingOn = sentArrived && newest.mine ? newest : null;
+
     const incoming = entries.filter((entry) => !entry.mine);
     const newestIncoming = incoming.at(-1) || null;
     const newestIncomingMs = newestIncoming?.message.sent_at_ms || 0;
@@ -83,13 +95,6 @@
     const unseen = incoming.filter((entry) => entry.message.sent_at_ms > seenMs).length;
     document.title = unseen > 0 ? `(${unseen}) Chorus` : "Chorus";
 
-    // The dots show while the message the person sent from this page is the
-    // newest in the conversation; an agent's message after it ends the wait.
-    listed = entries.length;
-    const newest = entries.at(-1);
-    if (awaiting && entries.length > awaiting.listed && !newest.mine) awaiting = null;
-    const waitingOn = awaiting && entries.length > awaiting.listed ? newest : null;
-
     const sheet = document.getElementById("chat-sheet");
     const wasOpen = sheet.classList.contains("is-open");
     sheet.classList.toggle("is-open", open);
@@ -100,13 +105,20 @@
     sheet.closest(".composer-card").classList.toggle("has-chat-open", open);
     if (open) fitSheet();
     const waiting = waitingOn ? waitingRow(state.view, waitingOn, me) : null;
-    drawLog(document.getElementById("chat-log"), entries, `${state.activeSwarm}|${me}`, actions, open && !wasOpen, firstNew, waiting);
+    drawLog(document.getElementById("chat-log"), entries, owner, actions, open && !wasOpen, firstNew, waiting);
   }
 
-  // sent is called after the message box publishes a message. With the chat
-  // raised, it starts the wait for an answer to that message.
-  function sent() {
-    if (open) awaiting = { listed };
+  // sent is called after the message box publishes sentKey ("target:seq") as
+  // agent in swarm. When that conversation is still active, it records the
+  // sent message key and immediately redraws in case a background view poll
+  // already delivered the message before POST /mcp returned.
+  function sent(swarm, agent, sentKey) {
+    if (!sentKey || !latest || latest.state.activeSwarm !== swarm) return;
+    const me = personHandle(latest.state);
+    if (!me || me !== agent) return;
+    aimedFrom = null;
+    awaiting = { owner: `${swarm}|${me}`, sentKey };
+    render(latest.state, latest.actions);
   }
 
   // fitSheet lets the chat grow from the message box up to the bottom of the
@@ -170,7 +182,9 @@
     if (!latest) return;
     if (!open && aimedFrom !== null && box.value === "") {
       document.getElementById("send-target").value = aimedFrom;
+      document.getElementById("pin-toggle-label")?.classList.toggle("disabled", !aimedFrom.startsWith("#"));
       latest.actions.clearReply();
+      window.ChorusMention?.refresh();
     }
     if (!open) aimedFrom = null;
     if (!open) awaiting = null;
