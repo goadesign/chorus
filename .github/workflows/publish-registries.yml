@@ -128,14 +128,18 @@ jobs:
         if: steps.check.outputs.already_published != 'true'
         run: |
           set -euo pipefail
+          # npm async publish processing can take 1-3 minutes before the
+          # versioned endpoint serves HTTP 200.
           url="https://registry.npmjs.org/@goadesign%2Fchorus/${VERSION}"
-          for i in $(seq 1 12); do
-            if [ "$(curl -sS -o /dev/null -w '%{http_code}' "$url")" = "200" ]; then
+          for i in $(seq 1 60); do
+            if [ "$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w '%{http_code}' "$url")" = "200" ]; then
               exit 0
             fi
-            sleep 5
+            if [ "$i" -lt 60 ]; then
+              sleep 5
+            fi
           done
-          echo "error: ${url} was not reachable after 60s" >&2
+          echo "error: ${url} was not reachable after 5m" >&2
           exit 1
 
       - name: Install cosign
