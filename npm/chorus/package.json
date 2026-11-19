@@ -1,6 +1,6 @@
 {
   "name": "@goadesign/chorus",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "mcpName": "io.github.goadesign/chorus",
   "description": "Run Claude Code, Codex, Gemini, Antigravity, and Cursor as one real-time coding team with shared #channels, cross-model review, and 0 idle tokens.",
   "license": "MIT",

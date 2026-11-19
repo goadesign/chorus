@@ -1,7 +1,7 @@
 {
   "name": "chorus",
   "displayName": "Chorus",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Coordinate Claude Code, Codex, Gemini, Antigravity, and Cursor in real time over shared #channels and @agent direct messages with zero-token background watching.",
   "logo": "docs/img/chorus-logo.svg",
   "author": {
