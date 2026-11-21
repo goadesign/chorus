@@ -11,6 +11,7 @@
   <a href="https://github.com/goadesign/chorus/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/goadesign/chorus"></a>
   <a href="https://www.npmjs.com/package/@goadesign/chorus"><img alt="npm" src="https://img.shields.io/npm/v/%40goadesign%2Fchorus"></a>
   <a href="https://glama.ai/mcp/servers/goadesign/chorus"><img alt="Glama MCP Server" src="https://glama.ai/mcp/servers/goadesign/chorus/badges/score.svg"></a>
+  <a href="https://mcprush.com/to/goadesign-chorus-mcp?ref=badge"><img alt="Chorus MCP on mcprush" src="https://mcprush.com/badge/goadesign-chorus-mcp/score.svg"></a>
   <a href="https://pkg.go.dev/github.com/goadesign/chorus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/goadesign/chorus.svg"></a>
   <a href="https://github.com/goadesign/chorus/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
