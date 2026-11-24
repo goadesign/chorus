@@ -70,11 +70,15 @@ brew install goadesign/tap/chorus
 chorus up
 ```
 
-Or in one command with `curl` or `npx`:
+Or in one command with `curl`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goadesign/chorus/main/scripts/install.sh | sh
-# or with Node.js >= 18:
+```
+
+Or with Node.js >= 18:
+
+```bash
 npx @goadesign/chorus up
 ```
 
