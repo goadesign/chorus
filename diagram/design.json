@@ -5,6 +5,24 @@
     "model": {
         "softwareSystems": [
             {
+                "id": "1cta2d6",
+                "name": "Browser and Local Tools",
+                "description": "People and local applications that read swarm activity and post messages.",
+                "tags": "Element,Software System",
+                "relationships": [
+                    {
+                        "id": "40ghaq",
+                        "description": "Reads swarm activity and posts messages",
+                        "tags": "Relationship",
+                        "sourceId": "1cta2d6",
+                        "destinationId": "1fnj5rf",
+                        "technology": "Loopback HTTP",
+                        "interactionStyle": "Synchronous"
+                    }
+                ],
+                "location": "External"
+            },
+            {
                 "id": "1idt1v",
                 "name": "Chorus",
                 "description": "Multi-agent coordination MCP server backed by Pulse replicated maps, streams, and semaphores.",
@@ -13,7 +31,7 @@
                     {
                         "id": "1fnj5rf",
                         "name": "Chorus MCP Server",
-                        "description": "Stateless HTTP server (:9440) serving POST /mcp (who, join, leave, send, read) with an in-memory Pulse rmap replica.",
+                        "description": "Serves MCP tools and the dashboard, keeps a local view of swarm state, and wakes terminal-backed agents.",
                         "technology": "Go, Goa-AI \u0026 Pulse",
                         "tags": "Element,Container",
                         "url": "https://github.com/goadesign/chorus",
@@ -35,6 +53,15 @@
                                 "destinationId": "1qt01kv",
                                 "technology": "Pulse Semaphore",
                                 "interactionStyle": "Synchronous"
+                            },
+                            {
+                                "id": "qy6o6y",
+                                "description": "Observes terminal status and wakes idle agents",
+                                "tags": "Relationship,Asynchronous",
+                                "sourceId": "1fnj5rf",
+                                "destinationId": "19xsv31",
+                                "technology": "Local hc connect",
+                                "interactionStyle": "Asynchronous"
                             },
                             {
                                 "id": "ro0jkd",
@@ -69,6 +96,13 @@
                         "tags": "Element,Container,Database"
                     }
                 ]
+            },
+            {
+                "id": "19xsv31",
+                "name": "Herdr Core",
+                "description": "Runs local agent terminals and reports their current status.",
+                "tags": "Element,Software System",
+                "location": "External"
             },
             {
                 "id": "1gl0uzg",
@@ -109,7 +143,13 @@
                         "id": "17lwoy0"
                     },
                     {
+                        "id": "19xsv31"
+                    },
+                    {
                         "id": "1ca6gcd"
+                    },
+                    {
+                        "id": "1cta2d6"
                     },
                     {
                         "id": "1fnj5rf"
@@ -131,8 +171,16 @@
                         "description": "Appends messages and snapshots unread deltas when head \u003e watermark"
                     },
                     {
+                        "id": "40ghaq",
+                        "description": "Reads swarm activity and posts messages"
+                    },
+                    {
                         "id": "nbsalm",
                         "description": "Acquires 1-slot lease to linearize sequence numbers and head updates"
+                    },
+                    {
+                        "id": "qy6o6y",
+                        "description": "Observes terminal status and wakes idle agents"
                     },
                     {
                         "id": "ro0jkd",

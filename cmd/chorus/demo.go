@@ -7,35 +7,30 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
+
+	genviewclient "github.com/goadesign/chorus/gen/http/view/client"
+	genview "github.com/goadesign/chorus/gen/view"
+	goahttp "goa.design/goa/v3/http"
 )
 
-type (
-	// demoViewSnapshot captures the subset of GET /swarms/<swarm>/view needed to
-	// reset existing demo channels cleanly without duplicating direct messages.
-	demoViewSnapshot struct {
-		// Agents lists registered handles in the target swarm.
-		Agents []struct {
-			// Handle is the registered agent identifier without '@'.
-			Handle string `json:"handle"`
-		} `json:"agents"`
-		// Inboxes lists non-empty direct-message inboxes in the target swarm.
-		Inboxes []struct {
-			// Recipient is the handle whose inbox holds Messages.
-			Recipient string `json:"recipient"`
-			// Messages holds retained direct messages in the inbox.
-			Messages []json.RawMessage `json:"messages"`
-		} `json:"inboxes"`
-	}
-)
+// demoMessage identifies one post from the demo script in an existing conversation.
+type demoMessage struct {
+	// target owns the sequence assigned to the message.
+	target string
+	// sender and text identify the scripted message within the target.
+	sender string
+	text   string
+}
 
 const (
 	// defaultDemoSwarm is the isolated swarm namespace populated by "chorus demo".
@@ -106,7 +101,7 @@ func runDemo(args []string, out io.Writer, open func(string) error) error {
 	return nil
 }
 
-// seedDemoSwarm resets any prior demo channels in swarm and publishes a 9-step
+// seedDemoSwarm publishes missing posts from a 9-step
 // cross-model passkey verification workflow (7 posts in #passkeys, 1 post in
 // #benchmarks, and 1 direct message) across Claude, Codex, Gemini, and a human lead.
 func seedDemoSwarm(ctx context.Context, baseURL *url.URL, swarm string) error {
@@ -117,34 +112,21 @@ func seedDemoSwarm(ctx context.Context, baseURL *url.URL, swarm string) error {
 		human  = "you-demo"
 	)
 
-	existing, err := fetchDemoView(ctx, baseURL, swarm)
+	transport := genviewclient.NewClient(baseURL.Scheme, baseURL.Host,
+		&http.Client{Timeout: demoToolTimeout}, goahttp.RequestEncoder, goahttp.ResponseDecoder, false)
+	client := genview.NewClient(transport.Swarms(), transport.View(), transport.PostMessage())
+	existing, err := client.View(ctx, &genview.ViewPayload{Swarm: swarm})
 	if err != nil {
-		return err
+		return fmt.Errorf("read demo swarm: %w", err)
 	}
-	registered := make(map[string]bool, len(existing.Agents))
-	for _, ag := range existing.Agents {
-		registered[ag.Handle] = true
-	}
-	hasExistingDM := false
-	for _, ib := range existing.Inboxes {
-		if ib.Recipient == claude && len(ib.Messages) > 0 {
-			hasExistingDM = true
-			break
-		}
-	}
-
-	// Leave any previously seeded channels for registered demo handles so #passkeys
-	// and #benchmarks purge cleanly back to sequence #1.
-	for _, ag := range []string{codex, claude, gemini, human} {
-		if !registered[ag] {
-			continue
-		}
-		if _, err := callMCPTool(ctx, baseURL, "leave", map[string]any{
-			"agent":    ag,
-			"channels": []string{"#passkeys", "#benchmarks"},
-		}, demoToolTimeout); err != nil {
+	if len(existing.Agents) == 0 {
+		if err := resetExpiredDemoChannels(ctx, baseURL, swarm, codex, existing); err != nil {
 			return err
 		}
+	}
+	registered := make(map[string][]string, len(existing.Agents))
+	for _, ag := range existing.Agents {
+		registered[ag.Handle] = ag.Channels
 	}
 
 	joins := []map[string]any{
@@ -170,15 +152,17 @@ func seedDemoSwarm(ctx context.Context, baseURL *url.URL, swarm string) error {
 			"model":    "Gemini 4 Argon (High)",
 			"role":     "Verification · owns auth/verify_test.go",
 		},
-		{
-			"swarm":    swarm,
-			"agent":    human,
-			"channels": []string{"#passkeys"},
-			"model":    "human",
-			"role":     "Product Lead",
-		},
 	}
 	for _, j := range joins {
+		agent := j["agent"].(string)
+		channels := j["channels"].([]string)
+		alreadyJoined := true
+		for _, channel := range channels {
+			alreadyJoined = alreadyJoined && slices.Contains(registered[agent], channel)
+		}
+		if alreadyJoined {
+			continue
+		}
 		if _, err := callMCPTool(ctx, baseURL, "join", j, demoToolTimeout); err != nil {
 			return err
 		}
@@ -213,47 +197,54 @@ func seedDemoSwarm(ctx context.Context, baseURL *url.URL, swarm string) error {
 			"reply_to": 3,
 			"text":     "500-goroutine replay sweep passed (0 duplicate accepts), but expired challenges still hit the 500 path @" + claude + " @" + codex + ".",
 		},
-	}
-	if !hasExistingDM {
-		steps = append(steps, map[string]any{
+		{
 			"agent": codex,
 			"to":    "@" + claude,
 			"text":  "Map store.ErrChallengeExpired to Goa Unauthorized(\"challenge_expired\") in auth/service.go to satisfy @" + human + "'s 401 requirement.",
-		})
-	}
-	steps = append(steps,
-		map[string]any{
+		},
+		{
 			"agent":    claude,
 			"to":       "#passkeys",
 			"reply_to": 2,
 			"text":     "@" + human + " Mapped store.ErrChallengeExpired to 401 challenge_expired in auth/service.go and added TestVerifyAssertionExpiredChallenge. @" + gemini + " ready for re-verify.",
 		},
-		map[string]any{
+		{
 			"agent":    gemini,
 			"to":       "#passkeys",
 			"reply_to": 5,
 			"text":     "Verified on f83c91a: 1,000 parallel replay + expiry assertions pass with -race (0 errors, p99 1.3ms). Ready to ship.",
 		},
-		map[string]any{
+		{
 			"agent":    codex,
 			"to":       "#passkeys",
 			"reply_to": 6,
 			"text":     "Security & contract review clean on f83c91a. Ready to merge @" + gemini + ".",
 		},
-	)
-
-	for i, step := range steps {
-		if i > 0 {
-			time.Sleep(demoStepDelay)
-		}
-		if _, err := callMCPTool(ctx, baseURL, "send", step, demoToolTimeout); err != nil {
-			return err
-		}
 	}
 
-	// Drain claude, codex, and human to the head while leaving gemini 1 behind
-	// (@mentioned on the final message) so the timeline highlights unread lag.
-	for _, ag := range []string{claude, codex, human} {
+	// Keep already-seeded posts. If a run stopped midway, use the actual
+	// sequence of each saved post when sending replies to it.
+	saved := demoMessages(existing)
+	positions := make(map[string][]int)
+	for _, step := range steps {
+		key := demoMessage{target: step["to"].(string), sender: step["agent"].(string), text: step["text"].(string)}
+		seq, ok := saved[key]
+		if !ok {
+			if ref, ok := step["reply_to"].(int); ok {
+				step["reply_to"] = positions[key.target][ref-1]
+			}
+			seq, err = publishDemoMessage(ctx, client, baseURL, swarm, key, step, human)
+			if err != nil {
+				return err
+			}
+			time.Sleep(demoStepDelay)
+		}
+		positions[key.target] = append(positions[key.target], seq)
+	}
+
+	// Drain the two agents whose reviews are complete so Gemini's unread
+	// mention on the final post remains visible in the dashboard.
+	for _, ag := range []string{claude, codex} {
 		if _, err := callMCPTool(ctx, baseURL, "read", map[string]any{"agent": ag}, demoToolTimeout); err != nil {
 			return err
 		}
@@ -261,29 +252,85 @@ func seedDemoSwarm(ctx context.Context, baseURL *url.URL, swarm string) error {
 	return nil
 }
 
-// fetchDemoView reads the current dashboard snapshot of swarm so seedDemoSwarm
-// only leaves registered handles and avoids appending duplicate direct messages.
-func fetchDemoView(ctx context.Context, baseURL *url.URL, swarm string) (demoViewSnapshot, error) {
-	viewURL := strings.TrimRight(baseURL.String(), "/") + "/swarms/" + url.PathEscape(swarm) + "/view?wait=0"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, viewURL, nil)
+// resetExpiredDemoChannels replays a finished demo after its profiles expire.
+// Use Chorus's existing last-subscriber cleanup for channels seeded by the
+// demo. The direct-message inbox remains available for de-duplication.
+func resetExpiredDemoChannels(
+	ctx context.Context, baseURL *url.URL, swarm, worker string, view *genview.SwarmView,
+) error {
+	var channels []string
+	for _, channel := range view.Channels {
+		if (channel.Name == "#passkeys" || channel.Name == "#benchmarks") &&
+			len(channel.Messages) > 0 && !slices.ContainsFunc(channel.Messages, func(msg *genview.Message) bool {
+			switch msg.Sender {
+			case "codex-demo", "claude-demo", "gemini-demo", "you-demo":
+				return false
+			default:
+				return true
+			}
+		}) {
+			channels = append(channels, channel.Name)
+		}
+	}
+	if len(channels) == 0 {
+		return nil
+	}
+	if _, err := callMCPTool(ctx, baseURL, "join", map[string]any{
+		"agent": worker, "swarm": swarm, "channels": channels, "model": "GPT-6.1-Sol",
+	}, demoToolTimeout); err != nil {
+		return fmt.Errorf("open expired demo channels: %w", err)
+	}
+	if _, err := callMCPTool(ctx, baseURL, "leave", map[string]any{
+		"agent": worker, "channels": channels,
+	}, demoToolTimeout); err != nil {
+		return fmt.Errorf("reset expired demo channels: %w", err)
+	}
+	view.Channels = slices.DeleteFunc(view.Channels, func(channel *genview.Channel) bool {
+		return slices.Contains(channels, channel.Name)
+	})
+	return nil
+}
+
+// demoMessages indexes the prior posts by conversation, sender and exact text.
+func demoMessages(view *genview.SwarmView) map[demoMessage]int {
+	saved := make(map[demoMessage]int)
+	for _, ch := range view.Channels {
+		for _, msg := range ch.Messages {
+			saved[demoMessage{target: ch.Name, sender: msg.Sender, text: msg.Text}] = msg.Seq
+		}
+	}
+	for _, inbox := range view.Inboxes {
+		for _, msg := range inbox.Messages {
+			saved[demoMessage{target: "@" + inbox.Recipient, sender: msg.Sender, text: msg.Text}] = msg.Seq
+		}
+	}
+	return saved
+}
+
+// publishDemoMessage uses the same transport as the participant being shown.
+func publishDemoMessage(
+	ctx context.Context, client *genview.Client, baseURL *url.URL, swarm string,
+	post demoMessage, step map[string]any, human string,
+) (int, error) {
+	if post.sender == human {
+		role := "Product Lead"
+		res, err := client.PostMessage(ctx, &genview.PostMessagePayload{
+			Swarm: swarm, Sender: post.sender, Kind: "human", Role: &role,
+			To: post.target, Text: post.text,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("seed human demo message: %w", err)
+		}
+		return res.Message.Seq, nil
+	}
+	ack, err := callMCPTool(ctx, baseURL, "send", step, demoToolTimeout)
 	if err != nil {
-		return demoViewSnapshot{}, fmt.Errorf("build view request: %w", err)
+		return 0, err
 	}
-	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: demoToolTimeout}
-	resp, err := client.Do(req)
+	line, _, _ := strings.Cut(ack, "\n")
+	seq, err := strconv.Atoi(strings.TrimPrefix(line, "sent "+post.target+"#"))
 	if err != nil {
-		return demoViewSnapshot{}, fmt.Errorf("query swarm view %s: %w", viewURL, err)
+		return 0, fmt.Errorf("read sequence for demo post to %s: %w", post.target, err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return demoViewSnapshot{}, fmt.Errorf("query swarm view %s: HTTP %d", viewURL, resp.StatusCode)
-	}
-	var snap demoViewSnapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
-		return demoViewSnapshot{}, fmt.Errorf("decode swarm view %s: %w", viewURL, err)
-	}
-	return snap, nil
+	return seq, nil
 }

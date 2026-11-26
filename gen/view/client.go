@@ -15,22 +15,21 @@ import (
 
 // Client is the "view" service client.
 type Client struct {
-	SwarmsEndpoint goa.Endpoint
-	ViewEndpoint   goa.Endpoint
+	SwarmsEndpoint      goa.Endpoint
+	ViewEndpoint        goa.Endpoint
+	PostMessageEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "view" service client given the endpoints.
-func NewClient(swarms, view goa.Endpoint) *Client {
+func NewClient(swarms, view, postMessage goa.Endpoint) *Client {
 	return &Client{
-		SwarmsEndpoint: swarms,
-		ViewEndpoint:   view,
+		SwarmsEndpoint:      swarms,
+		ViewEndpoint:        view,
+		PostMessageEndpoint: postMessage,
 	}
 }
 
 // Swarms calls the "swarms" endpoint of the "view" service.
-// Swarms may return the following errors:
-//   - "not_modified" (type *goa.ServiceError): The swarm did not change before the wait ended.
-//   - error: internal error
 func (c *Client) Swarms(ctx context.Context) (res *SwarmsResult, err error) {
 	var ires any
 	ires, err = c.SwarmsEndpoint(ctx, nil)
@@ -51,4 +50,18 @@ func (c *Client) View(ctx context.Context, p *ViewPayload) (res *SwarmView, err 
 		return
 	}
 	return ires.(*SwarmView), nil
+}
+
+// PostMessage calls the "post_message" endpoint of the "view" service.
+// PostMessage may return the following errors:
+//   - "invalid_target" (type *goa.ServiceError): Only a channel can have a pinned message.
+//   - "handle_in_use" (type *goa.ServiceError): The sender handle is active in a different swarm or belongs to a different participant kind.
+//   - error: internal error
+func (c *Client) PostMessage(ctx context.Context, p *PostMessagePayload) (res *PostMessageResult, err error) {
+	var ires any
+	ires, err = c.PostMessageEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*PostMessageResult), nil
 }

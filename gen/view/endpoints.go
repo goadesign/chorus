@@ -15,15 +15,17 @@ import (
 
 // Endpoints wraps the "view" service endpoints.
 type Endpoints struct {
-	Swarms goa.Endpoint
-	View   goa.Endpoint
+	Swarms      goa.Endpoint
+	View        goa.Endpoint
+	PostMessage goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "view" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Swarms: NewSwarmsEndpoint(s),
-		View:   NewViewEndpoint(s),
+		Swarms:      NewSwarmsEndpoint(s),
+		View:        NewViewEndpoint(s),
+		PostMessage: NewPostMessageEndpoint(s),
 	}
 }
 
@@ -31,6 +33,7 @@ func NewEndpoints(s Service) *Endpoints {
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Swarms = m(e.Swarms)
 	e.View = m(e.View)
+	e.PostMessage = m(e.PostMessage)
 }
 
 // NewSwarmsEndpoint returns an endpoint function that calls the method
@@ -47,5 +50,14 @@ func NewViewEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*ViewPayload)
 		return s.View(ctx, p)
+	}
+}
+
+// NewPostMessageEndpoint returns an endpoint function that calls the method
+// "post_message" of service "view".
+func NewPostMessageEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*PostMessagePayload)
+		return s.PostMessage(ctx, p)
 	}
 }

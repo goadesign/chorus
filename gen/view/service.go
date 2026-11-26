@@ -21,16 +21,18 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// Serves the read-only browser dashboard data. Only requests addressed to a
-// loopback host are accepted; it never changes swarm state.
+// Serves the dashboard and accepts posts from people and local services. Only
+// requests addressed to a loopback host are accepted.
 type Service interface {
-	// List, sorted by name, the swarms in which at least one agent that joined or
-	// called who is still active within the online window or watching. A swarm
-	// whose agents all went idle is not listed.
+	// List swarms with at least one participant who is active within the online
+	// window or watching, sorted by name.
 	Swarms(context.Context) (res *SwarmsResult, err error)
 	// Return one swarm's agents, channels, inboxes, and retained messages. With
 	// if_none_match and wait, block until the snapshot differs or the wait ends.
 	View(context.Context, *ViewPayload) (res *SwarmView, err error)
+	// Publish as a person or local service and return the saved message. Posting
+	// to a channel creates it if needed and subscribes the sender.
+	PostMessage(context.Context, *PostMessagePayload) (res *PostMessageResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -47,19 +49,19 @@ const ServiceName = "view"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [2]string{"swarms", "view"}
+var MethodNames = [3]string{"swarms", "view", "post_message"}
 
-// A registered agent.
+// A registered participant.
 type Agent struct {
-	// Agent handle (without '@').
+	// Participant handle (without '@').
 	Handle string
-	// Role the agent advertised on join or who. Absent when none was given.
+	// Role the participant advertised. Absent when none was given.
 	Role *string
-	// Model the agent declared on its most recent join or who ('human' for a
-	// person using the dashboard). Absent for agents registered before declaring a
-	// model was required.
+	// The agent's declared model, or 'human' or 'service' for local senders.
+	// Absent for registrations made before a model was required.
 	Model *string
-	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
+	// Unix time in seconds of the participant's last Chorus call or presence
+	// refresh.
 	LastSeenUnix int64
 	// Channels the agent is subscribed to, sorted.
 	Channels []string
@@ -115,9 +117,8 @@ type Message struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64
-	// True when the sender had declared model 'human' when the message was sent.
-	// Absent otherwise, including for messages sent before senders declared a
-	// model.
+	// True for posts from people and false for local service posts. Absent for
+	// agent posts, including older messages without a declared model.
 	Human *bool
 	// The model the sender had declared when the message was sent, kept after the
 	// sender leaves. Absent for messages sent before Chorus recorded it.
@@ -154,6 +155,35 @@ type Position struct {
 	Mentioned bool
 }
 
+// PostMessagePayload is the payload type of the view service post_message
+// method.
+type PostMessagePayload struct {
+	// Swarm containing the sender and target.
+	Swarm string
+	// Sender's handle without '@'.
+	Sender string
+	// Participant kind of the sender.
+	Kind string
+	// Optional role to display next to the handle.
+	Role *string
+	// Channel or direct-message recipient, including '#' or '@'.
+	To string
+	// Message body to save exactly as sent.
+	Text string
+	// Sequence number of the message being replied to.
+	ReplyTo *int
+	// When true, replace the target channel's active pin.
+	Pin bool
+}
+
+// PostMessageResult is the result type of the view service post_message method.
+type PostMessageResult struct {
+	// Channel or direct-message recipient.
+	Target string
+	// The published message.
+	Message *Message
+}
+
 // SwarmView is the result type of the view service view method.
 type SwarmView struct {
 	// Swarm name.
@@ -188,6 +218,16 @@ type ViewPayload struct {
 // MakeNotModified builds a goa.ServiceError from an error.
 func MakeNotModified(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "not_modified", false, false, false)
+}
+
+// MakeInvalidTarget builds a goa.ServiceError from an error.
+func MakeInvalidTarget(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "invalid_target", false, false, false)
+}
+
+// MakeHandleInUse builds a goa.ServiceError from an error.
+func MakeHandleInUse(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "handle_in_use", false, false, false)
 }
 
 // agentInt64Transport stores JSON fields until they have been validated.
@@ -272,15 +312,15 @@ func ValidateinboxIntTransport(value inboxIntTransport) (err error) {
 
 // jsonAgentTransport stores JSON fields until they have been validated.
 type jsonAgentTransport struct {
-	// Agent handle (without '@').
+	// Participant handle (without '@').
 	Handle *string `json:"handle"`
-	// Role the agent advertised on join or who. Absent when none was given.
+	// Role the participant advertised. Absent when none was given.
 	Role *string `json:"role,omitempty"`
-	// Model the agent declared on its most recent join or who ('human' for a
-	// person using the dashboard). Absent for agents registered before declaring a
-	// model was required.
+	// The agent's declared model, or 'human' or 'service' for local senders.
+	// Absent for registrations made before a model was required.
 	Model *string `json:"model,omitempty"`
-	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
+	// Unix time in seconds of the participant's last Chorus call or presence
+	// refresh.
 	LastSeenUnix *agentInt64Transport `json:"last_seen_unix"`
 	// Channels the agent is subscribed to, sorted.
 	Channels []string `json:"channels"`
@@ -445,9 +485,8 @@ type jsonMessageTransport struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs *channelInt64Transport `json:"sent_at_ms"`
-	// True when the sender had declared model 'human' when the message was sent.
-	// Absent otherwise, including for messages sent before senders declared a
-	// model.
+	// True for posts from people and false for local service posts. Absent for
+	// agent posts, including older messages without a declared model.
 	Human *bool `json:"human,omitempty"`
 	// The model the sender had declared when the message was sent, kept after the
 	// sender leaves. Absent for messages sent before Chorus recorded it.
@@ -561,6 +600,33 @@ func validatejsonPositionTransport(value *jsonPositionTransport) (err error) {
 	if value.Behind != nil {
 		if int(*value.Behind) < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.behind", int(*value.Behind), 0, true))
+		}
+	}
+	return err
+}
+
+// jsonPostMessageResultTransport stores JSON fields until they have been validated.
+type jsonPostMessageResultTransport struct {
+	// Channel or direct-message recipient.
+	Target *string `json:"target"`
+	// The published message.
+	Message *jsonMessageTransport `json:"message"`
+}
+
+// validatejsonPostMessageResultTransport checks decoded JSON before it becomes a service value.
+func validatejsonPostMessageResultTransport(value *jsonPostMessageResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Target == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("target", "body"))
+	}
+	if value.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if value.Message != nil {
+		if err2 := validatejsonMessageTransport(value.Message); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
@@ -717,6 +783,19 @@ func validateInboxOriginal(value *Inbox) (err error) {
 			if err2 := validateMessageOriginal(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
+		}
+	}
+	return err
+}
+
+// validatePostMessageResultOriginal checks the original typed value before JSON conversion.
+func validatePostMessageResultOriginal(value *PostMessageResult) (err error) {
+	if value.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "value"))
+	}
+	if value.Message != nil {
+		if err2 := validateMessageOriginal(value.Message); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
@@ -1443,6 +1522,92 @@ func DecodePosition(data []byte) (out *Position, err error) {
 	return out, nil
 }
 
+// EncodePostMessageResult turns a service value into JSON using the field names in the Goa design.
+func EncodePostMessageResult(in *PostMessageResult) ([]byte, error) {
+	if err := checkPostMessageResultValue(in); err != nil {
+		return nil, fmt.Errorf("encode PostMessageResult JSON: %w", err)
+	}
+	if err := validatePostMessageResultOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate PostMessageResult value: %w", err)
+	}
+	var body *jsonPostMessageResultTransport
+	{
+		body = &jsonPostMessageResultTransport{
+			Target: &in.Target,
+		}
+		body.Message = encodeMessageToMessageTransport2(in.Message)
+	}
+	if err := validatejsonPostMessageResultTransport(body); err != nil {
+		return nil, fmt.Errorf("validate PostMessageResult JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode PostMessageResult JSON: %w", err)
+	}
+	return data, nil
+}
+
+// ValidatePostMessageResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidatePostMessageResultValue(in *PostMessageResult) error {
+	if err := checkPostMessageResultValue(in); err != nil {
+		return fmt.Errorf("validate PostMessageResult value: %w", err)
+	}
+	if err := validatePostMessageResultOriginal(in); err != nil {
+		return fmt.Errorf("validate PostMessageResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "PostMessageResult")
+	}
+
+	var body *jsonPostMessageResultTransport
+	{
+		body = &jsonPostMessageResultTransport{
+			Target: &in.Target,
+		}
+		body.Message = encodeMessageToMessageTransport2(in.Message)
+	}
+	if err := validatejsonPostMessageResultTransport(body); err != nil {
+		return fmt.Errorf("validate PostMessageResult value: %w", err)
+	}
+	return nil
+}
+
+// DecodePostMessageResult checks JSON field names from the Goa design and returns a service value.
+func DecodePostMessageResult(data []byte) (out *PostMessageResult, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode PostMessageResult JSON: %w", err)
+	}
+	if err := validatePostMessageResultJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode PostMessageResult JSON: %w", err)
+	}
+	var body *jsonPostMessageResultTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode PostMessageResult JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode PostMessageResult JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode PostMessageResult JSON after first value: %w", err)
+	}
+	if err := validatejsonPostMessageResultTransport(body); err != nil {
+		return out, fmt.Errorf("validate PostMessageResult JSON: %w", err)
+	}
+	{
+		out = &PostMessageResult{
+			Target: *body.Target,
+		}
+		out.Message = decodeMessageTransportToMessage(body.Message)
+	}
+	return out, nil
+}
+
 // EncodeSwarmView turns a service value into JSON using the field names in the Goa design.
 func EncodeSwarmView(in *SwarmView) ([]byte, error) {
 	if err := checkSwarmViewValue(in); err != nil {
@@ -1793,6 +1958,25 @@ func encodeMessageToMessageTransport(v *Message) *jsonMessageTransport {
 	return res
 }
 
+func encodeMessageToMessageTransport2(v *Message) *jsonMessageTransport {
+	res := &jsonMessageTransport{
+		Sender: &v.Sender,
+		Text:   &v.Text,
+		Human:  v.Human,
+		Model:  v.Model,
+	}
+	seq := channelIntTransport(v.Seq)
+	res.Seq = &seq
+	if v.ReplyTo != nil {
+		replyTo := channelIntTransport(*v.ReplyTo)
+		res.ReplyTo = &replyTo
+	}
+	sentAtMs := channelInt64Transport(v.SentAtMs)
+	res.SentAtMs = &sentAtMs
+
+	return res
+}
+
 func encodePinToPinTransport(v *Pin) *jsonPinTransport {
 	res := &jsonPinTransport{
 		Sender: &v.Sender,
@@ -1849,28 +2033,28 @@ func validateAgentJSONValue(path string, value any, description string) error {
 		case "handle":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Agent handle (without '@').",
+				typed[key], "Participant handle (without '@').",
 			); err != nil {
 				return err
 			}
 		case "last_seen_unix":
 			if err := validateAgentJSONValue4(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Unix time in seconds of the agent's last Chorus call or watcher heartbeat.",
+				typed[key], "Unix time in seconds of the participant's last Chorus call or presence refresh.",
 			); err != nil {
 				return err
 			}
 		case "model":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.",
+				typed[key], "The agent's declared model, or 'human' or 'service' for local senders. Absent for registrations made before a model was required.",
 			); err != nil {
 				return err
 			}
 		case "role":
 			if err := validateAgentJSONValue3(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Role the agent advertised on join or who. Absent when none was given.",
+				typed[key], "Role the participant advertised. Absent when none was given.",
 			); err != nil {
 				return err
 			}
@@ -2109,7 +2293,7 @@ func validateChannelJSONValue4(path string, value any, description string) error
 		case "human":
 			if err := validateAgentJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.",
+				typed[key], "True for posts from people and false for local service posts. Absent for agent posts, including older messages without a declared model.",
 			); err != nil {
 				return err
 			}
@@ -2415,6 +2599,50 @@ func validateInboxJSONValue2(path string, value any, description string) error {
 			item, description,
 		); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validatePostMessageResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePostMessageResultJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "message":
+			if err := validateChannelJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The published message.",
+			); err != nil {
+				return err
+			}
+		case "target":
+			if err := validateAgentJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Channel or direct-message recipient.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"message",
+				"target",
+			})
 		}
 	}
 	return nil
@@ -2964,6 +3192,39 @@ func checkPositionValue(in *Position) error {
 	active := make(map[any]bool)
 	if err := checkChannelPositionValue(in, "$", active); err != nil {
 		return err
+	}
+	return nil
+}
+
+// checkPostMessageResultValue checks text and cycles before conversion.
+func checkPostMessageResultValue(in *PostMessageResult) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkPostMessageResultPostMessageResultValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkPostMessageResultPostMessageResultValue checks one generated value on the active path.
+func checkPostMessageResultPostMessageResultValue(in *PostMessageResult, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Target)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "target", false))
+		}
+		if err := checkChannelMessageValue(in.Message, generatedJSONChildPath(field, "message", false), active); err != nil {
+			return err
+		}
 	}
 	return nil
 }

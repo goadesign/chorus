@@ -680,7 +680,7 @@ test('app.js sendMessage raises chat without ok banner, announces errors, and gu
 
   let holdSend = null;
   let resolveLongPoll = null;
-  const mcpCalls = [];
+  const posts = [];
   const fetchMock = async (url, opts = {}) => {
     if (url === '/swarms') {
       return {
@@ -715,10 +715,10 @@ test('app.js sendMessage raises chat without ok banner, announces errors, and gu
         json: async () => entry.doc,
       };
     }
-    if (url === '/mcp') {
+    if (/^\/swarms\/[^/]+\/messages$/.test(url)) {
       const body = JSON.parse(opts.body);
-      mcpCalls.push(body.params);
-      if (body.params.name === 'send' && body.params.arguments.text === 'hey @claude') {
+      posts.push({ url, method: opts.method, body });
+      if (body.text === 'hey @claude') {
         views.alpha = {
           etag: '"alpha-2"',
           doc: {
@@ -739,17 +739,16 @@ test('app.js sendMessage raises chat without ok banner, announces errors, and gu
             inboxes: [],
           },
         };
-        // Simulate view.go waking the active ?wait=25 long-poll BEFORE POST /mcp returns.
+        // Simulate view.go waking the active ?wait=25 long-poll BEFORE POST /swarms/{swarm}/messages returns.
         resolveLongPoll?.();
         await new Promise((r) => setTimeout(r, 0));
         await new Promise((r) => setTimeout(r, 0));
       }
-      if (body.params.name === 'send' && holdSend) await holdSend;
-      const to = body.params.arguments.to || '#build';
+      if (holdSend) await holdSend;
       return {
         ok: true,
-        status: 200,
-        json: async () => ({ result: { content: [{ text: `sent ${to}#1` }] } }),
+        status: 201,
+        json: async () => ({ target: body.to, message: { seq: 1 } }),
       };
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -801,11 +800,15 @@ test('app.js sendMessage raises chat without ok banner, announces errors, and gu
   assert.equal(feedback.hidden, true);
   assert.equal(feedback.textContent, '');
 
-  // 2. Valid send without ever clicking #send-text: joins + sends, keeps #composer-feedback hidden, raises #chat-sheet with dots.
+  // 2. A valid send posts once and opens the chat sheet for the saved message.
   sendBtn.emit('click');
   await flush();
   await flush();
   await flush();
+  assert.deepEqual(posts, [{
+    url: '/swarms/alpha/messages', method: 'POST',
+    body: { sender: 'raphael', kind: 'human', to: '#build', text: 'hey @claude', pin: false },
+  }]);
   assert.equal(feedback.hidden, true);
   assert.equal(sendText.value, '');
   assert.equal(sheet.classList.contains('is-open'), true);

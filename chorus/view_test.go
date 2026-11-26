@@ -1,6 +1,7 @@
 package chorus_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ type (
 			Model    *string  `json:"model"`
 			Channels []string `json:"channels"`
 			Watching bool     `json:"watching_on_this_server"`
+			LastSeen int64    `json:"last_seen_unix"`
 		} `json:"agents"`
 		// Channels lists channels sorted by name.
 		Channels []struct {
@@ -92,11 +94,8 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	lead.call("send", map[string]any{"to": "#auth", "text": "Goal: passkeys | Verify: go test ./...", "pin": true})
 	lead.send("#auth", "@api please wire ConsumeChallenge", 1)
 	lead.send("@api", "use GETDEL", 0)
-	human := cluster.newAgent(0, "auth", "raphael")
-	human.call("join", map[string]any{"channels": []string{"#auth"}, "model": "human", "role": "Product owner"})
-	human.call("send", map[string]any{"to": "#auth", "text": "Please focus on contrast"})
-
 	base := cluster.replicas[0].httpServer.URL
+	postLocalMessage(t, base, "auth", "raphael", "human", "#auth", "Please focus on contrast", "Product owner")
 	before := time.Now().UnixMilli()
 	doc, etag := getView(t, base, "auth", "", 0, http.StatusOK)
 
@@ -152,6 +151,189 @@ func TestSwarmViewReportsStateWithoutChangingIt(t *testing.T) {
 	assert.Equal(t, 0, doc2.Channels[0].Positions[0].Behind)
 	assert.False(t, doc2.Channels[0].Positions[0].Mentioned)
 	assert.Equal(t, 0, doc2.Inboxes[0].Behind)
+}
+
+// TestLocalMessageIdentity checks HTTP provenance, MCP isolation, and the
+// recipient's unread view across two server replicas.
+func TestLocalMessageIdentity(t *testing.T) {
+	cluster := newTestCluster(t, 2, nil)
+	const swarm = "review"
+	first, second := cluster.replicas[0].httpServer.URL, cluster.replicas[1].httpServer.URL
+	agent := cluster.newAgent(0, swarm, "agent")
+	agent.call("join", map[string]any{"channels": []string{"#review"}})
+	agent.send("#review", "initial post", 0)
+
+	body := map[string]any{
+		"sender": "person", "kind": "human", "to": "#review", "text": "  Please revise.\n",
+		"reply_to": 1, "pin": true,
+	}
+	msg, _ := postMessage(t, second, swarm, body, http.StatusCreated)
+	assert.Equal(t, 2, msg.Seq)
+	assert.Equal(t, body["text"], msg.Text)
+	assert.Equal(t, "person", msg.Sender)
+	require.NotNil(t, msg.ReplyTo)
+	assert.Equal(t, 1, *msg.ReplyTo)
+	require.NotNil(t, msg.Model)
+	assert.Equal(t, "human", *msg.Model)
+	require.NotNil(t, msg.Human)
+	assert.True(t, *msg.Human)
+	assert.Positive(t, msg.SentAtMs)
+	view, _ := getView(t, second, swarm, "", 0, http.StatusOK)
+	require.Len(t, view.Channels, 1)
+	require.NotNil(t, view.Channels[0].Pin)
+	assert.Equal(t, msg.Seq, view.Channels[0].Pin.Seq)
+	assert.Equal(t, msg, view.Channels[0].Messages[1])
+	agent.send("#review", "reply to @person", msg.Seq)
+	view, _ = getView(t, first, swarm, "", 0, http.StatusOK)
+	require.Len(t, view.Channels[0].Positions, 2)
+	assert.True(t, view.Channels[0].Positions[1].Mentioned)
+	answer := postLocalMessage(t, second, swarm, "person", "human", "#review", "Revision ready", "")
+	view, _ = getView(t, second, swarm, "", 0, http.StatusOK)
+	position := view.Channels[0].Positions[1]
+	assert.Equal(t, "person", position.Handle)
+	assert.Equal(t, answer.Seq, position.ReadSeq)
+	assert.Zero(t, position.Behind)
+	assert.False(t, position.Mentioned)
+
+	service := postLocalMessage(t, first, swarm, "coordinator", "service", "@agent", "ready", "Workflow status")
+	require.NotNil(t, service.Human)
+	assert.False(t, *service.Human)
+	require.NotNil(t, service.Model)
+	assert.Equal(t, "service", *service.Model)
+	assert.Contains(t, agent.call("read", map[string]any{"mentions_only": true}), "@coordinator->me#1: ready")
+
+	// Reserved handles cannot enter any MCP method under any model claim.
+	for _, handle := range []string{"person", "coordinator"} {
+		fake := cluster.newAgent(0, swarm, handle)
+		fake.callExpectingError("who", map[string]any{})
+		fake.callExpectingError("join", map[string]any{"channels": []string{"#review"}})
+		fake.callExpectingError("send", map[string]any{"to": "#review", "text": "fake"})
+		fake.callExpectingError("read", map[string]any{})
+		fake.callExpectingError("leave", map[string]any{"channels": []string{"#review"}})
+	}
+	newcomer := cluster.newAgent(1, swarm, "newcomer")
+	newcomer.callExpectingError("who", map[string]any{"model": " HuMaN "})
+	newcomer.callExpectingError("join", map[string]any{"model": "SERVICE", "channels": []string{"#review"}})
+
+	for _, tc := range []struct {
+		name, swarm, sender, kind, target, code string
+		pin                                     bool
+		status                                  int
+	}{
+		{"agent handle", swarm, "agent", "human", "#review", "handle_in_use", false, http.StatusConflict},
+		{"different kind", swarm, "person", "service", "#review", "handle_in_use", false, http.StatusConflict},
+		{"different swarm", "other", "person", "human", "#review", "handle_in_use", false, http.StatusConflict},
+		{"pinned direct message", swarm, "person", "human", "@agent", "invalid_target", true, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, code := postMessage(t, first, tc.swarm, map[string]any{
+				"sender": tc.sender, "kind": tc.kind, "to": tc.target, "text": "bad post", "pin": tc.pin,
+			}, tc.status)
+			assert.Equal(t, tc.code, code)
+		})
+	}
+}
+
+// TestStaleReplicaUsesCurrentBinding simulates a state change whose pub/sub
+// notification was lost. The stale server must resolve a handle through the
+// current binding before accepting another agent operation.
+func TestStaleReplicaUsesCurrentBinding(t *testing.T) {
+	cluster := newTestCluster(t, 2, nil)
+	old := cluster.newAgent(0, "old", "moving")
+	old.call("join", map[string]any{"channels": []string{"#work"}})
+	const oldState = "map:chorus:old:state:content"
+	ctx := t.Context()
+	require.NoError(t, cluster.rdb.HDel(ctx, oldState, "agent:moving", "model:moving", "sub:moving").Err())
+	require.NoError(t, cluster.rdb.HIncrBy(ctx, oldState, "=rev", 1).Err())
+	first, second := cluster.replicas[0].httpServer.URL, cluster.replicas[1].httpServer.URL
+	assert.Equal(t, "test-model", viewedModel(t, first, "old", "moving"), "replica deliberately remains stale")
+	postLocalMessage(t, second, "new", "moving", "human", "#work", "Moved", "")
+	old.callExpectingError("send", map[string]any{"to": "@peer", "text": "stale publisher"})
+	old.callExpectingError("leave", map[string]any{"channels": []string{"#work"}})
+	view, _ := getView(t, second, "new", "", 0, http.StatusOK)
+	require.Len(t, view.Agents, 1)
+	require.NotNil(t, view.Agents[0].Model)
+	assert.Equal(t, "human", *view.Agents[0].Model)
+}
+
+// TestLocalMessageRejectsRemotePeer verifies that a caller reaching a
+// non-loopback listener cannot make a post by setting a loopback Host.
+func TestLocalMessageRejectsRemotePeer(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	handler := chorus.NewHTTPHandler(cluster.replicas[0].svc)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/swarms/demo/messages",
+		strings.NewReader(`{"sender":"person","kind":"human","to":"@worker","text":"remote post"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.1:12345"
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusForbidden, resp.Code)
+}
+
+// TestTerminalActivity verifies presence and wake facts without reading a
+// message stream or advancing any read position on the terminal's behalf.
+func TestTerminalActivity(t *testing.T) {
+	cluster := newTestCluster(t, 1, nil)
+	svc := cluster.replicas[0].svc
+	ctx := t.Context()
+	const swarm = "terminal"
+	worker := cluster.newAgent(0, swarm, "worker")
+	writer := cluster.newAgent(0, swarm, "writer")
+	worker.call("join", map[string]any{"channels": []string{"#work"}})
+	writer.call("join", map[string]any{"channels": []string{"#work"}})
+	writer.send("#work", "passive channel update", 0)
+	sequences, err := svc.AgentWakeSequences(ctx, swarm, "worker")
+	require.NoError(t, err)
+	assert.Empty(t, sequences)
+
+	writer.send("#work", "ready for @worker", 0)
+	sequences, err = svc.AgentWakeSequences(ctx, swarm, "worker")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"#work": 2}, sequences)
+	assert.Contains(t, worker.call("read", map[string]any{"mentions_only": true}), "passive channel update")
+	sequences, err = svc.AgentWakeSequences(ctx, swarm, "worker")
+	require.NoError(t, err)
+	assert.Empty(t, sequences)
+
+	writer.send("@worker", "direct assignment", 0)
+	sequences, err = svc.AgentWakeSequences(ctx, swarm, "worker")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"@worker": 1}, sequences)
+
+	cluster.advanceClock(4 * time.Minute)
+	require.NoError(t, svc.TouchAgent(ctx, swarm, "worker"))
+	base := cluster.replicas[0].httpServer.URL
+	assert.Eventually(t, func() bool {
+		view, _ := getView(t, base, swarm, "", 0, http.StatusOK)
+		for _, participant := range view.Agents {
+			if participant.Handle == "worker" {
+				return participant.LastSeen == cluster.currentTime().Unix()
+			}
+		}
+		return false
+	}, time.Second, 5*time.Millisecond)
+	cluster.advanceClock(2 * time.Minute)
+	require.NoError(t, svc.TouchAgent(ctx, "other", "worker"))
+	require.NoError(t, svc.TouchAgent(ctx, swarm, "never-joined"))
+	view, _ := getView(t, base, swarm, "", 0, http.StatusOK)
+	require.Len(t, view.Agents, 1)
+	assert.Equal(t, "worker", view.Agents[0].Handle)
+}
+
+// TestExpiredProfileCannotRemoveNewBinding verifies that pruning a participant
+// from its previous swarm keeps the binding that other replicas and hc use.
+func TestExpiredProfileCannotRemoveNewBinding(t *testing.T) {
+	cluster := newTestCluster(t, 2, nil)
+	old := cluster.newAgent(0, "old", "moving")
+	old.call("who", map[string]any{})
+	cluster.advanceClock(6 * time.Minute)
+	moved := cluster.newAgent(1, "new", "moving")
+	moved.call("join", map[string]any{"channels": []string{"#work"}})
+	observer := cluster.newAgent(0, "old", "observer")
+	observer.call("who", map[string]any{})
+	bound, err := cluster.rdb.HGet(t.Context(), "chorus:agents", "moving").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "new", bound)
 }
 
 // TestJoinRequiresDeclaredModel verifies that who and join reject a missing
@@ -572,4 +754,41 @@ func viewedModel(t *testing.T, base, swarm, handle string) string {
 		}
 	}
 	return ""
+}
+
+// postLocalMessage drives the same local HTTP endpoint the dashboard uses.
+func postLocalMessage(t *testing.T, base, swarm, sender, kind, to, text, role string) viewMsg {
+	t.Helper()
+	msg, _ := postMessage(t, base, swarm, map[string]any{
+		"sender": sender, "kind": kind, "to": to, "text": text, "role": role,
+	}, http.StatusCreated)
+	return msg
+}
+
+// postMessage sends a browser-style request and decodes its typed result or error.
+func postMessage(t *testing.T, base, swarm string, body map[string]any, status int) (viewMsg, string) {
+	t.Helper()
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(base+"/swarms/"+swarm+"/messages", "application/json", bytes.NewReader(data))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, status, resp.StatusCode, "%s", raw)
+	if status != http.StatusCreated {
+		var failure struct {
+			Name string `json:"name"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &failure))
+		return viewMsg{}, failure.Name
+	}
+	var result struct {
+		Target  string  `json:"target"`
+		Message viewMsg `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	assert.Equal(t, body["to"], result.Target)
+	return result.Message, ""
 }

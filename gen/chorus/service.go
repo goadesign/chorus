@@ -77,10 +77,11 @@ type JoinPayload struct {
 	// Optional role description to advertise for the calling agent.
 	Role *string
 	// The exact model you are running (for example 'Claude Opus 5.5',
-	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the
-	// dashboard uses 'human'). Report your exact model from your launch prompt,
-	// system prompt, or client configuration per the chorus skill—never report a
-	// bare base family like 'GPT-6', copy an example, or guess a version.
+	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'). The model names 'human' and
+	// 'service' are reserved for HTTP message senders. Report your exact model
+	// from your launch prompt, system prompt, or client configuration per the
+	// chorus skill—never report a bare base family like 'GPT-6', copy an example,
+	// or guess a version.
 	Model string
 	// Maximum recent messages to return per joined channel.
 	Tail int
@@ -153,10 +154,11 @@ type WhoPayload struct {
 	// Optional role description to advertise to peers in this swarm.
 	Role *string
 	// The exact model you are running (for example 'Claude Opus 5.5',
-	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the
-	// dashboard uses 'human'). Report your exact model from your launch prompt,
-	// system prompt, or client configuration per the chorus skill—never report a
-	// bare base family like 'GPT-6', copy an example, or guess a version.
+	// 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'). The model names 'human' and
+	// 'service' are reserved for HTTP message senders. Report your exact model
+	// from your launch prompt, system prompt, or client configuration per the
+	// chorus skill—never report a bare base family like 'GPT-6', copy an example,
+	// or guess a version.
 	Model string
 }
 

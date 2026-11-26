@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goadesign/chorus/chorus"
 	"github.com/redis/go-redis/v9"
@@ -48,7 +50,11 @@ func TestRunDemoSeedsSwarmAndOpensDashboard(t *testing.T) {
 		_ = rdb.Close()
 	}()
 	require.NoError(t, connectOrStartRedis(context.Background(), rdb, redisAddr, t.TempDir()))
-	svc, err := chorus.New(rdb)
+	var seconds atomic.Int64
+	seconds.Store(time.Now().Unix())
+	svc, err := chorus.New(rdb, chorus.WithOnlineWindow(time.Minute), chorus.WithClock(func() time.Time {
+		return time.Unix(seconds.Load(), 0)
+	}))
 	require.NoError(t, err)
 	defer func() { _ = svc.Close() }()
 
@@ -75,14 +81,39 @@ func TestRunDemoSeedsSwarmAndOpensDashboard(t *testing.T) {
 	assert.Contains(t, out2.String(), `Seeded swarm "demo"`)
 	require.Len(t, opened, 1, "-no-open must not invoke open")
 
-	resp, err := http.Get(srv.URL + "/swarms/demo/view")
+	assertSeededDemo(t, srv.URL)
+	seconds.Add(2 * 60)
+	require.NoError(t, runDemo([]string{"-addr", listenAddr, "-swarm", "demo", "-no-open"}, &bytes.Buffer{}, openStub))
+	assertSeededDemo(t, srv.URL)
+
+	// Validation, non-loopback, and offline-server error cases.
+	var errOut bytes.Buffer
+	err = runDemo([]string{"-swarm", "../bad"}, &errOut, openStub)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid -swarm")
+
+	err = runDemo([]string{"-addr", "10.0.0.1:9440", "-no-open"}, &errOut, openStub)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only accepts localhost")
+
+	err = runDemo([]string{"-addr", "127.0.0.1:1", "-no-open"}, &errOut, openStub)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chorus is not running")
+}
+
+// assertSeededDemo checks the visible roster, three streams, and unread mention.
+func assertSeededDemo(t *testing.T, base string) {
+	t.Helper()
+	resp, err := http.Get(base + "/swarms/demo/view")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var view struct {
-		Swarm    string `json:"swarm"`
-		Agents   []any  `json:"agents"`
+		Swarm  string `json:"swarm"`
+		Agents []struct {
+			Handle string `json:"handle"`
+		} `json:"agents"`
 		Channels []struct {
 			Name      string `json:"name"`
 			HeadSeq   int    `json:"head_seq"`
@@ -102,6 +133,11 @@ func TestRunDemoSeedsSwarmAndOpensDashboard(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&view))
 	assert.Equal(t, "demo", view.Swarm)
 	assert.Len(t, view.Agents, 4)
+	var humanPresent bool
+	for _, participant := range view.Agents {
+		humanPresent = humanPresent || participant.Handle == "you-demo"
+	}
+	assert.True(t, humanPresent, "the scripted user must be present after replay")
 	require.Len(t, view.Inboxes, 1)
 	assert.Equal(t, "claude-demo", view.Inboxes[0].Recipient)
 	assert.Equal(t, 1, view.Inboxes[0].HeadSeq)
@@ -124,17 +160,4 @@ func TestRunDemoSeedsSwarmAndOpensDashboard(t *testing.T) {
 		}
 	}
 
-	// Validation, non-loopback, and offline-server error cases.
-	var errOut bytes.Buffer
-	err = runDemo([]string{"-swarm", "../bad"}, &errOut, openStub)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid -swarm")
-
-	err = runDemo([]string{"-addr", "10.0.0.1:9440", "-no-open"}, &errOut, openStub)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only accepts localhost")
-
-	err = runDemo([]string{"-addr", "127.0.0.1:1", "-no-open"}, &errOut, openStub)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chorus is not running")
 }

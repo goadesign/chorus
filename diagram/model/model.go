@@ -16,15 +16,25 @@ var _ = Design("Chorus Architecture", "Token-minimal multi-agent coordination MC
 		Uses("Chorus/Chorus MCP Server", "Calls who, join, leave, send, and read; receives piggybacked unread deltas", "MCP 2026-07-28 JSON-RPC / HTTP (:9440)", Synchronous)
 	})
 
+	SoftwareSystem("Browser and Local Tools", "People and local applications that read swarm activity and post messages.", func() {
+		External()
+		Uses("Chorus/Chorus MCP Server", "Reads swarm activity and posts messages", "Loopback HTTP", Synchronous)
+	})
+
+	SoftwareSystem("Herdr Core", "Runs local agent terminals and reports their current status.", func() {
+		External()
+	})
+
 	SoftwareSystem("Chorus", "Multi-agent coordination MCP server backed by Pulse replicated maps, streams, and semaphores.", func() {
 		Tag("Software System", "Chorus")
 
 		Container(
 			"Chorus MCP Server",
-			"Stateless HTTP server (:9440) serving POST /mcp (who, join, leave, send, read) with an in-memory Pulse rmap replica.",
+			"Serves MCP tools and the dashboard, keeps a local view of swarm state, and wakes terminal-backed agents.",
 			"Go, Goa-AI & Pulse",
 			func() {
 				URL("https://github.com/goadesign/chorus")
+				Uses("Herdr Core", "Observes terminal status and wakes idle agents", "Local hc connect", Asynchronous)
 				Uses("Chorus/Swarm Control Plane", "Replicates state in memory (0ms directory reads & Subscribe wakeups)", "Redis Lua + Pub/Sub", Asynchronous)
 				Uses("Chorus/Message Streams", "Appends messages and snapshots unread deltas when head > watermark", "Redis XADD / XRANGE", Synchronous)
 				Uses("Chorus/Publication Lock", "Acquires 1-slot lease to linearize sequence numbers and head updates", "Pulse Semaphore", Synchronous)

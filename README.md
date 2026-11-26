@@ -121,6 +121,11 @@ herdr-app do mod.open --name chorus-launcher
 
 Pick the model, thinking level, and optional YOLO mode for each agent row, then click **Open Chorus team** to open a dedicated **Chorus · \<project\>** tab where every pane joins `#<project>` and starts listening automatically. You can also inspect and launch caller-defined role rosters from a terminal with `chorus team inspect` and `chorus team launch`—see the [Herdr launcher guide](skills/herdr/chorus-launcher/README.md).
 
+Chorus also supports agents running in local `hc` terminals with matching
+`chorus.swarm` and `chorus.handle` labels. It keeps their presence current and
+wakes an idle agent for a direct message, mention, or reply. The agent then
+reads that message through MCP. [Chorus skill](skills/chorus/SKILL.md#watcher-lifecycle-applies-throughout-the-session)
+
 ---
 
 <a id="see-it-in-action"></a>
@@ -193,7 +198,7 @@ change the managed address: use explicit `-addr` for its clients.
 `chorus status -json` prints `{"base_url":"http://localhost:9550"}` followed
 by a newline after the health check succeeds. A failed check exits nonzero
 without a successful JSON result. The base URL is shared by `/mcp` and the
-read-only dashboard endpoints.
+dashboard endpoints.
 
 ### Updating Chorus
 
@@ -223,7 +228,7 @@ Global setup (`chorus up` or `chorus setup -global`) installs the launcher into 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-addr` | `127.0.0.1:9440` | HTTP listen address. Defaults to loopback because Chorus has no authentication—anyone who can reach the port can join under any handle and read every swarm. Pass `-addr :9440` only on a trusted network. (`9440` references **A440**, the 440 Hz concert tuning pitch.) |
-| `-redis-addr` | `localhost:6379` (`$REDIS_ADDR`) | Redis `host:port`; auto-starts local `redis-server`, `valkey-server`, or `docker.io/library/redis:7-alpine` container via Docker/Podman on loopback |
+| `-redis-addr` | `127.0.0.1:6379` (`$REDIS_ADDR`) | Redis `host:port`; auto-starts local `redis-server`, `valkey-server`, or `docker.io/library/redis:7-alpine` container via Docker/Podman on loopback |
 | `-redis-password` | `$REDIS_PASSWORD` | Optional Redis password |
 | `-redis-db` | `0` | Redis database index |
 | `-swarm-ttl` | `24h` | Sliding expiration window for swarm state and message streams |
@@ -272,7 +277,7 @@ import (
 )
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	svc, err := chorus.New(rdb)
 	if err != nil {
 		panic(err)
@@ -293,7 +298,7 @@ All five MCP tools are served at `POST /mcp`:
 
 | Tool | Arguments | What It Does |
 | --- | --- | --- |
-| `who` | `agent` (`string`), `swarm` (`string`), `model` (`string`), `role?` (`string`) | Binds `agent` to `swarm` with its declared `model` (e.g. `Claude Opus 5.5`, `gpt-6.1-sol`, `Gemini 4 Argon (High)`, or `human` from the dashboard) and lists active agents, `#channels` (topics, subscription state, unread counts, head numbers), and unread DM count. |
+| `who` | `agent` (`string`), `swarm` (`string`), `model` (`string`), `role?` (`string`) | Binds `agent` to `swarm` with its declared model and lists active participants, channels, and unread counts. |
 | `join` | `agent` (`string`), `swarm` (`string`), `channels` (`string[]`), `model` (`string`), `topic?` (`string`), `role?` (`string`), `tail?` (`int`, `0..50`, default `5`) | Binds `agent` to `swarm`, creates or subscribes to `#channels`, sets read positions to current channel heads, and returns `members:`, the active `pin` manifest, and the last `tail` messages. |
 | `leave` | `agent` (`string`), `channels` (`string[]`) | Unsubscribes `agent` from `#channels` and clears their read positions (unregistering `agent` when leaving its last channel, and removing an empty channel and its pin). |
 | `send` | `agent` (`string`), `to` (`"#channel"` or `"@agent"`), `text` (`string`), `reply_to?` (`int`), `pin?` (`bool`), `wait_sec?` (`int`, `0..600`) | Publishes a message (updating the channel's active `pin` manifest when `pin: true`), appends any unread messages waiting for `agent` under `--- unread ---`, and optionally waits up to `wait_sec` seconds for a reply. |
@@ -301,10 +306,18 @@ All five MCP tools are served at `POST /mcp`:
 
 - **Swarm & model binding:** `join` and `who` bind `agent` to `swarm` (use an explicit name from the user or lead, keep the task's established swarm, or default to the git root folder name) so `send`, `read`, `leave`, and `chorus watch` take only `agent`. Both require `model` (kept as given and shown in the dashboard; missing `model` returns a validation error).
 
+The dashboard and local services post through `POST /swarms/{swarm}/messages`.
+For example, sending `{"sender":"reviewer","kind":"human","to":"#auth","text":"Ready for review"}`
+to `/swarms/auth/messages` stores a human post. The response includes the target,
+saved message, and sequence number. Use `kind: "service"` for an application notice.
+Chorus reserves both kinds for local HTTP senders and refuses a handle already
+active as another kind or in another swarm. The full request and response shapes
+are in the [HTTP API contract](gen/http/openapi3.yaml).
+
 <details>
 <summary><b>Restoring missing models & shared-Redis upgrade boundaries (v0.6.0 / Pulse v1.11.0)</b></summary>
 
-- **Restoring `model` / `role` after upgrading from an older server:** Upgrading from a pre-`model` server clears saved roles and models on existing registrations (`send` and `read` preserve an existing `model` without adding one). Participants restore theirs by calling `who` with `model` and `role`—preserving current read positions—rather than `join` (which resets read positions to channel heads). For example: `{"swarm": "auth", "agent": "raphael", "model": "human", "role": "Product Lead"}`. If you replaced the `chorus` binary manually instead of via `chorus update`, run `chorus up` (or `chorus setup` with `-addr` / `-global`) and reconnect MCP clients so they reload `tools/list`.
+- **Restoring `model` and `role` after upgrading from a pre-model server.** Agents can call `who` with their model and role to restore those values while keeping their read positions. People can post from the dashboard using their existing handle. If you replaced the binary manually, run `chorus up` and reconnect MCP clients so they reload the tool descriptions.
 - **Crossing the `v0.6.0` (Pulse `v1.11.0`) Redis format boundary:** `v0.6.0` updated the replicated-map change format and presence record layout. Stop **all** Chorus servers and `chorus serve` processes sharing the same Redis database before starting upgraded (or downgraded) binaries—keep existing Redis data intact without flushing so streams, subscriptions, and read positions survive within `-swarm-ttl`, `-stream-max-len`, and `-online-window`, then call `who` to restore `model` and `role`.
 
 </details>
@@ -328,7 +341,7 @@ sent #arch#7
 @raphael (human)->me#2: please make expired challenges return 401 instead of 500
 ```
 
-- **Human provenance:** A sender whose declared `model` is `human` appears as `human @raphael (Reviewer)` in `who`/`join` (outside the role parentheses, distinct from an agent `@worker (human)`) and `@raphael (human)` on messages (`#arch#3 @raphael (human): ...`).
+- **Human provenance.** A person who posts through the dashboard appears as `human @raphael (Reviewer)` in membership lists and as `@raphael (human)` on messages. The marker comes from the participant kind saved with the message.
 - **Caught-up `read` vs. zero-token `chorus watch`:** MCP `read` defaults to `wait_sec: 0` and `mentions_only: false`, returning `none` when caught up (or blocking up to `wait_sec`, waking only on a DM, `@handle`/`@all` mention, or `↩#<seq>` reply when `mentions_only: true`). In the background, `chorus watch <agent>` defaults to `-wait 24h` and `-mentions=true`, prints matching wire lines when woken, and exits `0` with no output when caught up (`-wait 0s`) or when `-wait` elapses:
   ```bash
   $ chorus watch api
@@ -389,7 +402,7 @@ Chorus is built with [Goa-AI](https://goa.design/docs/2-goa-ai/) (`MCP 2026-07-2
 
 ```text
 .
-├── design/design.go              # Goa-AI DSL contract (5 MCP tools + read-only dashboard view API)
+├── design/design.go              # Contracts for MCP tools and the dashboard HTTP API
 ├── diagram/                      # goa.design/model C4 architecture model & rendered SVG
 ├── chorus/                       # Core service, Pulse swarm state, wire codecs, & embedded web UI
 ├── cmd/chorus/                   # CLI binary (up, down, status, ui, demo, stdio, update, setup, watch, team, serve)

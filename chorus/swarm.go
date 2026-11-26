@@ -65,15 +65,21 @@ type (
 		// lines holds the active pinned manifest line (if any) and recent tail messages.
 		lines []string
 	}
+
+	// publishedMessage pairs the stored message with its Redis-assigned entry ID.
+	publishedMessage struct {
+		// event is the model and content saved in the stream.
+		event messageEvent
+		// entryID supplies the timestamp assigned by Redis.
+		entryID string
+	}
 )
 
 const (
 	// eventTypeMessage is the Pulse stream event name used for all Chorus messages.
 	eventTypeMessage = "msg"
 
-	// humanModel is the declared model a person uses on join or who (the
-	// dashboard sends it). Messages published while the sender's declared model
-	// is humanModel are saved as human; nothing else marks a message human.
+	// humanModel identifies a person in profiles and saved messages.
 	humanModel = "human"
 
 	// touchInterval throttles background agent LastSeenUnix updates in rmap so
@@ -226,36 +232,55 @@ func (s *swarmHandle) hasActiveWatch(agent string) bool {
 	return active
 }
 
-// touchAgent ensures the calling agent is registered in the swarm's replicated
-// map and refreshes its LastSeenUnix presence timestamp when needed. It never
-// writes the agent's declared role or model (see declareProfile). When
-// forceSync is true or the presence record is newly created, touchAgent waits
-// for the local rmap replica to observe the committed revision.
+// touchAgent refreshes an existing presence record. A compare-and-set keeps
+// an older replica from restoring a registration removed during a tool call.
 func (s *swarmHandle) touchAgent(ctx context.Context, agent string, now time.Time, forceSync bool) error {
 	key := agentMapKey(agent)
-	raw, ok := s.state.Get(key)
+	raw, _ := s.state.Get(key)
 	rec, valid := parseAgentRecord(raw)
-
-	stale := now.Unix()-rec.LastSeenUnix >= int64(touchInterval.Seconds())
-	if ok && valid && !stale && !forceSync {
-		return nil
+	if !valid {
+		return fmt.Errorf("%w: %q has no presence in swarm %q", errInvalidCallerState, agent, s.name)
 	}
+	if now.Unix()-rec.LastSeenUnix >= int64(s.presenceInterval().Seconds()) {
+		rec.LastSeenUnix = now.Unix()
+		encoded, err := encodeAgentRecord(rec)
+		if err != nil {
+			return err
+		}
+		_, exists, updated, err := s.state.TestAndSetEx(ctx, key, raw, encoded)
+		if err != nil {
+			return fmt.Errorf("update agent %q presence: %w", agent, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: %q left swarm %q", errInvalidCallerState, agent, s.name)
+		}
+		if updated {
+			if err := s.rdb.Expire(ctx, agentSwarmHashKey, s.swarmTTL).Err(); err != nil {
+				return fmt.Errorf("refresh participant bindings: %w", err)
+			}
+		}
+	}
+	if forceSync {
+		return s.state.Sync(ctx)
+	}
+	return nil
+}
 
-	rec.LastSeenUnix = now.Unix()
-	encoded, err := encodeAgentRecord(rec)
+// registerPresence makes a declared participant visible to other callers.
+func (s *swarmHandle) registerPresence(ctx context.Context, agent string, now time.Time) error {
+	encoded, err := encodeAgentRecord(agentRecord{LastSeenUnix: now.Unix()})
 	if err != nil {
 		return err
 	}
-	if !ok || !valid || forceSync {
-		if _, err := s.state.SetAndWait(ctx, key, encoded); err != nil {
-			return fmt.Errorf("sync agent %q presence: %w", agent, err)
-		}
-		return nil
-	}
-	if _, err := s.state.Set(ctx, key, encoded); err != nil {
-		return fmt.Errorf("update agent %q presence: %w", agent, err)
+	if _, err := s.state.SetAndWait(ctx, agentMapKey(agent), encoded); err != nil {
+		return fmt.Errorf("register presence for %q: %w", agent, err)
 	}
 	return nil
+}
+
+// presenceInterval keeps presence fresh even with a shorter online window.
+func (s *swarmHandle) presenceInterval() time.Duration {
+	return min(touchInterval, max(time.Second, s.onlineWindow/2))
 }
 
 // declareProfile saves what agent declared on join or who. The model is
@@ -276,24 +301,27 @@ func (s *swarmHandle) declareProfile(ctx context.Context, agent, role, model str
 	return nil
 }
 
-// directory returns the formatted swarm snapshot for caller after reaping any
-// expired agents, saving caller's declared role and model, and refreshing its
-// presence.
-func (s *swarmHandle) directory(ctx context.Context, caller, role, model string) (string, error) {
-	now := s.clock()
-	reaped, err := s.reapExpiredAgents(ctx, now)
-	if err != nil {
-		return "", err
-	}
-	if err := s.declareProfile(ctx, caller, role, model); err != nil {
-		return "", err
-	}
-	if err := s.touchAgent(ctx, caller, now, reaped); err != nil {
-		return "", err
-	}
+// directory formats the swarm snapshot for a registered caller.
+func (s *swarmHandle) directory(caller string) string {
 	snap := s.state.Map()
 	subs, _ := s.state.GetValues(subMapKey(caller))
-	return formatDirectory(caller, s.liveAgents(), snap, subs), nil
+	return formatDirectory(caller, s.liveAgents(), snap, subs)
+}
+
+// subscribePoster gives a local sender its first subscription to a channel.
+// Existing subscriptions keep their read positions.
+func (s *swarmHandle) subscribePoster(ctx context.Context, sender, channel string) error {
+	subs, _ := s.state.GetValues(subMapKey(sender))
+	if slices.Contains(subs, channel) {
+		return nil
+	}
+	if _, err := s.state.SetIfNotExists(ctx, channelMapKey(channel), ""); err != nil {
+		return fmt.Errorf("register channel %s: %w", channel, err)
+	}
+	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(sender), channel); err != nil {
+		return fmt.Errorf("subscribe %q to %s: %w", sender, channel, err)
+	}
+	return nil
 }
 
 // joinChannels subscribes agent to one or more channels, creating any that do
@@ -305,14 +333,9 @@ func (s *swarmHandle) joinChannels(
 	agent string,
 	channels []string,
 	topic string,
-	role string,
-	model string,
 	tail int,
 ) (string, error) {
 	now := s.clock()
-	if _, err := s.reapExpiredAgents(ctx, now); err != nil {
-		return "", err
-	}
 	unique := deduplicateStrings(channels)
 	joined := make([]joinedChannel, 0, len(unique))
 
@@ -352,13 +375,9 @@ func (s *swarmHandle) joinChannels(
 	if _, err := s.state.AppendUniqueValues(ctx, subMapKey(agent), unique...); err != nil {
 		return "", fmt.Errorf("subscribe %q to channels: %w", agent, err)
 	}
-	if err := s.declareProfile(ctx, agent, role, model); err != nil {
-		return "", err
+	if err := s.state.Sync(ctx); err != nil {
+		return "", fmt.Errorf("sync channels for %q: %w", agent, err)
 	}
-	if err := s.touchAgent(ctx, agent, now, true); err != nil {
-		return "", err
-	}
-
 	snap := s.state.Map()
 	subsByAgent := s.channelSubscriptions(snap, now)
 	sections := make([]string, 0, len(joined))
@@ -410,7 +429,7 @@ func (s *swarmHandle) channelSubscriptions(snap map[string]string, now time.Time
 // read cursors for any agent whose LastSeenUnix is older than onlineWindow
 // (preserving direct-message cursors alongside retained DM streams).
 // Registration expiry never removes channel history or pins.
-func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (bool, error) {
+func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) error {
 	snap := s.state.Map()
 	var expired []string
 	for k, v := range snap {
@@ -422,32 +441,31 @@ func (s *swarmHandle) reapExpiredAgents(ctx context.Context, now time.Time) (boo
 			expired = append(expired, handle)
 		}
 	}
-	if len(expired) == 0 {
-		return false, nil
-	}
 
 	for _, handle := range expired {
 		oldSubs, _ := s.state.GetValues(subMapKey(handle))
 		for _, ch := range oldSubs {
 			if _, err := s.state.Delete(ctx, cursorMapKey(handle, ch)); err != nil {
-				return false, fmt.Errorf("delete expired cursor for %s: %w", ch, err)
+				return fmt.Errorf("delete expired cursor for %s: %w", ch, err)
 			}
 		}
 		if _, err := s.state.Delete(ctx, subMapKey(handle)); err != nil {
-			return false, fmt.Errorf("delete expired subscriptions for %q: %w", handle, err)
+			return fmt.Errorf("delete expired subscriptions for %q: %w", handle, err)
 		}
 		if _, err := s.state.Delete(ctx, roleMapKey(handle)); err != nil {
-			return false, fmt.Errorf("delete expired role %q: %w", handle, err)
+			return fmt.Errorf("delete expired role %q: %w", handle, err)
 		}
 		if _, err := s.state.Delete(ctx, modelMapKey(handle)); err != nil {
-			return false, fmt.Errorf("delete expired model %q: %w", handle, err)
+			return fmt.Errorf("delete expired model %q: %w", handle, err)
 		}
 		if _, err := s.state.Delete(ctx, agentMapKey(handle)); err != nil {
-			return false, fmt.Errorf("delete expired agent %q: %w", handle, err)
+			return fmt.Errorf("delete expired agent %q: %w", handle, err)
 		}
-		_ = s.rdb.HDel(ctx, agentSwarmHashKey, handle).Err()
+		if err := unbindParticipant(ctx, s.rdb, handle, s.name); err != nil {
+			return err
+		}
 	}
-	return true, nil
+	return nil
 }
 
 // leaveChannels unsubscribes agent from one or more channels, removes their
@@ -604,7 +622,7 @@ func (s *swarmHandle) publish(
 		return "", err
 	}
 
-	seq, err := s.appendUnderSemaphore(ctx, sender, target, text, replyTo, pin)
+	sent, err := s.appendUnderSemaphore(ctx, sender, target, text, replyTo, pin, "agent")
 	if err != nil {
 		return "", err
 	}
@@ -623,7 +641,7 @@ func (s *swarmHandle) publish(
 		}
 		unread = waited
 	}
-	out := formatSendOutput(target, seq, unread)
+	out := formatSendOutput(target, sent.event.Seq, unread)
 	if waitSec > 0 || !s.hasActiveWatch(sender) {
 		out += "\n" + formatWatchHint(sender)
 	}
@@ -643,7 +661,8 @@ func (s *swarmHandle) appendUnderSemaphore(
 	text string,
 	replyTo int,
 	pin bool,
-) (int, error) {
+	kind string,
+) (*publishedMessage, error) {
 	sem, err := semaphore.New(
 		s.rdb,
 		semaphoreName(s.name, target),
@@ -652,11 +671,11 @@ func (s *swarmHandle) appendUnderSemaphore(
 		semaphore.WithHeartbeatInterval(publishHeartbeatInterval),
 	)
 	if err != nil {
-		return 0, fmt.Errorf("create semaphore for %s: %w", target, err)
+		return nil, fmt.Errorf("create semaphore for %s: %w", target, err)
 	}
 	lease, err := sem.Acquire(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("acquire publish lease for %s: %w", target, err)
+		return nil, fmt.Errorf("acquire publish lease for %s: %w", target, err)
 	}
 	defer func() {
 		_ = lease.Release(context.Background())
@@ -669,13 +688,16 @@ func (s *swarmHandle) appendUnderSemaphore(
 	// finished through another server is included. It runs before the sequence
 	// number is taken, so a failure leaves no gap in the numbering.
 	if err := s.state.Sync(ctx); err != nil {
-		return 0, fmt.Errorf("sync swarm state before publishing to %s: %w", target, err)
+		return nil, fmt.Errorf("sync swarm state before publishing to %s: %w", target, err)
 	}
 	senderModel, _ := s.state.Get(modelMapKey(sender))
+	if participantKind(senderModel) != kind {
+		return nil, fmt.Errorf("%w: %q belongs to a different participant kind", errHandleInUse, sender)
+	}
 
 	seq, err := s.state.Inc(ctx, seqMapKey(target), 1)
 	if err != nil {
-		return 0, fmt.Errorf("increment sequence for %s: %w", target, err)
+		return nil, fmt.Errorf("increment sequence for %s: %w", target, err)
 	}
 
 	var mentions []string
@@ -688,7 +710,7 @@ func (s *swarmHandle) appendUnderSemaphore(
 		if replyTo > 0 {
 			replyAuthor, authorErr := s.findMessageSender(ctx, target, replyTo)
 			if authorErr != nil {
-				return 0, authorErr
+				return nil, authorErr
 			}
 			if replyAuthor != "" {
 				authorLower := strings.ToLower(replyAuthor)
@@ -699,41 +721,41 @@ func (s *swarmHandle) appendUnderSemaphore(
 		}
 	}
 
-	payload, err := json.Marshal(messageEvent{
+	event := messageEvent{
 		Seq:     seq,
 		Sender:  sender,
 		Human:   senderModel == humanModel,
 		Model:   senderModel,
 		Text:    text,
 		ReplyTo: replyTo,
-	})
+	}
+	payload, err := json.Marshal(event)
 	if err != nil {
-		return 0, fmt.Errorf("encode message payload: %w", err)
+		return nil, fmt.Errorf("encode message payload: %w", err)
 	}
 
 	stream, err := s.openStream(target)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	if _, err := stream.Add(ctx, eventTypeMessage, payload); err != nil {
-		return 0, fmt.Errorf("append message to %s stream: %w", target, err)
+	entryID, err := stream.Add(ctx, eventTypeMessage, payload)
+	if err != nil {
+		return nil, fmt.Errorf("append message to %s stream: %w", target, err)
 	}
 
 	if pin && strings.HasPrefix(target, "#") {
 		if _, err := s.state.Set(ctx, pinMapKey(target), string(payload)); err != nil {
-			return 0, fmt.Errorf("pin message in %s: %w", target, err)
+			return nil, fmt.Errorf("pin message in %s: %w", target, err)
 		}
 	}
 
-	// Advance sender's watermark to seq before publishing mention keys or head
-	// when sender is already caught up through seq-1. This ensures concurrent
-	// read/watch calls for sender observe headSeq <= curSeq when SetAndWait(head)
-	// fires and never wake on self-sent messages.
+	// Mark a local poster caught up through its own post. MCP senders keep
+	// any older unread messages unless they were already caught up.
 	curRaw, _ := s.state.Get(cursorMapKey(sender, target))
 	if (strings.HasPrefix(target, "#") || strings.EqualFold(target, "@"+sender)) &&
-		parseSeq(curRaw) == seq-1 {
+		(kind != "agent" || parseSeq(curRaw) == seq-1) {
 		if _, err := s.state.Set(ctx, cursorMapKey(sender, target), strconv.Itoa(seq)); err != nil {
-			return 0, fmt.Errorf("advance sender cursor for %s: %w", target, err)
+			return nil, fmt.Errorf("advance sender cursor for %s: %w", target, err)
 		}
 	}
 
@@ -743,14 +765,14 @@ func (s *swarmHandle) appendUnderSemaphore(
 			continue
 		}
 		if _, err := s.state.Set(ctx, mentionMapKey(h, target), strconv.Itoa(seq)); err != nil {
-			return 0, fmt.Errorf("record mention of %q in %s: %w", h, target, err)
+			return nil, fmt.Errorf("record mention of %q in %s: %w", h, target, err)
 		}
 	}
 
 	if _, err := s.state.SetAndWait(ctx, headMapKey(target), strconv.Itoa(seq)); err != nil {
-		return 0, fmt.Errorf("commit head sequence for %s: %w", target, err)
+		return nil, fmt.Errorf("commit head sequence for %s: %w", target, err)
 	}
-	return seq, nil
+	return &publishedMessage{event: event, entryID: entryID}, nil
 }
 
 // findMessageSender returns the sender handle of the message with sequence

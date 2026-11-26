@@ -12,7 +12,7 @@ paths:
             tags:
                 - view
             summary: swarms view
-            description: List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.
+            description: List swarms with at least one participant who is active within the online window or watching, sorted by name.
             operationId: view#swarms
             responses:
                 "200":
@@ -24,51 +24,82 @@ paths:
                             example:
                                 swarms:
                                     - chorus
-                "304":
-                    description: 'not_modified: The swarm did not change before the wait ended.'
-                    headers:
-                        goa-attribute-fault:
-                            description: Is the error a server-side fault?
+    /swarms/{swarm}/messages:
+        post:
+            tags:
+                - view
+            summary: post_message view
+            description: Publish as a person or local service and return the saved message. Posting to a channel creates it if needed and subscribes the sender.
+            operationId: view#post_message
+            parameters:
+                - name: swarm
+                  in: path
+                  description: Swarm containing the sender and target.
+                  required: true
+                  schema:
+                    type: string
+                    description: Swarm containing the sender and target.
+                    example: v
+                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$
+                  example: v
+            requestBody:
+                description: Request body for post_message.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PostMessageRequestBody'
+                        example:
+                            kind: service
+                            pin: true
+                            reply_to: 5201900765074847246
+                            role: nbb
+                            sender: HA
+                            text: "16"
+                            to: '@u'
+            responses:
+                "201":
+                    description: Created response.
+                    content:
+                        application/json:
                             schema:
-                                type: boolean
-                                description: Is the error a server-side fault?
-                                example: false
-                            example: false
-                        goa-attribute-id:
-                            description: ID is a unique identifier for this particular occurrence of the problem.
+                                $ref: '#/components/schemas/PostMessageResult'
+                            example:
+                                message:
+                                    human: true
+                                    model: human
+                                    reply_to: 12
+                                    sender: db
+                                    sent_at_ms: 1793467612968
+                                    seq: 14
+                                    text: migration 004 applied
+                                target: Nihil enim quo ad omnis corporis.
+                "400":
+                    description: 'invalid_target: Only a channel can have a pinned message.'
+                    content:
+                        application/vnd.goa.error:
                             schema:
-                                type: string
-                                description: ID is a unique identifier for this particular occurrence of the problem.
-                                example: 123abc
-                            example: 123abc
-                        goa-attribute-message:
-                            description: Message is a human-readable explanation specific to this occurrence of the problem.
+                                $ref: '#/components/schemas/Error'
+                            example:
+                                fault: false
+                                id: 123abc
+                                message: parameter 'p' must be an integer
+                                name: invalid_target
+                                temporary: false
+                                timeout: false
+                "409":
+                    description: 'handle_in_use: The sender handle is active in a different swarm or belongs to a different participant kind.'
+                    content:
+                        application/vnd.goa.error:
                             schema:
-                                type: string
-                                description: Message is a human-readable explanation specific to this occurrence of the problem.
-                                example: parameter 'p' must be an integer
-                            example: parameter 'p' must be an integer
-                        goa-attribute-name:
-                            description: Name is the name of this class of errors.
-                            schema:
-                                type: string
-                                description: Name is the name of this class of errors.
-                                example: bad_request
-                            example: bad_request
-                        goa-attribute-temporary:
-                            description: Is the error temporary?
-                            schema:
-                                type: boolean
-                                description: Is the error temporary?
-                                example: true
-                            example: true
-                        goa-attribute-timeout:
-                            description: Is the error a timeout?
-                            schema:
-                                type: boolean
-                                description: Is the error a timeout?
-                                example: true
-                            example: true
+                                $ref: '#/components/schemas/Error'
+                            example:
+                                fault: false
+                                id: 123abc
+                                message: parameter 'p' must be an integer
+                                name: handle_in_use
+                                temporary: false
+                                timeout: false
     /swarms/{swarm}/view:
         get:
             tags:
@@ -433,26 +464,26 @@ components:
                         - '#arch'
                 handle:
                     type: string
-                    description: Agent handle (without '@').
+                    description: Participant handle (without '@').
                     example: api
                 last_seen_unix:
                     type: integer
-                    description: Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
+                    description: Unix time in seconds of the participant's last Chorus call or presence refresh.
                     example: 1793467612
                     format: int64
                 model:
                     type: string
-                    description: Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.
+                    description: The agent's declared model, or 'human' or 'service' for local senders. Absent for registrations made before a model was required.
                     example: Claude Opus 5.5
                 role:
                     type: string
-                    description: Role the agent advertised on join or who. Absent when none was given.
+                    description: Role the participant advertised. Absent when none was given.
                     example: API Engineer
                 watching_on_this_server:
                     type: boolean
                     description: True when this server process is holding a blocking read or chorus watch for the agent. Another server process may hold one this process cannot see. Starting or stopping a watch does not end a wait on its own, so the value can lag until the next swarm change or the end of the wait.
                     example: true
-            description: A registered agent.
+            description: A registered participant.
             example:
                 channels:
                     - '#arch'
@@ -573,6 +604,48 @@ components:
                 - head_seq
                 - positions
                 - messages
+        Error:
+            type: object
+            properties:
+                fault:
+                    type: boolean
+                    description: Is the error a server-side fault?
+                    example: true
+                id:
+                    type: string
+                    description: ID is a unique identifier for this particular occurrence of the problem.
+                    example: 123abc
+                message:
+                    type: string
+                    description: Message is a human-readable explanation specific to this occurrence of the problem.
+                    example: parameter 'p' must be an integer
+                name:
+                    type: string
+                    description: Name is the name of this class of errors.
+                    example: bad_request
+                temporary:
+                    type: boolean
+                    description: Is the error temporary?
+                    example: false
+                timeout:
+                    type: boolean
+                    description: Is the error a timeout?
+                    example: true
+            description: Error response result type
+            example:
+                fault: true
+                id: 123abc
+                message: parameter 'p' must be an integer
+                name: bad_request
+                temporary: false
+                timeout: true
+            required:
+                - name
+                - id
+                - message
+                - temporary
+                - timeout
+                - fault
         Inbox:
             type: object
             properties:
@@ -664,7 +737,7 @@ components:
             properties:
                 human:
                     type: boolean
-                    description: True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.
+                    description: True for posts from people and false for local service posts. Absent for agent posts, including older messages without a declared model.
                     example: true
                 model:
                     type: string
@@ -779,6 +852,84 @@ components:
                 - read_seq
                 - behind
                 - mentioned
+        PostMessageRequestBody:
+            type: object
+            properties:
+                kind:
+                    type: string
+                    description: Participant kind of the sender.
+                    example: service
+                    enum:
+                        - human
+                        - service
+                pin:
+                    type: boolean
+                    description: When true, replace the target channel's active pin.
+                    default: false
+                    example: true
+                reply_to:
+                    type: integer
+                    description: Sequence number of the message being replied to.
+                    example: 5201900765074847246
+                    format: int64
+                    minimum: 1
+                role:
+                    type: string
+                    description: Optional role to display next to the handle.
+                    example: nbb
+                    maxLength: 120
+                sender:
+                    type: string
+                    description: Sender's handle without '@'.
+                    example: HA
+                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$
+                text:
+                    type: string
+                    description: Message body to save exactly as sent.
+                    example: "16"
+                    minLength: 1
+                    maxLength: 4000
+                to:
+                    type: string
+                    description: Channel or direct-message recipient, including '#' or '@'.
+                    example: '@u'
+                    pattern: ^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$
+            description: Request body for post_message.
+            example:
+                kind: service
+                pin: true
+                reply_to: 5201900765074847246
+                role: nbb
+                sender: HA
+                text: "16"
+                to: '@u'
+            required:
+                - sender
+                - kind
+                - to
+                - text
+        PostMessageResult:
+            type: object
+            properties:
+                message:
+                    $ref: '#/components/schemas/Message'
+                target:
+                    type: string
+                    description: Channel or direct-message recipient.
+                    example: Nihil enim quo ad omnis corporis.
+            example:
+                message:
+                    human: true
+                    model: human
+                    reply_to: 12
+                    sender: db
+                    sent_at_ms: 1793467612968
+                    seq: 14
+                    text: migration 004 applied
+                target: Nihil enim quo ad omnis corporis.
+            required:
+                - target
+                - message
         SwarmView:
             type: object
             properties:
@@ -1323,4 +1474,4 @@ components:
                 - swarms
 tags:
     - name: view
-      description: Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.
+      description: Serves the dashboard and accepts posts from people and local services. Only requests addressed to a loopback host are accepted.

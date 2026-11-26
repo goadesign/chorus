@@ -517,7 +517,7 @@ func saveServeArgs(homeDir string, cfg serverConfig) error {
 }
 
 // loadServeArgs returns the server flags saveServeArgs recorded (for example
-// ["-addr", "127.0.0.1:9440", "-redis-addr", "localhost:6379", ...]), or nil
+// ["-addr", "127.0.0.1:9440", "-redis-addr", "127.0.0.1:6379", ...]), or nil
 // when Chorus was never started by "chorus up" or "chorus down" cleared them.
 // A file that is not a JSON array of strings is reported with its path.
 func loadServeArgs(homeDir string) ([]string, error) {

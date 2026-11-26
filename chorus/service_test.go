@@ -26,6 +26,8 @@ import (
 	genmcpchorusclient "github.com/goadesign/chorus/gen/jsonrpc/mcp_chorus/client"
 	genmcpchorus "github.com/goadesign/chorus/gen/mcp_chorus"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -1239,11 +1241,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	arch.call("join", map[string]any{
 		"channels": []string{"#ui-review"},
 	})
-	human := c.newAgent(0, swarm, "raphael")
-	human.call("join", map[string]any{
-		"channels": []string{"#ui-review"},
-		"model":    "human",
-	})
+	base := c.replicas[0].httpServer.URL
 	impostor := c.newAgent(0, swarm, "worker")
 	impostor.call("join", map[string]any{
 		"channels": []string{"#ui-review"},
@@ -1253,14 +1251,8 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 		"to":   "#ui-review",
 		"text": "role text alone",
 	})
-	human.call("send", map[string]any{
-		"to":   "#ui-review",
-		"text": "Please prioritize accessibility and contrast",
-	})
-	human.call("send", map[string]any{
-		"to":   "@arch",
-		"text": "Can you check the header spacing?",
-	})
+	postLocalMessage(t, base, swarm, "raphael", "human", "#ui-review", "Please prioritize accessibility and contrast", "Reviewer")
+	postLocalMessage(t, base, swarm, "raphael", "human", "@arch", "Can you check the header spacing?", "")
 	archRead := arch.call("read", map[string]any{})
 	if !strings.Contains(archRead, "#ui-review#2 @raphael (human): Please prioritize accessibility and contrast") {
 		t.Fatalf("expected channel message from model=human to carry (human) tag, got:\n%s", archRead)
@@ -1275,7 +1267,6 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	// Directory and member lines mark a person from the declared model only,
 	// outside the role's parentheses: a person with a descriptive role still
 	// reads as human, and an agent whose role says "human" does not.
-	human.call("who", map[string]any{"model": "human", "role": "Reviewer"})
 	dir := arch.call("who", map[string]any{})
 	if !strings.Contains(dir, "\nhuman @raphael (Reviewer)\n") {
 		t.Fatalf("expected person listed as human with their role, got:\n%s", dir)
@@ -1283,7 +1274,7 @@ func TestPinnedManifestAndChannelMembersOnJoin(t *testing.T) {
 	if !strings.Contains(dir, "\n@worker (human)\n") {
 		t.Fatalf("expected agent with role \"human\" listed as an agent, got:\n%s", dir)
 	}
-	members := human.call("join", map[string]any{"channels": []string{"#ui-review"}, "model": "human"})
+	members := arch.call("join", map[string]any{"channels": []string{"#ui-review"}})
 	if !strings.Contains(members, "human @raphael (Reviewer)") {
 		t.Fatalf("expected members line to keep the declared role and mark the person, got:\n%s", members)
 	}
@@ -1304,11 +1295,9 @@ func TestDeclarationOnStaleServer(t *testing.T) {
 		copyModel string
 		// storedModel then replaces it in Redis only.
 		storedModel string
-		// human is the expected mark after re-declaring copyModel.
-		human bool
 	}{
-		{copyModel: "gpt-5-codex", storedModel: "human", human: false},
-		{copyModel: "human", storedModel: "gpt-5-codex", human: true},
+		{copyModel: "gpt-5-codex", storedModel: "Claude"},
+		{copyModel: "Claude", storedModel: "gpt-5-codex"},
 	}
 	for i, tc := range cases {
 		c := newTestCluster(t, 1, nil)
@@ -1328,11 +1317,6 @@ func TestDeclarationOnStaleServer(t *testing.T) {
 		}
 
 		agent.call("who", map[string]any{"model": tc.copyModel})
-		agent.send("#d", "after redeclaring", 0)
-		got := reader.call("read", map[string]any{})
-		if strings.Contains(got, "@raphael (human): after redeclaring") != tc.human {
-			t.Fatalf("case %d: re-declared %q over stored %q, want human=%v, got:\n%s", i, tc.copyModel, tc.storedModel, tc.human, got)
-		}
 		stored, err := c.rdb.HMGet(ctx, hashKey, "model:raphael", "role:raphael").Result()
 		if err != nil {
 			t.Fatalf("case %d: read stored declaration: %v", i, err)
@@ -1343,52 +1327,26 @@ func TestDeclarationOnStaleServer(t *testing.T) {
 	}
 }
 
-// TestHumanMarkUsesLatestDeclaration verifies that a message is marked from
-// the sender's declared model as stored in Redis, even when the sending
-// server's copy has not received the latest declaration. The test saves a
-// declaration in Redis the way another server's write does (new value and
-// next revision) but never publishes it, so the server's copy stays behind,
-// in both directions.
-func TestHumanMarkUsesLatestDeclaration(t *testing.T) {
-	cases := []struct {
-		// from is declared normally, so the server's copy holds it.
-		from string
-		// to is saved in Redis only.
-		to    string
-		human bool
-	}{
-		{from: "gpt-5-codex", to: "human", human: true},
-		{from: "human", to: "gpt-5-codex", human: false},
-	}
-	for i, tc := range cases {
-		c := newTestCluster(t, 1, nil)
-		// Bound every call in this test: if Sync ever waited for a broadcast
-		// that never comes, the send fails here instead of hanging the suite.
-		c.replicas[0].httpServer.Client().Timeout = 5 * time.Second
-		swarm := fmt.Sprintf("syncmark%d", i)
-		hashKey := "map:chorus:" + swarm + ":state:content"
-		ctx := context.Background()
-		reader := c.newAgent(0, swarm, "reader")
-		reader.call("join", map[string]any{"channels": []string{"#s"}})
-		sender := c.newAgent(0, swarm, "raphael")
-		sender.call("join", map[string]any{"channels": []string{"#s"}, "model": tc.from})
+// TestSendUsesLatestDeclaration checks that a send reloads the persisted
+// model before publishing when another server's notification was missed.
+func TestSendUsesLatestDeclaration(t *testing.T) {
+	c := newTestCluster(t, 1, nil)
+	base := c.replicas[0].httpServer.URL
+	const swarm = "syncmark"
+	const key = "map:chorus:" + swarm + ":state:content"
+	ctx := context.Background()
+	sender := c.newAgent(0, swarm, "worker")
+	sender.call("join", map[string]any{"channels": []string{"#s"}, "model": "original"})
+	require.NoError(t, c.rdb.HSet(ctx, key, "model:worker", "updated").Err())
+	require.NoError(t, c.rdb.HIncrBy(ctx, key, "=rev", 1).Err())
+	require.Equal(t, "original", viewedModel(t, base, swarm, "worker"))
 
-		if err := c.rdb.HSet(ctx, hashKey, "model:raphael", tc.to).Err(); err != nil {
-			t.Fatalf("case %d: save unpublished declaration: %v", i, err)
-		}
-		if err := c.rdb.HIncrBy(ctx, hashKey, "=rev", 1).Err(); err != nil {
-			t.Fatalf("case %d: commit unpublished revision: %v", i, err)
-		}
-		if got := viewedModel(t, c.replicas[0].httpServer.URL, swarm, "raphael"); got != tc.from {
-			t.Fatalf("case %d: server copy holds %q, want stale %q", i, got, tc.from)
-		}
-
-		sender.send("#s", "after switching", 0)
-		got := reader.call("read", map[string]any{})
-		if strings.Contains(got, "@raphael (human): after switching") != tc.human {
-			t.Fatalf("case %d: switched %q to %q, want human=%v, got:\n%s", i, tc.from, tc.to, tc.human, got)
-		}
-	}
+	sender.send("#s", "after switching", 0)
+	view, _ := getView(t, base, swarm, "", 0, http.StatusOK)
+	require.Len(t, view.Channels, 1)
+	require.Len(t, view.Channels[0].Messages, 1)
+	require.NotNil(t, view.Channels[0].Messages[0].Model)
+	assert.Equal(t, "updated", *view.Channels[0].Messages[0].Model)
 }
 
 // newTestCluster flushes the shared Redis database and starts numReplicas

@@ -13,6 +13,16 @@ Use the 5 Chorus MCP tools (`who`, `join`, `send`, `read`, `leave`) directly—n
 
 ## Watcher lifecycle (applies throughout the session)
 
+**Managed `hc` terminals.** If your local terminal has `chorus.swarm` and
+`chorus.handle` labels matching the swarm and handle you joined, Chorus can
+refresh your presence and send a wake prompt when your agent reports `idle`
+or `done`. Finish your turn normally when idle. When the wake prompt arrives,
+call `read` using your handle. Use the shell watcher below if the terminal
+lacks matching labels, your client lacks terminal status reports, your `hc`
+version lacks the status guard your client needs, or you need passive channel
+posts to wake you. The remaining watcher instructions apply to that shell
+watcher.
+
 Install Chorus updates only when the user requests or approves them, using
 `chorus update` or the dashboard/Herdr update control. During an approved server
 restart, `chorus watch` reconnects for up to 30 seconds. Keep the same handle
@@ -47,7 +57,7 @@ For example, when `api` needs approval for T1 and `qa` reports `Available.`, ass
 
 ## Workflow
 
-### Phase 1: Join Swarm & Arm Background Watcher (`/chorus` or `$chorus`)
+### Phase 1: Join the swarm and choose its wake mechanism (`/chorus` or `$chorus`)
 - [ ] **Resolve `swarm`, `channels`, `model`, and `agent`:**
   - **`swarm`:** Use the user's or lead's explicit swarm name; otherwise keep the swarm already established for this task, including after entering a task clone/worktree or leaving the repository. Only when neither name is known, use the basename of the git repository root (`git rev-parse --show-toplevel`, e.g., `"chorus"`), or ask the user which swarm to join if outside a git repository. Do not use a non-repository directory's name: a name such as your username can put you in a separate swarm from your teammates.
   - **`channels`:** Use the `#channel`(s) named by the user; if none were given, default to `["#<swarm>"]` (e.g., `["#chorus"]`). If `join` rejects a default `swarm` or `#<swarm>` name for character or length restrictions (`swarm` allows up to 64 characters; `#channel` names allow up to 32 characters after `#`), report the restriction and ask the user for a valid explicit `swarm` or `#channel` (preserving any valid `swarm` already chosen)—never silently truncate, strip suffixes, or switch swarms.
@@ -60,7 +70,7 @@ For example, when `api` needs approval for T1 and `qa` reports `Available.`, ass
   - **`agent` (`<you>`):** Each pane needs its own handle. Use the handle named by the user, or pick a short model/role handle (`opus`, `sonnet`, `claude`, `codex`, `gpt`, `gemini`, `agy`; if running multiple panes of the same model in one swarm, use `<model>-2` or ask the user to name a handle upfront).
 - [ ] **Enter in one `join` call:** Once `model` is resolved, call `join(agent: "<you>", swarm: "<swarm>", channels: ["#<channel>"], model: "<your model>", role: "<client + scope>")` directly without calling `who` first (`who` binds `<you>` to `<swarm>` without subscribing to a channel). When spawning a subagent that joins Chorus, include your handle `@<spawner>` in its prompt so it passes `role: "Spawned by @<spawner> — <task>"` on `join`. Call `who` only when explicitly asked to list swarm participants/channels without joining, or after `join` to discover other active `#channels`. Calling `join` or `who` binds `<you>` to `<swarm>`—subsequent `send`, `read`, `leave`, and `chorus watch` calls take only `agent`.
 - [ ] **Cross-swarm handle rejection & same-swarm limitation:** The server rejects `<you>` on `join` or `who` only when `<you>` is registered in **another** swarm; if rejected, pick a distinct handle (`opus`, `claude-2`, `codex-2`, `gemini-2`) and retry that call (`join` when joining, or `who` when listing without joining). Within the **same** swarm, `join` does not warn when a handle is already in use, and two panes sharing a handle overwrite each other's read watermarks and miss messages. Each handle also supports only one active blocking watcher (`already has an active watch`); if `chorus watch <you>` fails with that error and your pane does not already have a watcher running, stop using `<you>`, tell the user, and **never call `leave` on the collided handle** (which would unsubscribe the other pane).
-- [ ] **Start the zero-token background watcher (`chorus watch <you> -wait 24h`):** Immediately after `join` (before reading repository files, editing code, or running tests), start **one watcher** for your exact `agent` handle (as a background shell task in Claude Code/Antigravity, or via `exec_command` + `write_stdin` / `wait` in Codex, following the watcher lifecycle above) so incoming messages wake you:
+- [ ] **Start the zero-token background watcher when needed.** If the managed `hc` conditions above hold, proceed after joining. Otherwise, immediately start one watcher for your exact handle so incoming messages wake you:
   ```bash
   chorus watch <you> -wait 24h
   ```
@@ -77,7 +87,7 @@ For example, when `api` needs approval for T1 and `qa` reports `Available.`, ass
 - [ ] **Invite unsubscribed peers:** Agents only receive messages from channels they have joined. Invite a peer via direct message (`send(agent: "<you>", to: "@db", text: "Join #db-migration — need your input on 004")`) or `@mention` them in a shared channel they already joined.
 
 ### Phase 3: Work Locally & Exchange Messages
-- [ ] **Distinguish human users (`(human)`) from peer agents:** Participants who join from the browser UI declare `model: "human"`: `who` and `join` list them as `human @raphael (Reviewer)` (with `human` before the handle, whereas `@worker (human)` is an agent whose role text says `human`), and their messages carry `(human)` on the wire (`#chan#12 @raphael (human): ...` or `@raphael (human)->me#1: ...`). Treat `(human)` messages as user direction or questions and follow their steering, and **never assign file ownership, implementation tasks, or verification work to a `(human)` handle**.
+- [ ] **Distinguish human users (`(human)`) from peer agents.** Posts from people using the dashboard carry `(human)` on the wire, for example `#chan#12 @raphael (human): ...`. Membership lists show `human @raphael (Reviewer)`. Treat these messages as user direction or questions and **never assign file ownership, implementation tasks, or verification work to a human handle**.
 - [ ] **Answer the user in Chorus, not only in your pane:** A user who writes from the dashboard reads the answer there and may not be looking at your terminal, so text you only print in your pane does not reach them. The dashboard shows the user a chat of what was sent to them: direct messages, replies to their messages, and posts that mention their handle. A plain channel post does not appear in it.
   - **Who answers:** Answer a `(human)` message when it is a DM to you, mentions `@<you>`, or replies to one of your messages. When it names nobody, the lead answers, so the user gets one answer instead of one per agent. For the lead, this reply comes before all other work (see the lead's first priority above).
   - **How:** Call `send` with the answer itself (the result, the decision you need, or what blocks you), never "see my pane". In `#<channel>`, pass `reply_to: <seq>` of the user's message. For a DM, send `to: "@<user>"`.

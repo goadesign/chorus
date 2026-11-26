@@ -8,8 +8,30 @@
 package server
 
 import (
+	"unicode/utf8"
+
 	view "github.com/goadesign/chorus/gen/view"
+	goa "goa.design/goa/v3/pkg"
 )
+
+// PostMessageRequestBody is the type of the "view" service "post_message"
+// endpoint HTTP request body.
+type PostMessageRequestBody struct {
+	// Sender's handle without '@'.
+	Sender *string `form:"sender,omitempty" json:"sender,omitempty" xml:"sender,omitempty"`
+	// Participant kind of the sender.
+	Kind *string `form:"kind,omitempty" json:"kind,omitempty" xml:"kind,omitempty"`
+	// Optional role to display next to the handle.
+	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
+	// Channel or direct-message recipient, including '#' or '@'.
+	To *string `form:"to,omitempty" json:"to,omitempty" xml:"to,omitempty"`
+	// Message body to save exactly as sent.
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Sequence number of the message being replied to.
+	ReplyTo *int `form:"reply_to,omitempty" json:"reply_to,omitempty" xml:"reply_to,omitempty"`
+	// When true, replace the target channel's active pin.
+	Pin *bool `form:"pin,omitempty" json:"pin,omitempty" xml:"pin,omitempty"`
+}
 
 // SwarmsResponseBody is the type of the "view" service "swarms" endpoint HTTP
 // response body.
@@ -31,17 +53,62 @@ type ViewResponseBody struct {
 	Inboxes []*InboxResponseBody `form:"inboxes" json:"inboxes" xml:"inboxes"`
 }
 
+// PostMessageResponseBody is the type of the "view" service "post_message"
+// endpoint HTTP response body.
+type PostMessageResponseBody struct {
+	// Channel or direct-message recipient.
+	Target string `form:"target" json:"target" xml:"target"`
+	// The published message.
+	Message *MessageResponseBody `form:"message" json:"message" xml:"message"`
+}
+
+// PostMessageInvalidTargetResponseBody is the type of the "view" service
+// "post_message" endpoint HTTP response body for the "invalid_target" error.
+type PostMessageInvalidTargetResponseBody struct {
+	// Name is the name of this class of errors.
+	Name string `form:"name" json:"name" xml:"name"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message string `form:"message" json:"message" xml:"message"`
+	// Is the error temporary?
+	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
+	// Is the error a timeout?
+	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
+	// Is the error a server-side fault?
+	Fault bool `form:"fault" json:"fault" xml:"fault"`
+}
+
+// PostMessageHandleInUseResponseBody is the type of the "view" service
+// "post_message" endpoint HTTP response body for the "handle_in_use" error.
+type PostMessageHandleInUseResponseBody struct {
+	// Name is the name of this class of errors.
+	Name string `form:"name" json:"name" xml:"name"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message string `form:"message" json:"message" xml:"message"`
+	// Is the error temporary?
+	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
+	// Is the error a timeout?
+	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
+	// Is the error a server-side fault?
+	Fault bool `form:"fault" json:"fault" xml:"fault"`
+}
+
 // AgentResponseBody is used to define fields on response body types.
 type AgentResponseBody struct {
-	// Agent handle (without '@').
+	// Participant handle (without '@').
 	Handle string `form:"handle" json:"handle" xml:"handle"`
-	// Role the agent advertised on join or who. Absent when none was given.
+	// Role the participant advertised. Absent when none was given.
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
-	// Model the agent declared on its most recent join or who ('human' for a
-	// person using the dashboard). Absent for agents registered before declaring a
-	// model was required.
+	// The agent's declared model, or 'human' or 'service' for local senders.
+	// Absent for registrations made before a model was required.
 	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
-	// Unix time in seconds of the agent's last Chorus call or watcher heartbeat.
+	// Unix time in seconds of the participant's last Chorus call or presence
+	// refresh.
 	LastSeenUnix int64 `form:"last_seen_unix" json:"last_seen_unix" xml:"last_seen_unix"`
 	// Channels the agent is subscribed to, sorted.
 	Channels []string `form:"channels" json:"channels" xml:"channels"`
@@ -113,9 +180,8 @@ type MessageResponseBody struct {
 	// Unix time in milliseconds when Redis stored the message, taken from its
 	// stream entry ID.
 	SentAtMs int64 `form:"sent_at_ms" json:"sent_at_ms" xml:"sent_at_ms"`
-	// True when the sender had declared model 'human' when the message was sent.
-	// Absent otherwise, including for messages sent before senders declared a
-	// model.
+	// True for posts from people and false for local service posts. Absent for
+	// agent posts, including older messages without a declared model.
 	Human *bool `form:"human,omitempty" json:"human,omitempty" xml:"human,omitempty"`
 	// The model the sender had declared when the message was sent, kept after the
 	// sender leaves. Absent for messages sent before Chorus recorded it.
@@ -196,6 +262,46 @@ func NewViewResponseBody(res *view.SwarmView) *ViewResponseBody {
 	return body
 }
 
+// NewPostMessageResponseBody builds the HTTP response body from the result of
+// the "post_message" endpoint of the "view" service.
+func NewPostMessageResponseBody(res *view.PostMessageResult) *PostMessageResponseBody {
+	body := &PostMessageResponseBody{
+		Target: res.Target,
+	}
+	if res.Message != nil {
+		body.Message = marshalViewMessageToMessageResponseBody(res.Message)
+	}
+	return body
+}
+
+// NewPostMessageInvalidTargetResponseBody builds the HTTP response body from
+// the result of the "post_message" endpoint of the "view" service.
+func NewPostMessageInvalidTargetResponseBody(res *goa.ServiceError) *PostMessageInvalidTargetResponseBody {
+	body := &PostMessageInvalidTargetResponseBody{
+		Name:      res.Name,
+		ID:        res.ID,
+		Message:   res.Message,
+		Temporary: res.Temporary,
+		Timeout:   res.Timeout,
+		Fault:     res.Fault,
+	}
+	return body
+}
+
+// NewPostMessageHandleInUseResponseBody builds the HTTP response body from the
+// result of the "post_message" endpoint of the "view" service.
+func NewPostMessageHandleInUseResponseBody(res *goa.ServiceError) *PostMessageHandleInUseResponseBody {
+	body := &PostMessageHandleInUseResponseBody{
+		Name:      res.Name,
+		ID:        res.ID,
+		Message:   res.Message,
+		Temporary: res.Temporary,
+		Timeout:   res.Timeout,
+		Fault:     res.Fault,
+	}
+	return body
+}
+
 // NewViewPayload builds a view service view endpoint payload.
 func NewViewPayload(swarm string, wait int, ifNoneMatch *string) *view.ViewPayload {
 	v := &view.ViewPayload{}
@@ -204,4 +310,72 @@ func NewViewPayload(swarm string, wait int, ifNoneMatch *string) *view.ViewPaylo
 	v.IfNoneMatch = ifNoneMatch
 
 	return v
+}
+
+// NewPostMessagePayload builds a view service post_message endpoint payload.
+func NewPostMessagePayload(body *PostMessageRequestBody, swarm string) *view.PostMessagePayload {
+	v := &view.PostMessagePayload{
+		Sender:  *body.Sender,
+		Kind:    *body.Kind,
+		Role:    body.Role,
+		To:      *body.To,
+		Text:    *body.Text,
+		ReplyTo: body.ReplyTo,
+	}
+	if body.Pin != nil {
+		v.Pin = *body.Pin
+	}
+	if body.Pin == nil {
+		v.Pin = false
+	}
+	v.Swarm = swarm
+
+	return v
+}
+
+// ValidatePostMessageRequestBody runs the validations defined on
+// PostMessageRequestBody
+func ValidatePostMessageRequestBody(body *PostMessageRequestBody) (err error) {
+	if body.Sender == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sender", "body"))
+	}
+	if body.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "body"))
+	}
+	if body.To == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("to", "body"))
+	}
+	if body.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if body.Sender != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.sender", *body.Sender, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if body.Kind != nil {
+		if !(*body.Kind == "human" || *body.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.kind", *body.Kind, []any{"human", "service"}))
+		}
+	}
+	if body.Role != nil {
+		if utf8.RuneCountInString(*body.Role) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
+		}
+	}
+	if body.To != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.to", *body.To, "^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Text) > 4000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 4000, false))
+		}
+	}
+	if body.ReplyTo != nil {
+		if *body.ReplyTo < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.reply_to", *body.ReplyTo, 1, true))
+		}
+	}
+	return
 }

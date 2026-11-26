@@ -40,9 +40,6 @@ func (c *Client) BuildSwarmsRequest(ctx context.Context, v any) (*http.Request, 
 // DecodeSwarmsResponse returns a decoder for responses returned by the view
 // swarms endpoint. restoreBody controls whether the response body should be
 // restored after having been read.
-// DecodeSwarmsResponse may return the following errors:
-//   - "not_modified" (type *goa.ServiceError): http.StatusNotModified
-//   - error: internal error
 func DecodeSwarmsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (result any, decodeErr error) {
 		responseBody := resp.Body
@@ -79,68 +76,6 @@ func DecodeSwarmsResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 			}
 			res := NewSwarmsResultOK(&body)
 			return res, nil
-		case http.StatusNotModified:
-			var (
-				name      string
-				id        string
-				message   string
-				temporary bool
-				timeout   bool
-				fault     bool
-				err       error
-			)
-			nameRaw := resp.Header.Get("Goa-Attribute-Name")
-			if nameRaw == "" {
-				err = goa.MergeErrors(err, goa.MissingFieldError("name", "header"))
-			}
-			name = nameRaw
-			idRaw := resp.Header.Get("Goa-Attribute-Id")
-			if idRaw == "" {
-				err = goa.MergeErrors(err, goa.MissingFieldError("id", "header"))
-			}
-			id = idRaw
-			messageRaw := resp.Header.Get("Goa-Attribute-Message")
-			if messageRaw == "" {
-				err = goa.MergeErrors(err, goa.MissingFieldError("message", "header"))
-			}
-			message = messageRaw
-			{
-				temporaryRaw := resp.Header.Get("Goa-Attribute-Temporary")
-				if temporaryRaw == "" {
-					return nil, goahttp.ErrValidationError("view", "swarms", goa.MissingFieldError("temporary", "header"))
-				}
-				v, err2 := strconv.ParseBool(temporaryRaw)
-				if err2 != nil {
-					err = goa.MergeErrors(err, goa.InvalidFieldTypeError("temporary", temporaryRaw, "boolean"))
-				}
-				temporary = v
-			}
-			{
-				timeoutRaw := resp.Header.Get("Goa-Attribute-Timeout")
-				if timeoutRaw == "" {
-					return nil, goahttp.ErrValidationError("view", "swarms", goa.MissingFieldError("timeout", "header"))
-				}
-				v, err2 := strconv.ParseBool(timeoutRaw)
-				if err2 != nil {
-					err = goa.MergeErrors(err, goa.InvalidFieldTypeError("timeout", timeoutRaw, "boolean"))
-				}
-				timeout = v
-			}
-			{
-				faultRaw := resp.Header.Get("Goa-Attribute-Fault")
-				if faultRaw == "" {
-					return nil, goahttp.ErrValidationError("view", "swarms", goa.MissingFieldError("fault", "header"))
-				}
-				v, err2 := strconv.ParseBool(faultRaw)
-				if err2 != nil {
-					err = goa.MergeErrors(err, goa.InvalidFieldTypeError("fault", faultRaw, "boolean"))
-				}
-				fault = v
-			}
-			if err != nil {
-				return nil, goahttp.ErrValidationError("view", "swarms", err)
-			}
-			return nil, NewSwarmsNotModified(name, id, message, temporary, timeout, fault)
 		default:
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
@@ -318,6 +253,130 @@ func DecodeViewResponse(decoder func(*http.Response) goahttp.Decoder, restoreBod
 				return nil, goahttp.ErrDecodingError("view", "view", err)
 			}
 			return nil, goahttp.ErrInvalidResponse("view", "view", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildPostMessageRequest instantiates a HTTP request object with method and
+// path set to call the "view" service "post_message" endpoint
+func (c *Client) BuildPostMessageRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		swarm string
+	)
+	{
+		p, ok := v.(*view.PostMessagePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("view", "post_message", "*view.PostMessagePayload", v)
+		}
+		swarm = p.Swarm
+	}
+
+	rawPath := fmt.Sprintf("/swarms/%v/messages", url.PathEscape(fmt.Sprint(swarm)))
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: PostMessageViewPath(swarm), RawPath: rawPath}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("view", "post_message", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodePostMessageRequest returns an encoder for requests sent to the view
+// post_message server.
+func EncodePostMessageRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*view.PostMessagePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("view", "post_message", "*view.PostMessagePayload", v)
+		}
+		body := NewPostMessageRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("view", "post_message", err)
+		}
+		return nil
+	}
+}
+
+// DecodePostMessageResponse returns a decoder for responses returned by the
+// view post_message endpoint. restoreBody controls whether the response body
+// should be restored after having been read.
+// DecodePostMessageResponse may return the following errors:
+//   - "invalid_target" (type *goa.ServiceError): http.StatusBadRequest
+//   - "handle_in_use" (type *goa.ServiceError): http.StatusConflict
+//   - error: internal error
+func DecodePostMessageResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("view", "post_message", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("view", "post_message", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body PostMessageResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("view", "post_message", err)
+			}
+			err = ValidatePostMessageResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("view", "post_message", err)
+			}
+			res := NewPostMessageResultCreated(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body PostMessageInvalidTargetResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("view", "post_message", err)
+			}
+			err = ValidatePostMessageInvalidTargetResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("view", "post_message", err)
+			}
+			return nil, NewPostMessageInvalidTarget(&body)
+		case http.StatusConflict:
+			var (
+				body PostMessageHandleInUseResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("view", "post_message", err)
+			}
+			err = ValidatePostMessageHandleInUseResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("view", "post_message", err)
+			}
+			return nil, NewPostMessageHandleInUse(&body)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("view", "post_message", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("view", "post_message", resp.StatusCode, string(body))
 		}
 	}
 }

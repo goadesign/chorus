@@ -334,12 +334,16 @@ func TestLoopbackOrigins(t *testing.T) {
 // listen only on the loopback interface unless -addr is passed, and that the
 // background service is started with that loopback address.
 func TestDefaultListenAddrIsLoopback(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "")
 	cfg, err := parseServerFlags(nil)
 	if err != nil {
 		t.Fatalf("parseServerFlags failed: %v", err)
 	}
 	if cfg.addr != "127.0.0.1:9440" {
 		t.Fatalf("default addr = %q, want 127.0.0.1:9440", cfg.addr)
+	}
+	if cfg.redisAddr != "127.0.0.1:6379" {
+		t.Fatalf("default redis addr = %q, want 127.0.0.1:6379", cfg.redisAddr)
 	}
 	args := buildServeArgs(cfg)
 	found := false
