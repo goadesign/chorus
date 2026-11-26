@@ -558,7 +558,7 @@ def roster_argv(
         f"Your project is {root!r}. Join swarm {swarm!r}, channel {'#' + swarm!r}, "
         f"using handle {handle!r} and role {title!r}. "
         f"{launch_model_instruction(agent)}"
-        f"Keep `CI=true chorus watch {handle} -wait 24h </dev/null` running in the background while you work. "
+        f"Keep `chorus watch {handle} -wait 24h </dev/null` running in the background while you work. "
         f"{role['first_message']}"
     )
     client = CLIENTS.get(agent["key"], {})

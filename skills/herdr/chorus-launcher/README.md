@@ -256,7 +256,7 @@ When a roster file exists for the focused space:
   has a running agent. Each new pane is labeled
   with `chorus.handle=<handle>` and `chorus.role=<role>` and starts with a
   prompt that joins `#<swarm>` as `<handle>` (`<title>`), keeps
-  `CI=true chorus watch <handle> -wait 24h </dev/null` running in the
+  `chorus watch <handle> -wait 24h </dev/null` running in the
   background, and then delivers `first_message`.
 - **Per-process role connections (Claude Code and Codex only):**
   - **Claude Code (`claude`):** writes
