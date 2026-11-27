@@ -8,8 +8,10 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"unicode/utf8"
 
 	view "github.com/goadesign/chorus/gen/view"
 	goa "goa.design/goa/v3/pkg"
@@ -58,6 +60,75 @@ func BuildViewPayload(viewViewSwarm *string, viewViewWait string, viewViewIfNone
 	v.Swarm = swarm
 	v.Wait = wait
 	v.IfNoneMatch = ifNoneMatch
+
+	return v, nil
+}
+
+// BuildPostMessagePayload builds the payload for the view post_message
+// endpoint from CLI flags.
+func BuildPostMessagePayload(viewPostMessageBody *string, viewPostMessageSwarm *string) (*view.PostMessagePayload, error) {
+	var err error
+	var body PostMessageRequestBody
+	{
+		if viewPostMessageBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*viewPostMessageBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"kind\": \"service\",\n      \"pin\": true,\n      \"reply_to\": 5201900765074847246,\n      \"role\": \"nbb\",\n      \"sender\": \"HA\",\n      \"text\": \"16\",\n      \"to\": \"@u\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.sender", body.Sender, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+		if !(body.Kind == "human" || body.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.kind", body.Kind, []any{"human", "service"}))
+		}
+		if body.Role != nil {
+			if utf8.RuneCountInString(*body.Role) > 120 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.role", *body.Role, utf8.RuneCountInString(*body.Role), 120, false))
+			}
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.to", body.To, "^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"))
+		if utf8.RuneCountInString(body.Text) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 1, true))
+		}
+		if utf8.RuneCountInString(body.Text) > 4000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 4000, false))
+		}
+		if body.ReplyTo != nil {
+			if *body.ReplyTo < 1 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("body.reply_to", *body.ReplyTo, 1, true))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var swarm string
+	{
+		if viewPostMessageSwarm == nil {
+			return nil, fmt.Errorf("missing required flag --swarm")
+		}
+		swarm = *viewPostMessageSwarm
+		err = goa.MergeErrors(err, goa.ValidatePattern("swarm", swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &view.PostMessagePayload{
+		Sender:  body.Sender,
+		Kind:    body.Kind,
+		Role:    body.Role,
+		To:      body.To,
+		Text:    body.Text,
+		ReplyTo: body.ReplyTo,
+		Pin:     body.Pin,
+	}
+	{
+		var zero bool
+		if v.Pin == zero {
+			v.Pin = false
+		}
+	}
+	v.Swarm = swarm
 
 	return v, nil
 }

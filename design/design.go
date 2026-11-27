@@ -8,12 +8,9 @@
 // ToolContent("content") so the generated MCP server omits outputSchema and
 // structuredContent on the wire.
 //
-// A separate read-only HTTP service ("view") serves the browser dashboard on
-// the same listener: GET /swarms lists swarms that agents joined, and
-// GET /swarms/{swarm}/view returns one swarm's agents, channels, direct-message
-// inboxes, and retained messages as JSON. It never registers a handle, binds a
-// handle to a swarm, or moves a read position, and it is not an MCP tool, so
-// agents never see it in tools/list.
+// A separate HTTP service ("view") serves the browser dashboard on the same
+// listener. Its GET endpoints list swarms and read snapshots. The message POST
+// lets local people and services publish with their own participant kind.
 package design
 
 import (
@@ -84,7 +81,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
+			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'). The model names 'human' and 'service' are reserved for HTTP message senders. Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
@@ -135,7 +132,7 @@ var _ = Service("chorus", func() {
 			// dashboard refresh returns. 2048 characters is Chorus's budget for
 			// that profile; it admits the documented AWS Bedrock modelId forms,
 			// including full ARNs.
-			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'; a person joining from the dashboard uses 'human'). Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
+			Attribute("model", String, "The exact model you are running (for example 'Claude Opus 5.5', 'gpt-6.1-sol', or 'Gemini 4 Argon (High)'). The model names 'human' and 'service' are reserved for HTTP message senders. Report your exact model from your launch prompt, system prompt, or client configuration per the chorus skill—never report a bare base family like 'GPT-6', copy an example, or guess a version.", func() {
 				MinLength(1)
 				MaxLength(2048)
 				Pattern(`\S`)
@@ -284,11 +281,11 @@ var MessageType = Type("Message", func() {
 	Attribute("sent_at_ms", Int64, "Unix time in milliseconds when Redis stored the message, taken from its stream entry ID.", func() {
 		Example(1793467612968)
 	})
-	Attribute("human", Boolean, "True when the sender had declared model 'human' when the message was sent. Absent otherwise, including for messages sent before senders declared a model.", func() {
+	Attribute("human", Boolean, "True for posts from people and false for local service posts. Absent for agent posts, including older messages without a declared model.", func() {
 		Example(true)
 	})
 	Attribute("model", String, "The model the sender had declared when the message was sent, kept after the sender leaves. Absent for messages sent before Chorus recorded it.", func() {
-		// Matches the human example: a person declares the model "human".
+		// Matches the example message from a person.
 		Example("human")
 	})
 	Required("seq", "sender", "text", "sent_at_ms")
@@ -336,19 +333,19 @@ var Position = Type("Position", func() {
 	Required("handle", "read_seq", "behind", "mentioned")
 })
 
-// AgentType is one registered agent in a swarm.
+// AgentType is one registered participant in a swarm.
 var AgentType = Type("Agent", func() {
-	Description("A registered agent.")
-	Attribute("handle", String, "Agent handle (without '@').", func() {
+	Description("A registered participant.")
+	Attribute("handle", String, "Participant handle (without '@').", func() {
 		Example("api")
 	})
-	Attribute("role", String, "Role the agent advertised on join or who. Absent when none was given.", func() {
+	Attribute("role", String, "Role the participant advertised. Absent when none was given.", func() {
 		Example("API Engineer")
 	})
-	Attribute("model", String, "Model the agent declared on its most recent join or who ('human' for a person using the dashboard). Absent for agents registered before declaring a model was required.", func() {
+	Attribute("model", String, "The agent's declared model, or 'human' or 'service' for local senders. Absent for registrations made before a model was required.", func() {
 		Example("Claude Opus 5.5")
 	})
-	Attribute("last_seen_unix", Int64, "Unix time in seconds of the agent's last Chorus call or watcher heartbeat.", func() {
+	Attribute("last_seen_unix", Int64, "Unix time in seconds of the participant's last Chorus call or presence refresh.", func() {
 		Example(1793467612)
 	})
 	Attribute("channels", ArrayOf(String), "Channels the agent is subscribed to, sorted.", func() {
@@ -415,19 +412,18 @@ var SwarmView = Type("SwarmView", func() {
 	Required("swarm", "agents", "channels", "inboxes", "etag")
 })
 
+// PostMessageResult acknowledges a stored channel post or direct message.
+var PostMessageResult = Type("PostMessageResult", func() {
+	Attribute("target", String, "Channel or direct-message recipient.")
+	Attribute("message", MessageType, "The published message.")
+	Required("target", "message")
+})
+
 var _ = Service("view", func() {
-	Description("Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.")
-
-	Error("not_modified", ErrorResult, "The swarm did not change before the wait ended.")
-
-	HTTP(func() {
-		Response("not_modified", StatusNotModified, func() {
-			Body(Empty)
-		})
-	})
+	Description("Serves the dashboard and accepts posts from people and local services. Only requests addressed to a loopback host are accepted.")
 
 	Method("swarms", func() {
-		Description("List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.")
+		Description("List swarms with at least one participant who is active within the online window or watching, sorted by name.")
 		Result(func() {
 			Attribute("swarms", ArrayOf(String), "Swarm names, sorted.", func() {
 				Example([]string{"chorus"})
@@ -459,6 +455,7 @@ var _ = Service("view", func() {
 			Required("swarm")
 		})
 		Result(SwarmView)
+		Error("not_modified", ErrorResult, "The swarm did not change before the wait ended.")
 		HTTP(func() {
 			GET("/swarms/{swarm}/view")
 			Header("if_none_match:If-None-Match")
@@ -466,6 +463,50 @@ var _ = Service("view", func() {
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
+			Response("not_modified", StatusNotModified, func() {
+				Body(Empty)
+			})
+		})
+	})
+
+	Method("post_message", func() {
+		Description("Publish as a person or local service and return the saved message. Posting to a channel creates it if needed and subscribes the sender.")
+		Payload(func() {
+			Attribute("swarm", String, "Swarm containing the sender and target.", func() {
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+			})
+			Attribute("sender", String, "Sender's handle without '@'.", func() {
+				Pattern(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
+			})
+			Attribute("kind", String, "Participant kind of the sender.", func() {
+				Enum("human", "service")
+			})
+			Attribute("role", String, "Optional role to display next to the handle.", func() {
+				MaxLength(120)
+			})
+			Attribute("to", String, "Channel or direct-message recipient, including '#' or '@'.", func() {
+				Pattern(`^(@|#)[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
+			})
+			Attribute("text", String, "Message body to save exactly as sent.", func() {
+				MinLength(1)
+				MaxLength(4000)
+			})
+			Attribute("reply_to", Int, "Sequence number of the message being replied to.", func() {
+				Minimum(1)
+			})
+			Attribute("pin", Boolean, "When true, replace the target channel's active pin.", func() {
+				Default(false)
+			})
+			Required("swarm", "sender", "kind", "to", "text")
+		})
+		Result(PostMessageResult)
+		Error("invalid_target", ErrorResult, "Only a channel can have a pinned message.")
+		Error("handle_in_use", ErrorResult, "The sender handle is active in a different swarm or belongs to a different participant kind.")
+		HTTP(func() {
+			POST("/swarms/{swarm}/messages")
+			Response(StatusCreated)
+			Response("invalid_target", StatusBadRequest)
+			Response("handle_in_use", StatusConflict)
 		})
 	})
 })

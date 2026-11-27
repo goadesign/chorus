@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -27,46 +28,6 @@ func EncodeSwarmsResponse(encoder func(context.Context, http.ResponseWriter) goa
 		body := NewSwarmsResponseBody(res)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
-	}
-}
-
-// EncodeSwarmsError returns an encoder for errors returned by the swarms view
-// endpoint.
-func EncodeSwarmsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
-	encodeError := goahttp.ErrorEncoder(encoder, formatter)
-	return func(ctx context.Context, w http.ResponseWriter, v error) error {
-		var en goa.GoaErrorNamer
-		if !errors.As(v, &en) {
-			return encodeError(ctx, w, v)
-		}
-		switch en.GoaErrorName() {
-		case "not_modified":
-			var res *goa.ServiceError
-			errors.As(v, &res)
-			w.Header().Set("Goa-Attribute-Name", res.Name)
-			w.Header().Set("Goa-Attribute-Id", res.ID)
-			w.Header().Set("Goa-Attribute-Message", res.Message)
-			{
-				val := res.Temporary
-				temporarys := strconv.FormatBool(val)
-				w.Header().Set("Goa-Attribute-Temporary", temporarys)
-			}
-			{
-				val := res.Timeout
-				timeouts := strconv.FormatBool(val)
-				w.Header().Set("Goa-Attribute-Timeout", timeouts)
-			}
-			{
-				val := res.Fault
-				faults := strconv.FormatBool(val)
-				w.Header().Set("Goa-Attribute-Fault", faults)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusNotModified)
-			return nil
-		default:
-			return encodeError(ctx, w, v)
-		}
 	}
 }
 
@@ -161,6 +122,101 @@ func EncodeViewError(encoder func(context.Context, http.ResponseWriter) goahttp.
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotModified)
 			return nil
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodePostMessageResponse returns an encoder for responses returned by the
+// view post_message endpoint.
+func EncodePostMessageResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*view.PostMessageResult)
+		enc := encoder(ctx, w)
+		body := NewPostMessageResponseBody(res)
+		w.WriteHeader(http.StatusCreated)
+		return enc.Encode(body)
+	}
+}
+
+// DecodePostMessageRequest returns a decoder for requests sent to the view
+// post_message endpoint.
+func DecodePostMessageRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*view.PostMessagePayload, error) {
+	return func(r *http.Request) (*view.PostMessagePayload, error) {
+		var payload *view.PostMessagePayload
+		var (
+			body PostMessageRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidatePostMessageRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			swarm string
+
+			params = mux.Vars(r)
+		)
+		swarm = params["swarm"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("swarm", swarm, "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"))
+		if err != nil {
+			return payload, err
+		}
+		payload = NewPostMessagePayload(&body, swarm)
+
+		return payload, nil
+	}
+}
+
+// EncodePostMessageError returns an encoder for errors returned by the
+// post_message view endpoint.
+func EncodePostMessageError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "invalid_target":
+			var res *goa.ServiceError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPostMessageInvalidTargetResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "handle_in_use":
+			var res *goa.ServiceError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPostMessageHandleInUseResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		default:
 			return encodeError(ctx, w, v)
 		}

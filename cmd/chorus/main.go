@@ -69,8 +69,8 @@ const (
 	// -addr explicitly (for example -addr :9440). The port 9440 references
 	// A440, the 440 Hz concert pitch standard used to tune an ensemble.
 	defaultListenAddr = "127.0.0.1:9440"
-	// defaultRedisAddr is the default Redis server address.
-	defaultRedisAddr = "localhost:6379"
+	// defaultRedisAddr matches the IPv4 listener used when Chorus starts Redis.
+	defaultRedisAddr = "127.0.0.1:6379"
 	// defaultSwarmTTL is the default sliding TTL for swarm state and streams.
 	defaultSwarmTTL = 24 * time.Hour
 	// defaultStreamMaxLen is the default maximum retained messages per stream.
@@ -213,7 +213,7 @@ func runServe(args []string, releases releaseSource, exe string) (*restartTarget
 		_ = svc.Close()
 	}()
 
-	// The dashboard page served at GET / calls POST /mcp from the server's own
+	// The dashboard submits messages from the server's own
 	// origin, and browsers always send Origin on POST, so the loopback origins
 	// for the listen port are always allowed alongside -origins.
 	origins := loopbackOrigins(cfg.addr)
@@ -230,6 +230,8 @@ func runServe(args []string, releases releaseSource, exe string) (*restartTarget
 	// POST /update, which first records the binary to restart on in next.
 	serveCtx, stopServing := context.WithCancel(sigCtx)
 	defer stopServing()
+	stopDriver := startHCDriver(serveCtx, svc, cfg.onlineWindow)
+	defer stopDriver()
 	var next atomic.Pointer[restartTarget]
 
 	updates := chorus.LocalOnly(origins...)(loopbackPeer(&updateHandler{

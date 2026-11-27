@@ -618,7 +618,7 @@
     async updatePin(swarm, channelName, text) {
       const handleInput = document.getElementById("send-handle");
       const agent = (handleInput?.value || "").trim().replace(/^@/, "");
-      await publishHumanMessage(swarm, { agent, to: channelName, text, pin: true, wait_sec: 0 });
+      await publishHumanMessage(swarm, { agent, to: channelName, text, pin: true });
       if (state.activeSwarm === swarm) startSwarmLoop(swarm);
     },
   };
@@ -1045,49 +1045,6 @@
     }
   }
 
-  async function callMCPTool(toolName, args) {
-    const res = await fetch("/mcp", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "MCP-Protocol-Version": "2026-07-28",
-        "Mcp-Method": "tools/call",
-        "Mcp-Name": toolName,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: Date.now(),
-        method: "tools/call",
-        params: {
-          _meta: {
-            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-            "io.modelcontextprotocol/clientCapabilities": {},
-            "io.modelcontextprotocol/clientInfo": {
-              name: "chorus-dashboard",
-              version: "1",
-            },
-          },
-          name: toolName,
-          arguments: args,
-        },
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`POST /mcp HTTP ${res.status}: ${text}`);
-    }
-    const payload = await res.json();
-    if (payload.error) {
-      throw new Error(payload.error.message || JSON.stringify(payload.error));
-    }
-    if (payload.result?.isError) {
-      const errText = (payload.result.content || []).map((c) => c.text).join("\n");
-      throw new Error(errText || "MCP tool returned error");
-    }
-    return (payload.result?.content || []).map((c) => c.text).join("\n");
-  }
-
   // setComposerFeedback shows or clears an error from the last send attempt.
   function setComposerFeedback(errorMessage = "") {
     const feedback = document.getElementById("composer-feedback");
@@ -1096,11 +1053,9 @@
     feedback.hidden = !errorMessage;
   }
 
-  // publishHumanMessage validates the chosen human against the loaded swarm,
-  // joins the target when necessary, and publishes through the existing MCP
-  // send tool. Both forms supply their own captured target and original text.
+  // publishHumanMessage posts the captured draft and returns its saved message key.
   async function publishHumanMessage(swarm, args) {
-    const { agent, to, text } = args;
+    const { agent, to, text, pin, reply_to } = args;
     if (!swarm) throw new Error("Select a swarm before sending.");
     if (state.activeSwarm !== swarm || state.view?.swarm !== swarm) {
       throw new Error(`Return to swarm ${swarm} and wait for it to load before sending.`);
@@ -1112,28 +1067,18 @@
       throw new Error("Target must start with #channel or @agent.");
     }
     if (!text.trim()) throw new Error("Enter text before sending.");
-    const existingAgent = state.view.agents.find((a) => a.handle === agent);
-    if (existingAgent && existingAgent.model !== "human") {
-      if (!existingAgent.model) {
-        throw new Error(
-          `@${existingAgent.handle} has not declared a model in this swarm; if this is your handle, call who with swarm="${swarm}", agent="${existingAgent.handle}", and model="human" (see Tool Reference in README), or pick another handle.`
-        );
-      }
-      throw new Error(`@${existingAgent.handle} is an agent in this swarm; pick your own handle.`);
+
+    const res = await fetch(`/swarms/${encodeURIComponent(swarm)}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ sender: agent, kind: "human", to, text, pin, reply_to }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(payload?.message || `Failed to send message (HTTP ${res.status}).`);
     }
     localStorage.setItem("chorus_handle", agent);
-    if (to.startsWith("#")) {
-      const channel = state.view.channels.find((item) => item.name === to);
-      const alreadyMember = existingAgent && channel?.positions.some((p) => p.handle === agent);
-      if (!alreadyMember) {
-        await callMCPTool("join", { swarm, agent, model: "human", role: "human", channels: [to], tail: 1 });
-      }
-    } else if (!existingAgent) {
-      await callMCPTool("who", { swarm, agent, model: "human", role: "human" });
-    }
-    const out = await callMCPTool("send", args);
-    const ack = /^sent (\S+)#(\d+)/.exec(out);
-    return ack ? `${ack[1]}:${ack[2]}` : "";
+    return `${payload.target}:${payload.message.seq}`;
   }
 
   // sendMessage reads and resets only the message composer; pin editing owns
@@ -1154,7 +1099,7 @@
     sendBtn.disabled = true;
     setComposerFeedback("");
     try {
-      const sendArgs = { agent, to, text, pin, wait_sec: 0 };
+      const sendArgs = { agent, to, text, pin };
       if (state.replyTo && to === state.replyTo.target) sendArgs.reply_to = state.replyTo.seq;
       const sentKey = await publishHumanMessage(swarm, sendArgs);
 

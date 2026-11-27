@@ -23,7 +23,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"view (swarms|view)",
+		"view (swarms|view|post-message)",
 	}
 }
 
@@ -70,13 +70,20 @@ func ParseEndpoint(
 		viewViewSwarmFlag       = new(cliStringFlag)
 		viewViewWaitFlag        = viewViewFlags.String("wait", "0", "")
 		viewViewIfNoneMatchFlag = new(cliStringFlag)
+
+		viewPostMessageFlags     = flag.NewFlagSet("post-message", flag.ExitOnError)
+		viewPostMessageBodyFlag  = new(cliStringFlag)
+		viewPostMessageSwarmFlag = new(cliStringFlag)
 	)
 	viewViewFlags.Var(viewViewSwarmFlag, "swarm", "Swarm name.")
 	viewViewFlags.Var(viewViewIfNoneMatchFlag, "if-none-match", "")
+	viewPostMessageFlags.Var(viewPostMessageBodyFlag, "body", "")
+	viewPostMessageFlags.Var(viewPostMessageSwarmFlag, "swarm", "Swarm containing the sender and target.")
 
 	viewFlags.Usage = viewUsage
 	viewSwarmsFlags.Usage = viewSwarmsUsage
 	viewViewFlags.Usage = viewViewUsage
+	viewPostMessageFlags.Usage = viewPostMessageUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -118,6 +125,9 @@ func ParseEndpoint(
 			case "view":
 				epf = viewViewFlags
 
+			case "post-message":
+				epf = viewPostMessageFlags
+
 			}
 
 		}
@@ -148,6 +158,9 @@ func ParseEndpoint(
 			case "view":
 				endpoint = c.View()
 				data, err = viewc.BuildViewPayload(viewViewSwarmFlag.value, *viewViewWaitFlag, viewViewIfNoneMatchFlag.value)
+			case "post-message":
+				endpoint = c.PostMessage()
+				data, err = viewc.BuildPostMessagePayload(viewPostMessageBodyFlag.value, viewPostMessageSwarmFlag.value)
 			}
 		}
 	}
@@ -160,11 +173,12 @@ func ParseEndpoint(
 
 // viewUsage displays the usage of the view command and its subcommands.
 func viewUsage() {
-	fmt.Fprintln(os.Stderr, `Serves the read-only browser dashboard data. Only requests addressed to a loopback host are accepted; it never changes swarm state.`)
+	fmt.Fprintln(os.Stderr, `Serves the dashboard and accepts posts from people and local services. Only requests addressed to a loopback host are accepted.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] view COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    swarms: List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.`)
+	fmt.Fprintln(os.Stderr, `    swarms: List swarms with at least one participant who is active within the online window or watching, sorted by name.`)
 	fmt.Fprintln(os.Stderr, `    view: Return one swarm's agents, channels, inboxes, and retained messages. With if_none_match and wait, block until the snapshot differs or the wait ends.`)
+	fmt.Fprintln(os.Stderr, `    post-message: Publish as a person or local service and return the saved message. Posting to a channel creates it if needed and subscribes the sender.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s view COMMAND --help\n", os.Args[0])
@@ -176,7 +190,7 @@ func viewSwarmsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `List, sorted by name, the swarms in which at least one agent that joined or called who is still active within the online window or watching. A swarm whose agents all went idle is not listed.`)
+	fmt.Fprintln(os.Stderr, `List swarms with at least one participant who is active within the online window or watching, sorted by name.`)
 
 	// Flags list
 
@@ -205,4 +219,24 @@ func viewViewUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "view view --swarm \"chorus\" --wait 25 --if-none-match \"\\\"3f2a9c\\\"\"")
+}
+
+func viewPostMessageUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] view post-message", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -swarm STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Publish as a person or local service and return the saved message. Posting to a channel creates it if needed and subscribes the sender.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -swarm STRING: Swarm containing the sender and target.`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "view post-message --body '{\n      \"kind\": \"service\",\n      \"pin\": true,\n      \"reply_to\": 5201900765074847246,\n      \"role\": \"nbb\",\n      \"sender\": \"HA\",\n      \"text\": \"16\",\n      \"to\": \"@u\"\n   }' --swarm \"v\"")
 }

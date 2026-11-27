@@ -1,8 +1,5 @@
-// This file implements the read-only "view" HTTP service that feeds the
-// browser dashboard. It turns a swarm's replicated map snapshot and retained
-// Pulse stream history into one JSON document, and never writes swarm state:
-// it does not register handles, bind handles to swarms, refresh presence, or
-// move read positions.
+// This file implements the dashboard's HTTP service. It reads swarm state
+// and retained messages, and publishes posts from local people and services.
 
 package chorus
 
@@ -29,7 +26,7 @@ import (
 
 type (
 	// viewService implements genview.Service on top of a Service. It shares the
-	// Service's Redis client, open swarm handles, and tracer, and only reads.
+	// Service's Redis client, open swarm handles, and tracer.
 	viewService struct {
 		// svc owns the swarm handles and configuration the view reads from.
 		svc *Service
@@ -83,6 +80,26 @@ func (v *viewService) View(ctx context.Context, p *genview.ViewPayload) (*genvie
 	return res, err
 }
 
+// PostMessage registers the local sender and publishes a message through the
+// same stream, pin, and wake sequence used by MCP send. The result acknowledges
+// the exact stored entry, without draining the sender's inbox.
+func (v *viewService) PostMessage(
+	ctx context.Context, p *genview.PostMessagePayload,
+) (*genview.PostMessageResult, error) {
+	ctx, span := startToolSpan(ctx, v.svc.tracer, "post_message", p.Swarm, p.Sender)
+	span.SetAttributes(attribute.String("chorus.to", p.To))
+	res, err := v.postMessage(ctx, p)
+	finishSpan(span, err)
+	switch {
+	case errors.Is(err, errPinRequiresChannel):
+		return nil, genview.MakeInvalidTarget(err)
+	case errors.Is(err, errHandleInUse):
+		return nil, genview.MakeHandleInUse(err)
+	default:
+		return res, err
+	}
+}
+
 // LocalOnly returns middleware that rejects requests a DNS-rebinding page or
 // another website could send, answering them with 403 Forbidden. The Host
 // header must name a loopback address (localhost, 127.0.0.1, or ::1), because a
@@ -107,6 +124,19 @@ func LocalOnly(origins ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// localMessagePeer prevents remote callers from posing as local participants
+// by sending a loopback Host header to a Chorus listener on another interface.
+func localMessagePeer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			http.Error(w, "forbidden: messages must come from this machine", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // IsLoopbackHost reports whether hostport (an HTTP Host header value, with or
@@ -137,6 +167,39 @@ func sameSiteFetch(r *http.Request) bool {
 	default:
 		return false
 	}
+}
+
+// postMessage performs the write and returns operation errors for HTTP mapping.
+func (v *viewService) postMessage(
+	ctx context.Context, p *genview.PostMessagePayload,
+) (*genview.PostMessageResult, error) {
+	channel := strings.HasPrefix(p.To, "#")
+	if p.Pin && !channel {
+		return nil, errPinRequiresChannel
+	}
+
+	sw, err := v.svc.registerParticipant(ctx, p.Sender, p.Swarm, p.Kind, p.Role)
+	if err != nil {
+		return nil, err
+	}
+	if channel {
+		if err := sw.subscribePoster(ctx, p.Sender, p.To); err != nil {
+			return nil, err
+		}
+	}
+	var replyTo int
+	if p.ReplyTo != nil {
+		replyTo = *p.ReplyTo
+	}
+	sent, err := sw.appendUnderSemaphore(ctx, p.Sender, p.To, p.Text, replyTo, p.Pin, p.Kind)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := viewMessage(sent.event, sent.entryID)
+	if err != nil {
+		return nil, err
+	}
+	return &genview.PostMessageResult{Target: p.To, Message: msg}, nil
 }
 
 // viewOriginAllowed reports whether r carries no Origin header, or exactly
@@ -485,29 +548,35 @@ func (v *viewService) messages(ctx context.Context, sw *swarmHandle, target stri
 		if err := json.Unmarshal(ev.Payload(), &m); err != nil || m.Seq <= 0 {
 			continue
 		}
-		sentAt, err := sentAtMs(ev.ID())
+		msg, err := viewMessage(m, ev.ID())
 		if err != nil {
 			return nil, err
-		}
-		msg := &genview.Message{
-			Seq:      m.Seq,
-			Sender:   m.Sender,
-			Text:     m.Text,
-			SentAtMs: sentAt,
-		}
-		if m.ReplyTo > 0 {
-			replyTo := m.ReplyTo
-			msg.ReplyTo = &replyTo
-		}
-		if m.Human {
-			human := true
-			msg.Human = &human
-		}
-		if m.Model != "" {
-			model := m.Model
-			msg.Model = &model
 		}
 		msgs = append(msgs, msg)
 	}
 	return msgs, nil
+}
+
+// viewMessage projects the saved message and uses its stream ID as send time.
+func viewMessage(m messageEvent, entryID string) (*genview.Message, error) {
+	sentAt, err := sentAtMs(entryID)
+	if err != nil {
+		return nil, err
+	}
+	msg := &genview.Message{
+		Seq:      m.Seq,
+		Sender:   m.Sender,
+		Text:     m.Text,
+		SentAtMs: sentAt,
+	}
+	if m.ReplyTo > 0 {
+		msg.ReplyTo = &m.ReplyTo
+	}
+	if m.Human || m.Model == serviceModel {
+		msg.Human = &m.Human
+	}
+	if m.Model != "" {
+		msg.Model = &m.Model
+	}
+	return msg, nil
 }

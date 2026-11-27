@@ -152,15 +152,10 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // NewHTTPHandler mounts the generated Goa-AI MCP 2026-07-28 JSON-RPC server for
-// svc at POST /mcp, the embedded dashboard page at GET /, the read-only
-// dashboard data routes GET /swarms and
-// GET /swarms/{swarm}/view, and a liveness probe reporting X-Chorus-Version at
-// GET /healthz, returning the resulting http.Handler. origins lists every
-// browser Origin value allowed on POST /mcp and the dashboard routes. Browsers
-// send Origin on the dashboard page's POST /mcp calls, so callers that serve
-// the page must include its own origin (for example http://localhost:9440);
-// cmd/chorus does this from the listen port. The dashboard routes also
-// require a loopback Host header.
+// svc at POST /mcp, the embedded dashboard and its local message API, and the
+// GET /healthz probe. Callers serving the dashboard must include its own
+// origin (for example http://localhost:9440) in origins. The dashboard API
+// requires a loopback Host, and posting messages also requires a loopback peer.
 func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	chorusEndpoints := genchorus.NewEndpoints(svc)
 	mcpAdapter := genmcpchorus.NewMCPAdapter(chorusEndpoints, nil)
@@ -185,6 +180,7 @@ func NewHTTPHandler(svc *Service, origins ...string) http.Handler {
 	)
 	viewSrv.Use(LocalOnly(origins...))
 	viewSrv.Use(uiBuildStamp)
+	viewSrv.PostMessage = localMessagePeer(viewSrv.PostMessage)
 	genviewsrv.Mount(mux, viewSrv)
 	mountUI(mux)
 	mux.Handle(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -248,22 +244,11 @@ func (s *Service) Who(ctx context.Context, p *genchorus.WhoPayload) (res *gencho
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.checkAgentSwarmAvailable(ctx, p.Agent, p.Swarm)
+	sw, err := s.registerMCPAgent(ctx, p.Agent, p.Swarm, p.Model, p.Role)
 	if err != nil {
 		return nil, err
 	}
-	role := ""
-	if p.Role != nil {
-		role = *p.Role
-	}
-	out, err := sw.directory(ctx, p.Agent, role, p.Model)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.recordAgentSwarm(ctx, p.Agent, p.Swarm); err != nil {
-		return nil, err
-	}
-	return textResult(out), nil
+	return textResult(sw.directory(p.Agent)), nil
 }
 
 // Join creates or subscribes the calling agent to one or more channels,
@@ -274,7 +259,7 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.checkAgentSwarmAvailable(ctx, p.Agent, p.Swarm)
+	sw, err := s.registerMCPAgent(ctx, p.Agent, p.Swarm, p.Model, p.Role)
 	if err != nil {
 		return nil, err
 	}
@@ -282,15 +267,8 @@ func (s *Service) Join(ctx context.Context, p *genchorus.JoinPayload) (res *genc
 	if p.Topic != nil {
 		topic = *p.Topic
 	}
-	role := ""
-	if p.Role != nil {
-		role = *p.Role
-	}
-	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, role, p.Model, p.Tail)
+	out, err := sw.joinChannels(ctx, p.Agent, p.Channels, topic, p.Tail)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.recordAgentSwarm(ctx, p.Agent, p.Swarm); err != nil {
 		return nil, err
 	}
 	return textResult(out), nil
@@ -304,7 +282,7 @@ func (s *Service) Leave(ctx context.Context, p *genchorus.LeavePayload) (res *ge
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
+	sw, err := s.resolveMCPAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +292,9 @@ func (s *Service) Leave(ctx context.Context, p *genchorus.LeavePayload) (res *ge
 		return nil, err
 	}
 	if !sw.isLiveAgent(p.Agent) {
-		_ = s.rdb.HDel(ctx, agentSwarmHashKey, p.Agent).Err()
+		if err := unbindParticipant(ctx, s.rdb, p.Agent, sw.name); err != nil {
+			return nil, err
+		}
 	}
 	return textResult(out), nil
 }
@@ -334,7 +314,7 @@ func (s *Service) Send(ctx context.Context, p *genchorus.SendPayload) (res *genc
 		return nil, errPinRequiresChannel
 	}
 
-	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
+	sw, err := s.resolveMCPAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +339,7 @@ func (s *Service) Read(ctx context.Context, p *genchorus.ReadPayload) (res *genc
 		finishSpan(span, err)
 	}()
 
-	sw, err := s.resolveAgentSwarm(ctx, p.Agent)
+	sw, err := s.resolveMCPAgentSwarm(ctx, p.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -494,27 +474,30 @@ func (s *Service) swarmHasLiveAgent(ctx context.Context, name string, agents []s
 // checkAgentSwarmAvailable verifies that agent is not currently active in a
 // different swarm and returns the swarmHandle for swarmName.
 func (s *Service) checkAgentSwarmAvailable(ctx context.Context, agent, swarmName string) (*swarmHandle, error) {
-	for _, other := range s.openSwarms() {
-		if other.name != swarmName && other.isLiveAgent(agent) {
-			return nil, fmt.Errorf(
-				"%w: agent %q is already registered in swarm %q; choose a distinct handle or leave %q first",
-				errInvalidCallerState, agent, other.name, other.name,
-			)
-		}
+	boundSwarm, err := s.agentBinding(ctx, agent)
+	if err != nil {
+		return nil, err
 	}
-	if boundSwarm, err := s.rdb.HGet(ctx, agentSwarmHashKey, agent).Result(); err == nil && boundSwarm != "" && boundSwarm != swarmName {
-		if other, openErr := s.swarm(ctx, boundSwarm); openErr == nil && other.isLiveAgent(agent) {
+	if boundSwarm != "" && boundSwarm != swarmName {
+		other, err := s.swarm(ctx, boundSwarm)
+		if err != nil {
+			return nil, err
+		}
+		if err := other.state.Sync(ctx); err != nil {
+			return nil, fmt.Errorf("sync swarm %q for %q: %w", boundSwarm, agent, err)
+		}
+		if other.isLiveAgent(agent) {
 			return nil, fmt.Errorf(
 				"%w: agent %q is already registered in swarm %q; choose a distinct handle or leave %q first",
-				errInvalidCallerState, agent, other.name, other.name,
+				errHandleInUse, agent, other.name, other.name,
 			)
 		}
 	}
 	return s.swarm(ctx, swarmName)
 }
 
-// recordAgentSwarm records the active agent-to-swarm binding in Redis after a
-// successful who or join operation.
+// recordAgentSwarm records the participant's binding before making its profile
+// live in the swarm.
 func (s *Service) recordAgentSwarm(ctx context.Context, agent, swarmName string) error {
 	pipe := s.rdb.Pipeline()
 	pipe.HSet(ctx, agentSwarmHashKey, agent, swarmName)
@@ -528,28 +511,35 @@ func (s *Service) recordAgentSwarm(ctx context.Context, agent, swarmName string)
 // resolveAgentSwarm returns the active swarmHandle in which agent is currently
 // registered, or an errInvalidCallerState error when agent is unknown or expired.
 func (s *Service) resolveAgentSwarm(ctx context.Context, agent string) (*swarmHandle, error) {
-	for _, sw := range s.openSwarms() {
-		if sw.isLiveAgent(agent) {
+	bound, err := s.agentBinding(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	if bound != "" {
+		sw, err := s.swarm(ctx, bound)
+		if err != nil {
+			return nil, err
+		}
+		if err := sw.state.Sync(ctx); err != nil {
+			return nil, fmt.Errorf("sync participant %q: %w", agent, err)
+		}
+		current, err := s.agentBinding(ctx, agent)
+		if err != nil {
+			return nil, err
+		}
+		if current == bound && sw.isLiveAgent(agent) {
 			return sw, nil
 		}
-	}
-	if boundSwarm, err := s.rdb.HGet(ctx, agentSwarmHashKey, agent).Result(); err == nil && boundSwarm != "" {
-		if sw, openErr := s.swarm(ctx, boundSwarm); openErr == nil {
-			if sw.isLiveAgent(agent) {
-				return sw, nil
-			}
-			_ = s.rdb.HDel(ctx, agentSwarmHashKey, agent).Err()
-			if live := sw.liveAgents(); len(live) > 0 {
-				return nil, fmt.Errorf(
-					"%w: unknown or expired agent %q in swarm %q (registered: %s); call join first",
-					errInvalidCallerState, agent, sw.name, formatHandleList(live),
-				)
-			}
+		if live := sw.liveAgents(); len(live) > 0 {
 			return nil, fmt.Errorf(
-				"%w: unknown or expired agent %q in swarm %q; call join first",
-				errInvalidCallerState, agent, sw.name,
+				"%w: unknown or expired agent %q in swarm %q (registered: %s); call join first",
+				errInvalidCallerState, agent, sw.name, formatHandleList(live),
 			)
 		}
+		return nil, fmt.Errorf(
+			"%w: unknown or expired agent %q in swarm %q; call join first",
+			errInvalidCallerState, agent, sw.name,
+		)
 	}
 
 	open := s.openSwarms()
@@ -565,4 +555,13 @@ func (s *Service) resolveAgentSwarm(ctx context.Context, agent string) (*swarmHa
 		"%w: unknown agent %q; call join or who first",
 		errInvalidCallerState, agent,
 	)
+}
+
+// agentBinding reads the shared swarm index. An unbound handle is expected.
+func (s *Service) agentBinding(ctx context.Context, handle string) (string, error) {
+	bound, err := s.rdb.HGet(ctx, agentSwarmHashKey, handle).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("read swarm binding for %q: %w", handle, err)
+	}
+	return bound, nil
 }

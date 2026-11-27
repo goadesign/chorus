@@ -23,6 +23,10 @@ type Client struct {
 	// View Doer is the HTTP client used to make requests to the view endpoint.
 	ViewDoer goahttp.Doer
 
+	// PostMessage Doer is the HTTP client used to make requests to the
+	// post_message endpoint.
+	PostMessageDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -45,6 +49,7 @@ func NewClient(
 	return &Client{
 		SwarmsDoer:          doer,
 		ViewDoer:            doer,
+		PostMessageDoer:     doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -91,6 +96,30 @@ func (c *Client) View() goa.Endpoint {
 		resp, err := c.ViewDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("view", "view", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// PostMessage returns an endpoint that makes HTTP requests to the view service
+// post_message server.
+func (c *Client) PostMessage() goa.Endpoint {
+	var (
+		encodeRequest  = EncodePostMessageRequest(c.encoder)
+		decodeResponse = DecodePostMessageResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildPostMessageRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.PostMessageDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("view", "post_message", err)
 		}
 		return decodeResponse(resp)
 	}

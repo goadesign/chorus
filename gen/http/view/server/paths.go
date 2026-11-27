@@ -18,3 +18,8 @@ func SwarmsViewPath() string {
 func ViewViewPath(swarm string) string {
 	return fmt.Sprintf("/swarms/%v/view", swarm)
 }
+
+// PostMessageViewPath returns the URL path to the view service post_message HTTP endpoint.
+func PostMessageViewPath(swarm string) string {
+	return fmt.Sprintf("/swarms/%v/messages", swarm)
+}

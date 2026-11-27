@@ -18,9 +18,10 @@ import (
 
 // Server lists the view service endpoint HTTP handlers.
 type Server struct {
-	Mounts []*MountPoint
-	Swarms http.Handler
-	View   http.Handler
+	Mounts      []*MountPoint
+	Swarms      http.Handler
+	View        http.Handler
+	PostMessage http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -52,9 +53,11 @@ func New(
 		Mounts: []*MountPoint{
 			{"Swarms", "GET", "/swarms"},
 			{"View", "GET", "/swarms/{swarm}/view"},
+			{"PostMessage", "POST", "/swarms/{swarm}/messages"},
 		},
-		Swarms: NewSwarmsHandler(e.Swarms, mux, decoder, encoder, errhandler, formatter),
-		View:   NewViewHandler(e.View, mux, decoder, encoder, errhandler, formatter),
+		Swarms:      NewSwarmsHandler(e.Swarms, mux, decoder, encoder, errhandler, formatter),
+		View:        NewViewHandler(e.View, mux, decoder, encoder, errhandler, formatter),
+		PostMessage: NewPostMessageHandler(e.PostMessage, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -65,6 +68,7 @@ func (s *Server) Service() string { return "view" }
 func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Swarms = m(s.Swarms)
 	s.View = m(s.View)
+	s.PostMessage = m(s.PostMessage)
 }
 
 // MethodNames returns the methods served.
@@ -74,6 +78,7 @@ func (s *Server) MethodNames() []string { return view.MethodNames[:] }
 func Mount(mux goahttp.Muxer, h *Server) {
 	MountSwarmsHandler(mux, h.Swarms)
 	MountViewHandler(mux, h.View)
+	MountPostMessageHandler(mux, h.PostMessage)
 }
 
 // Mount configures the mux to serve the view endpoints.
@@ -105,7 +110,7 @@ func NewSwarmsHandler(
 ) http.Handler {
 	var (
 		encodeResponse = EncodeSwarmsResponse(encoder)
-		encodeError    = EncodeSwarmsError(encoder, formatter)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
 	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
@@ -157,6 +162,59 @@ func NewViewHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "view")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "view")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountPostMessageHandler configures the mux to serve the "view" service
+// "post_message" endpoint.
+func MountPostMessageHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/swarms/{swarm}/messages", f)
+}
+
+// NewPostMessageHandler creates a HTTP handler which loads the HTTP request
+// and calls the "view" service "post_message" endpoint.
+func NewPostMessageHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodePostMessageRequest(mux, decoder)
+		encodeResponse = EncodePostMessageResponse(encoder)
+		encodeError    = EncodePostMessageError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "post_message")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "view")
 		payload, err := decodeRequest(r)
 		if err != nil {

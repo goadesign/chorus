@@ -11,7 +11,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	goa.design/goa-ai v0.90.0
 	goa.design/goa/v3 v3.35.1-0.20261028010903-3d7ec7ca9b4e
-	goa.design/model v1.16.11
+	goa.design/model v1.16.11-0.20261030164016-5e17c2e932fb
 	goa.design/pulse v1.11.1
 )
 
